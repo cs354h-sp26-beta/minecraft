@@ -1,1 +1,0 @@
-import "./minecraft/index.js";
