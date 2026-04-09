@@ -24,7 +24,7 @@ export class RayCamera {
     let xDir = Vec3.cross(yDir, zDir);
     this.rotationMatrix = new Mat3((xDir.xyz as number[]).concat(yDir.xyz as number[]).concat(zDir.xyz));
     this.u = this.rotationMatrix.multiplyVec3(new Vec3([this.normalizedHeight*this.aspect, 0, 0]));
-    this.v = this.rotationMatrix.multiplyVec3(new Vec3([0, this.normalizedHeight, 0]), this.v);
+    this.v = this.rotationMatrix.multiplyVec3(new Vec3([0, this.normalizedHeight, 0]));
     this.look = this.rotationMatrix.multiplyVec3(new Vec3([0, 0, -1]));
 
   }

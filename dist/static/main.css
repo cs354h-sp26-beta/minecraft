@@ -1,0 +1,96 @@
+:root {
+    --blk    : #333;
+    --d-gry  : #777;
+    --m-gry  : #aaa;
+    --l-gry  : #ddd;
+    --wht    : #fafafa;
+    --shadow : 0 5px 10px #000000aa;
+    --margins: 20px;
+    --padding: 10px; 
+    --radius : 5px;
+
+    --accent : #ff8200;
+    --good   : #373;
+    --warn   : #663;
+    --bad    : #733;
+}
+
+html {
+    height: 100%;
+}
+
+.manual img {
+    width: 100%;
+}
+
+body {
+    height: 100%;
+    display: grid;
+    grid-template-rows: 1fr;
+    grid-column-gap: var(--margins);
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "canvas tests";
+}
+
+.card {
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: var(--padding);
+}
+
+#test-view {
+    grid-area: tests;
+}
+
+#test-view > ol {
+    list-style-type: none;
+    display: grid;
+    padding: 0;
+    align-items: start;
+    grid-template-columns: repeat(auto-fill, minmax(4in, 1fr));
+    grid-column-gap: var(--margins);
+    grid-row-gap:    var(--margins);
+}
+
+#test-view > ol > li {
+    margin-left: 0;
+}
+
+#test-view > ol > li:focus-within {
+}
+
+
+#test-view button{
+    width: 20%;
+}
+
+.failed {
+    background-color: var(--bad);
+    color: var(--wht);
+}
+
+.passed {
+    background-color: var(--good);
+    color: var(--wht);
+}
+.manual {
+    background-color: var(--warn);
+    color: var(--wht);
+}
+
+.container {
+    position: relative;
+}
+
+#glCanvas {
+    border: 1px solid var(--m-gry);
+    grid-area: canvas;
+    padding: 0;
+}
+
+#textCanvas {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    z-index: 10;
+}

@@ -207,7 +207,7 @@ export class RenderPass {
   }
 
   private addAttributeHelper(attribName: string, size: number, type: GLenum, normalized: boolean,
-                      stride: number, offset: number, bufferName: string, bufferData: BufferData, divisor: number) {
+                      stride: number, offset: number, bufferName: string | undefined, bufferData: BufferData | undefined, divisor: number) {
 
     if (!bufferName) {
       bufferName = attribName;

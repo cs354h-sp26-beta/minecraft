@@ -1,9 +1,6 @@
 import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
 
 export class Cube {
-  public center: Vec3;
-  public scalar: GLfloat;
-
   private positionsRay: Vec4[];
   private indicesRay: Vec3[];
   private normalsRay: Vec4[];
@@ -15,7 +12,6 @@ export class Cube {
   private uvF32: Float32Array;
 
   constructor() {
-
     this.positionsRay = [
       /* Top */
       new Vec4([-0.5, 0.5, -0.5, 1.0]),
@@ -46,7 +42,7 @@ export class Cube {
       new Vec4([-0.5, -0.5, -0.5, 1.0]),
       new Vec4([-0.5, -0.5, 0.5, 1.0]),
       new Vec4([0.5, -0.5, 0.5, 1.0]),
-      new Vec4([0.5, -0.5, -0.5, 1.0])
+      new Vec4([0.5, -0.5, -0.5, 1.0]),
     ];
     console.assert(this.positionsRay != null);
     console.assert(this.positionsRay.length === 4 * 6);
@@ -75,7 +71,7 @@ export class Cube {
       new Vec3([16, 18, 19]),
       /* Bottom */
       new Vec3([21, 20, 22]),
-      new Vec3([22, 20, 23])
+      new Vec3([22, 20, 23]),
     ];
     console.assert(this.indicesRay != null);
     console.assert(this.indicesRay.length === 12);
@@ -116,7 +112,7 @@ export class Cube {
       new Vec4([0.0, -1.0, 0.0, 0.0]),
       new Vec4([0.0, -1.0, 0.0, 0.0]),
       new Vec4([0.0, -1.0, 0.0, 0.0]),
-      new Vec4([0.0, -1.0, 0.0, 0.0])
+      new Vec4([0.0, -1.0, 0.0, 0.0]),
     ];
     console.assert(this.normalsRay != null);
     console.assert(this.normalsRay.length === 4 * 6);
@@ -157,7 +153,7 @@ export class Cube {
       new Vec3([0.0, 0.0, 0.0]),
       new Vec3([0.0, 1.0, 0.0]),
       new Vec3([1.0, 1.0, 0.0]),
-      new Vec3([1.0, 0.0, 0.0]),      
+      new Vec3([1.0, 0.0, 0.0]),
     ];
     console.assert(this.uvRay != null);
     console.assert(this.uvRay.length === 4 * 6);
@@ -168,7 +164,6 @@ export class Cube {
     console.assert(this.uvF32 != null);
     console.assert(this.uvF32.length === 4 * 6 * 2);
   }
-
 
   public positionsFlat(): Float32Array {
     console.assert(this.positionsF32.length === 24 * 4);
@@ -192,8 +187,8 @@ export class Cube {
   public normalsFlat(): Float32Array {
     return this.normalsF32;
   }
-  
-  public uvFlat() : Float32Array {
+
+  public uvFlat(): Float32Array {
     return this.uvF32;
   }
 }
