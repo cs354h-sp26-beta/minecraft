@@ -158,7 +158,7 @@ export class MinecraftAnimation extends CanvasAnimation {
    */
   public draw(): void {
     // To slow movement to something more natural, scale the amount we can move per frame.
-    const dt = 0.001;
+    const dt = 1 / 60;
 
     //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
     this.player.position.add(this.gui.walkDir().copy().scale(dt));
@@ -168,13 +168,21 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Check for collisions.
     //
-    // TODO: Check all possible chunks.
-    const collisions = this.player.collidesWithChunk(this.chunk);
+    // FIXME: Ew. This system sucks. It's what the hint says to do but...
+    const floorY = this.chunk.floorHeight(
+      this.player.position.x,
+      this.player.position.z,
+    );
     // Apply gravity acceleration.
-    // FIXME: Check that collision is downward direction.
-    if (collisions.length == 0) {
-      const gravityAccel = new Vec3([0.0, -9.8, 0.0]);
-      this.player.velocity.add(gravityAccel);
+    if (this.player.position.y > floorY + Player.hitboxHeight) {
+      const g = -9.8 * dt;
+      const dv = new Vec3([0.0, g, 0.0]);
+      this.player.velocity.add(dv);
+    } else {
+      // Stop all movement.
+      //
+      // Might want to only set y component in this case...
+      this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
 
     // Drawing

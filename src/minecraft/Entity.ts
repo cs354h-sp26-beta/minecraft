@@ -1,6 +1,11 @@
 import { Vec3 } from "../lib/TSM.js";
 import { Chunk } from "./Chunk.js";
 
+export type Collision = {
+  blockCenter: Vec3;
+  belowPlayer: boolean;
+};
+
 export class Player {
   // The player's head position in world coordinates.
   //
@@ -10,8 +15,9 @@ export class Player {
   // The velocity of the player in units/sec.
   public velocity: Vec3;
 
-  // Radial length of hitbox.
-  public static readonly hitbox_radius: number = 0.4;
+  // Radial dimensions of hitbox.
+  public static readonly hitboxRadius: number = 0.4;
+  public static readonly hitboxHeight: number = 2.0;
 
   constructor(position: Vec3) {
     this.position = position;
@@ -20,7 +26,8 @@ export class Player {
 
   // Detects if the player collides with any blocks in the given chunk.
   // Returns the cubes for which there is a collision.
-  public collidesWithChunk(c: Chunk): Float32Array {
-    return new Float32Array([]);
+  public collidesWithChunk(c: Chunk): Collision[] {
+    // TODO
+    return [];
   }
 }
