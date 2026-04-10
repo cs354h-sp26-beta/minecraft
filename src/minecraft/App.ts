@@ -62,7 +62,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   public reset(): void {
     this.gui.reset();
 
-    this.player.setPosition(this.gui.getCamera().pos());
+    this.player.position = this.gui.getCamera().pos();
   }
 
   /**
@@ -158,7 +158,7 @@ export class MinecraftAnimation extends CanvasAnimation {
    */
   public draw(): void {
     //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
-    this.player.addToPosition(this.gui.walkDir());
+    this.player.position.add(this.gui.walkDir());
 
     this.gui.getCamera().setPos(this.player.getPosition());
 
