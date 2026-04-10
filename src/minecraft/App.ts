@@ -216,7 +216,18 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public jump() {
-    //TODO: If the player is not already in the lair, launch them upwards at 10 units/sec.
+    // If player is not already in the air, launch them up at 10 units/sec.
+    //
+    // FIXME: Same problem as in draw loop.
+    const floorY = this.chunk.floorHeight(
+      this.player.position.x,
+      this.player.position.z,
+    );
+    // FIXME: Wtf. Does this even work?
+    if (this.player.position.y <= floorY + Player.hitboxHeight) {
+      const dv = new Vec3([0.0, 10.0, 0.0]);
+      this.player.velocity.add(dv);
+    }
   }
 }
 
