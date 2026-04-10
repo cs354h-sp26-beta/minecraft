@@ -10,6 +10,7 @@ import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Camera } from "../lib/webglutils/Camera.js";
 import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
+import { Player } from "./Entity.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
@@ -26,9 +27,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private canvas2d: HTMLCanvasElement;
 
-  // Player's head position in world coordinate.
-  // Player should extend two units down from this location, and 0.4 units radially.
-  private playerPosition: Vec3;
+  private player: Player;
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -39,7 +38,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     let gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
-    this.playerPosition = this.gui.getCamera().pos();
+    const playerPosition = this.gui.getCamera().pos();
+    this.player = new Player(playerPosition);
 
     // Generate initial landscape
     this.chunk = new Chunk(0.0, 0.0, 64);
@@ -62,7 +62,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   public reset(): void {
     this.gui.reset();
 
-    this.playerPosition = this.gui.getCamera().pos();
+    this.player.setPosition(this.gui.getCamera().pos());
   }
 
   /**
@@ -158,9 +158,9 @@ export class MinecraftAnimation extends CanvasAnimation {
    */
   public draw(): void {
     //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
-    this.playerPosition.add(this.gui.walkDir());
+    this.player.addToPosition(this.gui.walkDir());
 
-    this.gui.getCamera().setPos(this.playerPosition);
+    this.gui.getCamera().setPos(this.player.getPosition());
 
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
