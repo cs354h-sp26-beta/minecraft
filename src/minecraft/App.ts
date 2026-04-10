@@ -157,10 +157,25 @@ export class MinecraftAnimation extends CanvasAnimation {
    *
    */
   public draw(): void {
-    //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
-    this.player.position.add(this.gui.walkDir());
+    // To slow movement to something more natural, scale the amount we can move per frame.
+    const dt = 0.001;
 
-    this.gui.getCamera().setPos(this.player.getPosition());
+    //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
+    this.player.position.add(this.gui.walkDir().copy().scale(dt));
+    this.player.position.add(this.player.velocity.copy().scale(dt));
+
+    this.gui.getCamera().setPos(this.player.position);
+
+    // Check for collisions.
+    //
+    // TODO: Check all possible chunks.
+    const collisions = this.player.collidesWithChunk(this.chunk);
+    // Apply gravity acceleration.
+    // FIXME: Check that collision is downward direction.
+    if (collisions.length == 0) {
+      const gravityAccel = new Vec3([0.0, -9.8, 0.0]);
+      this.player.velocity.add(gravityAccel);
+    }
 
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
