@@ -2,3 +2,5 @@
 
 # https://gist.github.com/pierrejoubert73/7c7cc85a2c8fe278bfa8641654fd3089
 ./scripts/format.sh
+git diff --name-only --cached | xargs git add
+exit 0
