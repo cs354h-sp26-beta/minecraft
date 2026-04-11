@@ -1,4 +1,11 @@
 import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
+import {
+  ACTIVE_BIOME_PROFILES,
+  BIOME_BLEND_TUNING,
+  BIOME_SELECTION_TUNING,
+  TERRAIN_OCTAVE_TUNING,
+  type BiomeProfile,
+} from "./Biomes.js";
 
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
@@ -42,9 +49,30 @@ export class Chunk {
     return a + t * (b - a);
   }
 
-  // smooths blending weight for linear interpolation
-  private fade(t: number): number {
+  private clamp01(v: number): number {
+    return Math.max(0, Math.min(1, v));
+  }
+
+  private smoothstep(edge0: number, edge1: number, x: number): number {
+    const t = this.clamp01((x - edge0) / (edge1 - edge0));
     return t * t * (3 - 2 * t);
+  }
+
+
+  // bilinear interpolation of 2 biomes for transitions
+  private blendBiomeProfiles(
+    a: BiomeProfile,
+    b: BiomeProfile,
+    t: number,
+  ): BiomeProfile {
+    return {
+      name: t < 0.5 ? a.name : b.name,
+      baseHeight: this.lerp(a.baseHeight, b.baseHeight, t),
+      reliefScale: this.lerp(a.reliefScale, b.reliefScale, t),
+      frequencyScale: this.lerp(a.frequencyScale, b.frequencyScale, t),
+      highFreqBoost: this.lerp(a.highFreqBoost, b.highFreqBoost, t),
+      octaveGain: this.lerp(a.octaveGain, b.octaveGain, t),
+    };
   }
 
   // random value noise given world coord, octave, and frequency
@@ -88,8 +116,8 @@ export class Chunk {
 
     const tx = sx - x0;
     const tz = sz - z0;
-    const u = this.fade(tx);
-    const v = this.fade(tz);
+    const u = this.smoothstep(0, 1, tx);
+    const v = this.smoothstep(0, 1, tz);
 
     // get random values at the corners of the grid cell
     const v00 = this.rand01AtLattice(x0, z0, octave);
@@ -107,6 +135,56 @@ export class Chunk {
     return this.lerp(a, b, v);
   }
 
+  // Discrete biome regions in world space with a narrow smooth transition band.
+  private sampleBiomeProfileAt(worldX: number, worldZ: number): BiomeProfile {
+    const macro = this.sampleValueNoise(
+      worldX,
+      worldZ,
+      BIOME_SELECTION_TUNING.macroOctave,
+      BIOME_SELECTION_TUNING.macroFrequency,
+    );
+    const detail = this.sampleValueNoise(
+      worldX,
+      worldZ,
+      BIOME_SELECTION_TUNING.detailOctave,
+      BIOME_SELECTION_TUNING.detailFrequency,
+    );
+    const selectorRaw = Math.min(
+      0.999999,
+      this.clamp01(this.lerp(macro, detail, BIOME_SELECTION_TUNING.detailMix)),
+    );
+    const selector = Math.min(
+      0.999999,
+      Math.pow(selectorRaw, BIOME_SELECTION_TUNING.selectorBiasPower),
+    );
+
+    const biomeCount = ACTIVE_BIOME_PROFILES.length;
+    const scaled = selector * biomeCount;
+    const idx = Math.min(biomeCount - 1, Math.floor(scaled));
+    const frac = scaled - idx;
+    const transitionWidth = BIOME_SELECTION_TUNING.transitionWidth;
+
+    if (frac < transitionWidth && idx > 0) {
+      const t = this.smoothstep(0, transitionWidth, frac);
+      return this.blendBiomeProfiles(
+        ACTIVE_BIOME_PROFILES[idx - 1],
+        ACTIVE_BIOME_PROFILES[idx],
+        t,
+      );
+    }
+
+    if (frac > 1 - transitionWidth && idx < biomeCount - 1) {
+      const t = this.smoothstep(1 - transitionWidth, 1, frac);
+      return this.blendBiomeProfiles(
+        ACTIVE_BIOME_PROFILES[idx],
+        ACTIVE_BIOME_PROFILES[idx + 1],
+        t,
+      );
+    }
+
+    return ACTIVE_BIOME_PROFILES[idx];
+  }
+
   // sample height at world coordinates by combining multiple octaves of value noise
   private sampleHeightAtWorld(
     worldX: number,
@@ -115,16 +193,26 @@ export class Chunk {
     multCoeffs: number[],
   ): number {
     const octaves = Math.min(gridSizes.length, multCoeffs.length);
+    const biome = this.sampleBiomeProfileAt(worldX, worldZ);
+
     let sum = 0;
     let maxPossibleHeight = 0;
     for (let octave = 0; octave < octaves; octave++) {
-      const frequency = gridSizes[octave] / this.size;
-      const coeff = multCoeffs[octave];
+      const octaveT = octaves <= 1 ? 0 : octave / (octaves - 1);
+      const frequency = (gridSizes[octave] / this.size) * biome.frequencyScale;
+      const detailWeight = this.lerp(1.0, biome.highFreqBoost, octaveT);
+      const coeff = multCoeffs[octave] * detailWeight * biome.octaveGain;
       const noiseVal = this.sampleValueNoise(worldX, worldZ, octave, frequency);
       sum += noiseVal * coeff;
       maxPossibleHeight += coeff;
     }
-    return Math.floor((sum / maxPossibleHeight) * 100);
+    const normalized = sum / maxPossibleHeight;
+    const shaped = this.smoothstep(
+      BIOME_BLEND_TUNING.defaultShapeLow,
+      BIOME_BLEND_TUNING.defaultShapeHigh,
+      normalized,
+    );
+    return Math.floor(biome.baseHeight + shaped * biome.reliefScale);
   }
 
   private generateCubes() {
@@ -133,9 +221,8 @@ export class Chunk {
 
     // TODO: wire Chunk.setWorldSeed(...) to a user-provided world seed from app/UI settings.
 
-    const NUM_OCTAVES: number = 4;
-    const gridSizes: number[] = [4, 8, 16, 32];
-    const multCoeffs: number[] = [1.0, 0.5, 0.25, 0.125];
+    const activeGridSizes: number[] = [...TERRAIN_OCTAVE_TUNING.gridSizes];
+    const activeMultCoeffs: number[] = [...TERRAIN_OCTAVE_TUNING.multCoeffs];
 
     const heightMap = new Float32Array(this.size * this.size);
     for (let i = 0; i < this.size; i++) {
@@ -145,8 +232,8 @@ export class Chunk {
         heightMap[this.size * i + j] = this.sampleHeightAtWorld(
           worldX,
           worldZ,
-          gridSizes.slice(0, NUM_OCTAVES),
-          multCoeffs.slice(0, NUM_OCTAVES),
+          activeGridSizes,
+          activeMultCoeffs,
         );
       }
     }
