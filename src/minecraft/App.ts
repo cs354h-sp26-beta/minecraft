@@ -17,6 +17,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   // TODO: Make into LRU cache. To do this, need to be able to regenerate chunks based on seed.
   private allVisitedChunks: Map<string, number>; // TODO: Map chunk to seed!
+
   private chunkCache: Map<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
   private static readonly renderDistance: number = 3;
@@ -169,6 +170,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private loadChunksAroundPlayer(): void {
+    // FIXME: Reuse chunks already loaded, instead of re-adding each frame.
     this.renderedChunks.clear();
 
     const cx = this.worldToChunkCoord(this.player.position.x);
@@ -212,8 +214,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    this.player.position.add(this.gui.walkDir().copy().scale(dt));
-    this.player.position.add(this.player.velocity.copy().scale(dt));
+    const walkDx = this.gui.walkDir().scale(dt, new Vec3());
+    const momentumDx = this.player.velocity.scale(dt, new Vec3());
+    const totalDx = walkDx.add(momentumDx, new Vec3());
+    this.player.position.add(totalDx);
 
     this.gui.getCamera().setPos(this.player.position);
 
@@ -226,14 +230,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     // Apply gravity acceleration.
     if (this.player.position.y > floorY + Player.hitboxHeight) {
-      const g = -9.8 * dt;
-      const dv = new Vec3([0.0, g, 0.0]);
-      // this.player.velocity.add(dv);
+      const gDelta = -9.8 * dt;
+      const gDv = new Vec3([0.0, gDelta, 0.0]);
+      this.player.velocity.add(gDv);
     } else {
       // Stop all movement.
       //
       // Might want to only set y component in this case...
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
+      this.player.position.subtract(totalDx);
     }
 
     this.loadChunksAroundPlayer();
