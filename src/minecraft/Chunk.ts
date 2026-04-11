@@ -1,4 +1,4 @@
-import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
+
 import {
   ACTIVE_BIOME_PROFILES,
   BIOME_BLEND_TUNING,
@@ -82,28 +82,12 @@ export class Chunk {
     octave: number,
     frequency: number,
   ): number {
-    // octave-specific orientation and offset to reduce visible axis alignment
-    const theta = 0.37 + octave * 1.213;
-    
-    // x and z offsets in range [-4096, 4096]
-    const offsetX =
-      (this.hash32(`${Chunk.worldSeed}|octaveOffsetX|${octave}`) /
-        4294967295) *
-        8192 -
-      4096;
-    const offsetZ =
-      (this.hash32(`${Chunk.worldSeed}|octaveOffsetZ|${octave}`) /
-        4294967295) *
-        8192 -
-      4096;
-
-    // rotate and offset world coordinates for sampling
+    // Apply 2D rotation per octave to break up axis-aligned artifacts
+    const theta = octave * 0.8;
     const c = Math.cos(theta);
     const s = Math.sin(theta);
-    const x = worldX + offsetX;
-    const z = worldZ + offsetZ;
-    const rx = x * c - z * s;
-    const rz = x * s + z * c;
+    const rx = worldX * c - worldZ * s;
+    const rz = worldX * s + worldZ * c;
 
     const sx = rx * frequency;
     const sz = rz * frequency;
@@ -137,52 +121,44 @@ export class Chunk {
 
   // Discrete biome regions in world space with a narrow smooth transition band.
   private sampleBiomeProfileAt(worldX: number, worldZ: number): BiomeProfile {
-    const macro = this.sampleValueNoise(
-      worldX,
-      worldZ,
-      BIOME_SELECTION_TUNING.macroOctave,
-      BIOME_SELECTION_TUNING.macroFrequency,
-    );
-    const detail = this.sampleValueNoise(
-      worldX,
-      worldZ,
-      BIOME_SELECTION_TUNING.detailOctave,
-      BIOME_SELECTION_TUNING.detailFrequency,
-    );
-    const selectorRaw = Math.min(
-      0.999999,
-      this.clamp01(this.lerp(macro, detail, BIOME_SELECTION_TUNING.detailMix)),
-    );
     const selector = Math.min(
       0.999999,
-      Math.pow(selectorRaw, BIOME_SELECTION_TUNING.selectorBiasPower),
+      this.sampleValueNoise(
+        worldX,
+        worldZ,
+        BIOME_SELECTION_TUNING.selectorOctave,
+        BIOME_SELECTION_TUNING.selectorFrequency,
+      ),
     );
 
     const biomeCount = ACTIVE_BIOME_PROFILES.length;
     const scaled = selector * biomeCount;
-    const idx = Math.min(biomeCount - 1, Math.floor(scaled));
-    const frac = scaled - idx;
+    
+    // Find which two biomes we're between
+    const lowerIdx = Math.floor(scaled);
+    const upperIdx = Math.min(biomeCount - 1, lowerIdx + 1);
+    const frac = scaled - lowerIdx; // Position between lower and upper biome (0 to 1)
     const transitionWidth = BIOME_SELECTION_TUNING.transitionWidth;
 
-    if (frac < transitionWidth && idx > 0) {
-      const t = this.smoothstep(0, transitionWidth, frac);
+    // Only blend if within transition zone
+    if (frac < transitionWidth || frac > 1 - transitionWidth) {
+      // Compute blend factor: 0 = fully lower, 1 = fully upper
+      let blendFactor: number;
+      if (frac < transitionWidth) {
+        blendFactor = this.smoothstep(0, transitionWidth, frac);
+      } else {
+        blendFactor = this.smoothstep(1 - transitionWidth, 1, frac);
+      }
+      
       return this.blendBiomeProfiles(
-        ACTIVE_BIOME_PROFILES[idx - 1],
-        ACTIVE_BIOME_PROFILES[idx],
-        t,
+        ACTIVE_BIOME_PROFILES[lowerIdx],
+        ACTIVE_BIOME_PROFILES[upperIdx],
+        blendFactor,
       );
     }
 
-    if (frac > 1 - transitionWidth && idx < biomeCount - 1) {
-      const t = this.smoothstep(1 - transitionWidth, 1, frac);
-      return this.blendBiomeProfiles(
-        ACTIVE_BIOME_PROFILES[idx],
-        ACTIVE_BIOME_PROFILES[idx + 1],
-        t,
-      );
-    }
-
-    return ACTIVE_BIOME_PROFILES[idx];
+    // Solidly in one biome
+    return ACTIVE_BIOME_PROFILES[lowerIdx];
   }
 
   // sample height at world coordinates by combining multiple octaves of value noise
