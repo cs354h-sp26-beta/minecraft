@@ -15,7 +15,8 @@ import { Player } from "./Entity.js";
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
 
-  chunk: Chunk;
+  chunks: Map<string, Chunk> = new Map();
+  private renderDistance: number = 3;
 
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -41,8 +42,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
 
-    // Generate initial landscape
-    this.chunk = new Chunk(0.0, 0.0, 64);
+    this.loadChunksAroundPlayer();
 
     this.blankCubeRenderPass = new RenderPass(
       gl,
@@ -152,6 +152,42 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.setup();
   }
 
+  private worldToChunkCoord(worldVal: number): number {
+    // returns the center of the chunk on the grid
+    return Math.floor(worldVal / 64) * 64;
+  }
+
+  private loadChunksAroundPlayer(): void {
+    const cx = this.worldToChunkCoord(this.playerPosition.x);
+    const cz = this.worldToChunkCoord(this.playerPosition.z);
+
+    for (let di = -this.renderDistance; di <= this.renderDistance; di++) {
+      for (let dj = -this.renderDistance; dj <= this.renderDistance; dj++) {
+        const chunkX = cx + di * 64;
+        const chunkZ = cz + dj * 64;
+        const key = `${chunkX},${chunkZ}`;
+        if (!this.chunks.has(key)) {
+          this.chunks.set(key, new Chunk(chunkX, chunkZ, 64));
+        }
+      }
+    }
+  }
+
+  private getAllCubePositions(): Float32Array {
+    let totalCubes = 0;
+    for (const chunk of this.chunks.values()) {
+      totalCubes += chunk.numCubes();
+    }
+    const combined = new Float32Array(4 * totalCubes);
+    let offset = 0;
+    for (const chunk of this.chunks.values()) {
+      const positions = chunk.cubePositions();
+      combined.set(positions, offset);
+      offset += positions.length;
+    }
+    return combined;
+  }
+
   /**
    * Draws a single frame
    *
@@ -185,6 +221,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
 
+    this.loadChunksAroundPlayer();
+
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
     const bg: Vec4 = this.backgroundColor;
@@ -203,12 +241,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl: WebGLRenderingContext = this.ctx;
     gl.viewport(x, y, width, height);
 
-    //TODO: Render multiple chunks around the player, using Perlin noise shaders
-    this.blankCubeRenderPass.updateAttributeBuffer(
-      "aOffset",
-      this.chunk.cubePositions(),
-    );
-    this.blankCubeRenderPass.drawInstanced(this.chunk.numCubes());
+    const allPositions = this.getAllCubePositions();
+    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
+    this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
   }
 
   public getGUI(): GUI {
