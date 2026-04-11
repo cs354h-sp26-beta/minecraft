@@ -8,6 +8,7 @@ import { blankCubeFSText, blankCubeVSText } from "./Shaders.js";
 import { Mat4, Vec4, Vec3 } from "../lib/TSM.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Camera } from "../lib/webglutils/Camera.js";
+import { LruCache } from "./Cache.js";
 import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
 import { Player } from "./Entity.js";
@@ -15,11 +16,12 @@ import { Player } from "./Entity.js";
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
 
-  // TODO: Make into LRU cache. To do this, need to be able to regenerate chunks based on seed.
-  private allVisitedChunks: Map<string, number>; // TODO: Map chunk to seed!
+  // TODO: Map chunk to seed!
+  private allVisitedChunks: Map<string, string>;
 
-  private chunkCache: Map<string, Chunk>;
+  private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
+
   private static readonly renderDistance: number = 3;
 
   /*  Cube Rendering */
@@ -43,7 +45,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
-    this.chunkCache = new Map();
+    this.allVisitedChunks = new Map();
+    this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
@@ -169,6 +172,27 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
+  // Initializes a chunk and maps its seed.
+  private initChunk(chunkX: number, chunkZ: number): Chunk {
+    const chunk = new Chunk(chunkX, chunkZ, 64);
+    const key = `${chunkX},${chunkZ}`;
+    this.allVisitedChunks.set(key, chunk.seed);
+    return chunk;
+  }
+
+  // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
+  //
+  // FIXME: Maybe this should be in `Chunk`, but only allowed a single constructor.
+  // Oh well. This can be refactored.
+  private loadChunkFromSeed(
+    centerX: number,
+    centerZ: number,
+    seed: string,
+  ): Chunk {
+    // TODO: Actually do it. For now, just create a new chunk alltogther.
+    return new Chunk(centerX, centerZ, 64);
+  }
+
   private loadChunksAroundPlayer(): void {
     // FIXME: Reuse chunks already loaded, instead of re-adding each frame.
     this.renderedChunks.clear();
@@ -183,7 +207,18 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * 64;
         const key = `${chunkX},${chunkZ}`;
         if (!this.chunkCache.has(key)) {
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, 64));
+          const chunkToLoadSeed = this.allVisitedChunks.get(key);
+          if (chunkToLoadSeed === undefined) {
+            const initChunk = this.initChunk(chunkX, chunkZ);
+            this.chunkCache.set(key, initChunk);
+          } else {
+            const loadedChunk = this.loadChunkFromSeed(
+              chunkX,
+              chunkZ,
+              chunkToLoadSeed,
+            );
+            this.chunkCache.set(key, loadedChunk);
+          }
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);

@@ -10,6 +10,11 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
+  // FIXME: This needs to be implemented and integrated.
+  //
+  // Chunk's personal seed.
+  public seed: string;
+
   // world seed
   public static setWorldSeed(seed: string): void {
     Chunk.worldSeed = seed;
