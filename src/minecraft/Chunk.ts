@@ -5,6 +5,7 @@ import { Player } from "./Entity.js";
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
+  private heightMap: Float32Array;
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -145,12 +146,12 @@ export class Chunk {
     const gridSizes: number[] = [4, 8, 16, 32];
     const multCoeffs: number[] = [1.0, 0.5, 0.25, 0.125];
 
-    const heightMap = new Float32Array(this.size * this.size);
+    this.heightMap = new Float32Array(this.size * this.size);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const worldX = topLeftX + j;
         const worldZ = topLeftZ + i;
-        heightMap[this.size * i + j] = this.sampleHeightAtWorld(
+        this.heightMap[this.size * i + j] = this.sampleHeightAtWorld(
           worldX,
           worldZ,
           gridSizes.slice(0, NUM_OCTAVES),
@@ -161,14 +162,14 @@ export class Chunk {
 
     this.cubes = 0;
     for (let k = 0; k < this.size * this.size; k++) {
-      this.cubes += Math.max(heightMap[k], 1); // at least 1 cube per column
+      this.cubes += Math.max(this.heightMap[k], 1); // at least 1 cube per column
     }
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(heightMap[this.size * i + j], 1);
+        const height = Math.max(this.heightMap[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
           this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
@@ -196,8 +197,8 @@ export class Chunk {
   public floorHeight(worldX: number, worldZ: number): number {
     const [topLeftX, topLeftZ] = this.origin();
 
-    const centerX = worldX - topLeftX;
-    const centerZ = worldZ - topLeftZ;
+    const centerX = Math.round(worldX - topLeftX);
+    const centerZ = Math.round(worldZ - topLeftZ);
 
     let floorY = -Infinity;
     for (let dx = -1; dx <= 1; dx += 1) {
@@ -232,10 +233,8 @@ export class Chunk {
         const hbr = Player.hitboxRadius;
         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
           const cubeWorldY =
-            this.cubePositionsF32[
-              4 * (cubeChunkZ * this.size + cubeChunkX) + 1
-            ];
-          floorY = Math.max(floorY, cubeWorldY);
+            this.heightMap[cubeChunkZ * this.size + cubeChunkX];
+          floorY = Math.max(floorY, cubeWorldY - 0.5);
         }
       }
     }

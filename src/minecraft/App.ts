@@ -247,7 +247,7 @@ export class MinecraftAnimation extends CanvasAnimation {
    */
   public draw(): void {
     // To slow movement to something more natural, scale the amount we can move per frame.
-    const dt = 1 / 60;
+    const dt = 1;
 
     const walkDx = this.gui.walkDir().scale(dt, new Vec3());
     const momentumDx = this.player.velocity.scale(dt, new Vec3());
@@ -269,11 +269,11 @@ export class MinecraftAnimation extends CanvasAnimation {
       const gDv = new Vec3([0.0, gDelta, 0.0]);
       this.player.velocity.add(gDv);
     } else {
-      // Stop all movement.
-      //
-      // Might want to only set y component in this case...
-      this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
-      this.player.position.subtract(totalDx);
+      // Stop all movement in vertical direction.
+      const v = this.player.velocity.copy();
+      v.y = 0.0;
+      this.player.velocity = v;
+      this.player.position.y = floorY + Player.hitboxHeight;
     }
 
     this.loadChunksAroundPlayer();
