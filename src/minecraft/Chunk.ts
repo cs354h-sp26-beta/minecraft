@@ -1,5 +1,4 @@
 import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
-import Rand from "../lib/rand-seed/Rand.js";
 
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
@@ -7,6 +6,12 @@ export class Chunk {
   private x: number; // Center of the chunk
   private y: number;
   private size: number; // Number of cubes along each side of the chunk
+  private static worldSeed: string = "default";
+
+  // world seed 
+  public static setWorldSeed(seed: string): void {
+    Chunk.worldSeed = seed;
+  }
 
   constructor(centerX: number, centerY: number, size: number) {
     this.x = centerX;
@@ -16,80 +21,134 @@ export class Chunk {
     this.generateCubes();
   }
 
-  // returns gridSize x gridSize grid of white noise
-  private generateWhiteNoise(rng: Rand, gridSize: number): Float32Array {
-    const noise = new Float32Array(gridSize * gridSize);
-    for (let i = 0; i < gridSize * gridSize; i++) {
-      noise[i] = rng.next();
+  // 32-bit hash so world sampling is deterministic by hash
+  private hash32(input: string): number {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < input.length; i++) {
+      h ^= input.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
     }
-    return noise;
+    return h;
   }
 
-  // upsamples gridSize x gridSize grid to targetSize x targetSize grid
-  private upsampleBilinear(
-    noise: Float32Array,
-    gridSize: number,
-    targetSize: number,
-  ): Float32Array {
-    const result = new Float32Array(targetSize * targetSize);
-    for (let i = 0; i < targetSize; i++) {
-      for (let j = 0; j < targetSize; j++) {
-        // where is it on the small grid?
-        const srcI = (i / targetSize) * gridSize;
-        const srcJ = (j / targetSize) * gridSize;
+  // deterministic float in [0, 1) by lattice coord and octave
+  private rand01AtLattice(ix: number, iz: number, octave: number): number {
+    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iz}`);
+    return h / 4294967295;
+  }
 
-        // 4 nearest on small grid
-        const i0 = Math.floor(srcI);
-        const j0 = Math.floor(srcJ);
-        const i1 = Math.min(i0 + 1, gridSize - 1);
-        const j1 = Math.min(j0 + 1, gridSize - 1);
+  // linear interpolation
+  private lerp(a: number, b: number, t: number): number {
+    return a + t * (b - a);
+  }
 
-        // distances from nearest (to interpolate)
-        const fi = srcI - i0;
-        const fj = srcJ - j0;
+  // smooths blending weight for linear interpolation
+  private fade(t: number): number {
+    return t * t * (3 - 2 * t);
+  }
 
-        // bilinear interpolation
-        const v00 = noise[i0 * gridSize + j0];
-        const v01 = noise[i0 * gridSize + j1];
-        const v10 = noise[i1 * gridSize + j0];
-        const v11 = noise[i1 * gridSize + j1];
+  // random value noise given world coord, octave, and frequency
+  private sampleValueNoise(
+    worldX: number,
+    worldZ: number,
+    octave: number,
+    frequency: number,
+  ): number {
+    // octave-specific orientation and offset to reduce visible axis alignment
+    const theta = 0.37 + octave * 1.213;
+    
+    // x and z offsets in range [-4096, 4096]
+    const offsetX =
+      (this.hash32(`${Chunk.worldSeed}|octaveOffsetX|${octave}`) /
+        4294967295) *
+        8192 -
+      4096;
+    const offsetZ =
+      (this.hash32(`${Chunk.worldSeed}|octaveOffsetZ|${octave}`) /
+        4294967295) *
+        8192 -
+      4096;
 
-        const top = v00 * (1 - fj) + v01 * fj;
-        const bot = v10 * (1 - fj) + v11 * fj;
-        result[i * targetSize + j] = top * (1 - fi) + bot * fi;
-      }
+    // rotate and offset world coordinates for sampling
+    const c = Math.cos(theta);
+    const s = Math.sin(theta);
+    const x = worldX + offsetX;
+    const z = worldZ + offsetZ;
+    const rx = x * c - z * s;
+    const rz = x * s + z * c;
+
+    const sx = rx * frequency;
+    const sz = rz * frequency;
+
+    // grid corner lattice coordinates
+    const x0 = Math.floor(sx);
+    const z0 = Math.floor(sz);
+    const x1 = x0 + 1;
+    const z1 = z0 + 1;
+
+    const tx = sx - x0;
+    const tz = sz - z0;
+    const u = this.fade(tx);
+    const v = this.fade(tz);
+
+    // get random values at the corners of the grid cell
+    const v00 = this.rand01AtLattice(x0, z0, octave);
+    const v10 = this.rand01AtLattice(x1, z0, octave);
+    const v01 = this.rand01AtLattice(x0, z1, octave);
+    const v11 = this.rand01AtLattice(x1, z1, octave);
+
+    // interpolate between bottom corners
+    const a = this.lerp(v00, v10, u);
+
+    // interpolate between top corners
+    const b = this.lerp(v01, v11, u);
+    
+    // interpolate between top and bottom
+    return this.lerp(a, b, v);
+  }
+
+  // sample height at world coordinates by combining multiple octaves of value noise
+  private sampleHeightAtWorld(
+    worldX: number,
+    worldZ: number,
+    gridSizes: number[],
+    multCoeffs: number[],
+  ): number {
+    const octaves = Math.min(gridSizes.length, multCoeffs.length);
+    let sum = 0;
+    let maxPossibleHeight = 0;
+    for (let octave = 0; octave < octaves; octave++) {
+      const frequency = gridSizes[octave] / this.size;
+      const coeff = multCoeffs[octave];
+      const noiseVal = this.sampleValueNoise(worldX, worldZ, octave, frequency);
+      sum += noiseVal * coeff;
+      maxPossibleHeight += coeff;
     }
-    return result;
+    return Math.floor((sum / maxPossibleHeight) * 100);
   }
 
   private generateCubes() {
     const topleftx = this.x - this.size / 2;
     const toplefty = this.y - this.size / 2;
 
-    // chunk position as part of the seed for deterministic per-chunk generation
-    const seed = `${this.x}_${this.y}`;
-    let rng = new Rand(seed);
+    // TODO: wire Chunk.setWorldSeed(...) to a user-provided world seed from app/UI settings.
 
     const NUM_OCTAVES: number = 4;
     const gridSizes: number[] = [4, 8, 16, 32];
     const multCoeffs: number[] = [1.0, 0.5, 0.25, 0.125];
 
     const heightMap = new Float32Array(this.size * this.size);
-    let maxPossibleHeight = 0;
-
-    for (let i = 0; i < NUM_OCTAVES; i++) {
-      const gridSize = gridSizes[i];
-      const currCoeff = multCoeffs[i];
-      const whiteNoise = this.generateWhiteNoise(rng, gridSize);
-      const upsampled = this.upsampleBilinear(whiteNoise, gridSize, this.size);
-      for (let k = 0; k < this.size * this.size; k++) {
-        heightMap[k] += upsampled[k] * currCoeff;
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const worldX = topleftx + j;
+        const worldZ = toplefty + i;
+        heightMap[this.size * i + j] = this.sampleHeightAtWorld(
+          worldX,
+          worldZ,
+          gridSizes.slice(0, NUM_OCTAVES),
+          multCoeffs.slice(0, NUM_OCTAVES),
+        );
       }
-      maxPossibleHeight += currCoeff;
-    }
-
-    for (let k = 0; k < this.size * this.size; k++) {
-      heightMap[k] = Math.floor((heightMap[k] / maxPossibleHeight) * 100); // normalize to [0, 100]
     }
 
     this.cubes = 0;
