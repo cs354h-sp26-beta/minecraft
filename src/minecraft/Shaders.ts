@@ -99,12 +99,29 @@ const dirtTexture = `
 
 const waterTexture = `
     vec3 makeWater(vec2 uv, vec3 world, float scale) {
-      vec3 p = vec3(world.xy, world.z * 0.1) * 3.0;          // scale controls stone size
-      float v = voronoi(p);              // cell distance → grooves
-      float groove = smoothstep(0.05, 0.45, v * 1.6);  // dark at edges
-      float noise = fbm3(vec3(world.xy, 0.0) * 22.0, 3);     // surface variation
-      vec3 baseColor = vec3(0.25, 0.33, 0.8);
-      return baseColor * groove * (0.8 + noise * 0.4);
+
+      vec3 pixelWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
+
+      vec2 p = pixelWorld.xz * 2.0 + pixelWorld.xy * 0.1 + pixelWorld.zy * 0.1; // combine world coords for noise input, with some scaling
+
+      // Two noise layers scrolling in different directions
+      float wave1 = valueNoise(p + vec2(uTime * 0.3, uTime * 0.1));
+      float wave2 = valueNoise(p * 1.5 + vec2(-uTime * 0.2, uTime * 0.25));
+      float wave = (wave1 + wave2) * 0.5;
+
+      //highlights
+
+      float bubble = valueNoise(vec2((pixelWorld.x - pixelWorld.y) * 20.0 - pixelWorld.z * 2.0, pixelWorld.z * 2.0 + uTime * 0.5)); // bubble pattern
+      
+      float specular = clamp((bubble * 12.0) - 11.0, 0.0, 1.0); // threshold to create bright spots
+
+      vec3 deepColor = vec3(0.1, 0.2, 0.5);
+      vec3 shallowColor = vec3(0.2, 0.4, 0.7);
+      vec3 bubbleColor = vec3(0.9, 0.95, 1.0);
+
+      float glint = pow(wave, 5.0);
+
+      return mix(mix(deepColor, shallowColor, wave), bubbleColor, specular) + glint * 0.4;
     }
 `;
 
@@ -159,6 +176,7 @@ export const blankCubeFSText = `
     precision mediump float;
 
     uniform vec4 uLightPos;
+    uniform float uTime;
     
     varying vec4 normal;
     varying vec4 wsPos;

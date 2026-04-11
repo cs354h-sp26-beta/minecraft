@@ -44,7 +44,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Generate initial landscape
     this.chunk = new Chunk(0.0, 0.0, 64);
 
-    this.blankCubeRenderPass = new RenderPass(gl, blankCubeVSText, blankCubeFSText);
+    this.blankCubeRenderPass = new RenderPass(
+      gl,
+      blankCubeVSText,
+      blankCubeFSText,
+    );
     this.cubeGeometry = new Cube();
     this.initBlankCube();
 
@@ -59,9 +63,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui.reset();
 
     this.playerPosition = this.gui.getCamera().pos();
-
   }
-
 
   /**
    * Sets up the blank cube drawing
@@ -81,7 +83,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.cubeGeometry.positionsFlat(),
     );
 
-    this.blankCubeRenderPass.addAttribute("aNorm",
+    this.blankCubeRenderPass.addAttribute(
+      "aNorm",
       4,
       this.ctx.FLOAT,
       false,
@@ -91,7 +94,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.cubeGeometry.normalsFlat(),
     );
 
-    this.blankCubeRenderPass.addAttribute("aUV",
+    this.blankCubeRenderPass.addAttribute(
+      "aUV",
       2,
       this.ctx.FLOAT,
       false,
@@ -101,18 +105,19 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.cubeGeometry.uvFlat(),
     );
 
-    this.blankCubeRenderPass.addInstancedAttribute("aBlockType",
+    this.blankCubeRenderPass.addInstancedAttribute(
+      "aBlockType",
       1, // size (1 float)
       this.ctx.FLOAT,
       false,
       1 * Float32Array.BYTES_PER_ELEMENT, // stride (1 float)
       0, // offset
       undefined,
-      new Float32Array(0)
-
+      new Float32Array(0),
     );
 
-    this.blankCubeRenderPass.addInstancedAttribute("aOffset",
+    this.blankCubeRenderPass.addInstancedAttribute(
+      "aOffset",
       4,
       this.ctx.FLOAT,
       false,
@@ -122,6 +127,13 @@ export class MinecraftAnimation extends CanvasAnimation {
       new Float32Array(0),
     );
 
+    //time variable for animating water & maybe leaves
+    this.blankCubeRenderPass.addUniform(
+      "uTime",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, performance.now() / 1000);
+      },
+    );
     this.blankCubeRenderPass.addUniform(
       "uLightPos",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
@@ -190,6 +202,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.updateAttributeBuffer(
       "aOffset",
       this.chunk.cubePositions(),
+    );
+    this.blankCubeRenderPass.updateAttributeBuffer(
+      "aBlockType",
+      this.chunk.cubeTypes(),
     );
     this.blankCubeRenderPass.drawInstanced(this.chunk.numCubes());
   }
