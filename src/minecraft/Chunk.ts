@@ -102,14 +102,17 @@ export class Chunk {
     }
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
 
+    let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.floor(10.0 * rng.next());
-        const idx = this.size * i + j;
-        this.cubePositionsF32[4 * idx + 0] = topLeftX + j;
-        this.cubePositionsF32[4 * idx + 1] = height;
-        this.cubePositionsF32[4 * idx + 2] = topLeftZ + i;
-        this.cubePositionsF32[4 * idx + 3] = 0;
+        const height = Math.max(heightMap[this.size * i + j], 1);
+        for (let y = 0; y < height; y++) {
+          this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+          this.cubePositionsF32[4 * cubeIdx + 1] = y;
+          this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+          cubeIdx++;
+        }
       }
     }
   }
