@@ -15,7 +15,10 @@ import { Player } from "./Entity.js";
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
 
-  private chunks: Map<string, Chunk>;
+  // TODO: Make into LRU cache. To do this, need to be able to regenerate chunks based on seed.
+  private allVisitedChunks: Map<string, number>; // TODO: Map chunk to seed!
+  private chunkCache: Map<string, Chunk>;
+  private renderedChunks: Map<string, Chunk>;
   private static readonly renderDistance: number = 3;
 
   /*  Cube Rendering */
@@ -39,7 +42,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
-    this.chunks = new Map();
+    this.chunkCache = new Map();
+    this.renderedChunks = new Map();
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
 
@@ -161,10 +165,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   private currentChunk(): Chunk {
     const chunkX = this.worldToChunkCoord(this.player.position.x);
     const chunkZ = this.worldToChunkCoord(this.player.position.z);
-    return this.chunks.get(`${chunkX},${chunkZ}`)!;
+    return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
   private loadChunksAroundPlayer(): void {
+    this.renderedChunks.clear();
+
     const cx = this.worldToChunkCoord(this.player.position.x);
     const cz = this.worldToChunkCoord(this.player.position.z);
 
@@ -174,21 +180,23 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkX = cx + di * 64;
         const chunkZ = cz + dj * 64;
         const key = `${chunkX},${chunkZ}`;
-        if (!this.chunks.has(key)) {
-          this.chunks.set(key, new Chunk(chunkX, chunkZ, 64));
+        if (!this.chunkCache.has(key)) {
+          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, 64));
         }
+        const cachedChunk = this.chunkCache.get(key)!;
+        this.renderedChunks.set(key, cachedChunk);
       }
     }
   }
 
   private getAllCubePositions(): Float32Array {
     let totalCubes = 0;
-    for (const chunk of this.chunks.values()) {
+    for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
     const combined = new Float32Array(4 * totalCubes);
     let offset = 0;
-    for (const chunk of this.chunks.values()) {
+    for (const chunk of this.renderedChunks.values()) {
       const positions = chunk.cubePositions();
       combined.set(positions, offset);
       offset += positions.length;
@@ -204,7 +212,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
     this.player.position.add(this.gui.walkDir().copy().scale(dt));
     this.player.position.add(this.player.velocity.copy().scale(dt));
 
@@ -229,7 +236,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
 
-    // this.loadChunksAroundPlayer();
+    this.loadChunksAroundPlayer();
 
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
