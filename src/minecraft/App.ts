@@ -15,8 +15,8 @@ import { Player } from "./Entity.js";
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
 
-  chunks: Map<string, Chunk> = new Map();
-  private renderDistance: number = 3;
+  private chunks: Map<string, Chunk>;
+  private static readonly renderDistance: number = 3;
 
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -36,7 +36,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.canvas2d = document.getElementById("textCanvas") as HTMLCanvasElement;
 
     this.ctx = Debugger.makeDebugContext(this.ctx);
-    let gl = this.ctx;
+    const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
     const playerPosition = this.gui.getCamera().pos();
@@ -157,12 +157,19 @@ export class MinecraftAnimation extends CanvasAnimation {
     return Math.floor(worldVal / 64) * 64;
   }
 
-  private loadChunksAroundPlayer(): void {
-    const cx = this.worldToChunkCoord(this.playerPosition.x);
-    const cz = this.worldToChunkCoord(this.playerPosition.z);
+  private currentChunk(): Chunk {
+    const chunkX = this.worldToChunkCoord(this.player.position.x);
+    const chunkZ = this.worldToChunkCoord(this.player.position.z);
+    return this.chunks.get(`${chunkX},${chunkZ}`)!;
+  }
 
-    for (let di = -this.renderDistance; di <= this.renderDistance; di++) {
-      for (let dj = -this.renderDistance; dj <= this.renderDistance; dj++) {
+  private loadChunksAroundPlayer(): void {
+    const cx = this.worldToChunkCoord(this.player.position.x);
+    const cz = this.worldToChunkCoord(this.player.position.z);
+
+    const rd = MinecraftAnimation.renderDistance;
+    for (let di = -rd; di <= rd; di++) {
+      for (let dj = -rd; dj <= rd; dj++) {
         const chunkX = cx + di * 64;
         const chunkZ = cz + dj * 64;
         const key = `${chunkX},${chunkZ}`;
@@ -205,7 +212,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Check for collisions.
     //
     // FIXME: Ew. This system sucks. It's what the hint says to do but...
-    const floorY = this.chunk.floorHeight(
+    const floorY = this.currentChunk().floorHeight(
       this.player.position.x,
       this.player.position.z,
     );
@@ -213,7 +220,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.player.position.y > floorY + Player.hitboxHeight) {
       const g = -9.8 * dt;
       const dv = new Vec3([0.0, g, 0.0]);
-      this.player.velocity.add(dv);
+      // this.player.velocity.add(dv);
     } else {
       // Stop all movement.
       //
@@ -221,7 +228,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
 
-    this.loadChunksAroundPlayer();
+    // this.loadChunksAroundPlayer();
 
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
@@ -254,7 +261,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // If player is not already in the air, launch them up at 10 units/sec.
     //
     // FIXME: Same problem as in draw loop.
-    const floorY = this.chunk.floorHeight(
+    const floorY = this.currentChunk().floorHeight(
       this.player.position.x,
       this.player.position.z,
     );
