@@ -39,6 +39,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
+    this.chunks = new Map();
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
 
