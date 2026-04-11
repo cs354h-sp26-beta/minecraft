@@ -17,7 +17,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
 
   // TODO: Map chunk to seed!
-  private allVisitedChunks: Map<string, string>;
+  private chunkSeeds: Map<string, string>;
 
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
@@ -45,7 +45,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
-    this.allVisitedChunks = new Map();
+    this.chunkSeeds = new Map();
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     const playerPosition = this.gui.getCamera().pos();
@@ -176,7 +176,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private initChunk(chunkX: number, chunkZ: number): Chunk {
     const chunk = new Chunk(chunkX, chunkZ, 64);
     const key = `${chunkX},${chunkZ}`;
-    this.allVisitedChunks.set(key, chunk.seed);
+    this.chunkSeeds.set(key, chunk.seed);
     return chunk;
   }
 
@@ -207,7 +207,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * 64;
         const key = `${chunkX},${chunkZ}`;
         if (!this.chunkCache.has(key)) {
-          const chunkToLoadSeed = this.allVisitedChunks.get(key);
+          const chunkToLoadSeed = this.chunkSeeds.get(key);
           if (chunkToLoadSeed === undefined) {
             const initChunk = this.initChunk(chunkX, chunkZ);
             this.chunkCache.set(key, initChunk);
