@@ -1,4 +1,3 @@
-
 import {
   ACTIVE_BIOME_PROFILES,
   BIOME_BLEND_TUNING,
@@ -15,7 +14,7 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
-  // world seed 
+  // world seed
   public static setWorldSeed(seed: string): void {
     Chunk.worldSeed = seed;
   }
@@ -57,7 +56,6 @@ export class Chunk {
     const t = this.clamp01((x - edge0) / (edge1 - edge0));
     return t * t * (3 - 2 * t);
   }
-
 
   // bilinear interpolation of 2 biomes for transitions
   private blendBiomeProfiles(
@@ -114,7 +112,7 @@ export class Chunk {
 
     // interpolate between top corners
     const b = this.lerp(v01, v11, u);
-    
+
     // interpolate between top and bottom
     return this.lerp(a, b, v);
   }
@@ -133,7 +131,7 @@ export class Chunk {
 
     const biomeCount = ACTIVE_BIOME_PROFILES.length;
     const scaled = selector * biomeCount;
-    
+
     // Find which two biomes we're between
     const lowerIdx = Math.floor(scaled);
     const upperIdx = Math.min(biomeCount - 1, lowerIdx + 1);
@@ -149,7 +147,7 @@ export class Chunk {
       } else {
         blendFactor = this.smoothstep(1 - transitionWidth, 1, frac);
       }
-      
+
       return this.blendBiomeProfiles(
         ACTIVE_BIOME_PROFILES[lowerIdx],
         ACTIVE_BIOME_PROFILES[upperIdx],

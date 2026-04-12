@@ -90,8 +90,8 @@ export const CRAG_BIOME: BiomeProfile = {
 // Runtime selection order maps to selector buckets from low to high.
 export const ACTIVE_BIOME_PROFILES: BiomeProfile[] = [
   PLAINS_BIOME,
-//   HILLS_BIOME,
-//   HIGHLANDS_BIOME,
+  //   HILLS_BIOME,
+  //   HIGHLANDS_BIOME,
   MOUNTAINS_BIOME,
-//   CRAG_BIOME,
+  //   CRAG_BIOME,
 ];
