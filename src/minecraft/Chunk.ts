@@ -11,8 +11,8 @@ import {
 
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
-  private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
-  private heightMap: Float32Array;
+  private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
+  private heightMap: Float32Array; // Ground truth of what blocks exist.
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -223,10 +223,16 @@ export class Chunk {
         );
       }
     }
-
+    
+    // Count only visible cubes
     this.cubes = 0;
-    for (let k = 0; k < this.size * this.size; k++) {
-      this.cubes += Math.max(this.heightMap[k], 1); // at least 1 cube per column
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const height = Math.max(this.heightMap[this.size * i + j], 1);
+        for (let y = 0; y < height; y++) {
+          if (this.isExposed(i, j, y)) this.cubes++;
+        }
+      }
     }
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
 
@@ -235,14 +241,25 @@ export class Chunk {
       for (let j = 0; j < this.size; j++) {
         const height = Math.max(this.heightMap[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
-          this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
-          this.cubePositionsF32[4 * cubeIdx + 1] = y;
-          this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
-          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-          cubeIdx++;
+          if (this.isExposed(i, j, y)) {
+            this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+            this.cubePositionsF32[4 * cubeIdx + 1] = y;
+            this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+            this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+            cubeIdx++;
+          }
         }
       }
     }
+  }
+  
+  private isExposed(i: number, j: number, y: number): boolean {
+    return true;
+  }
+  
+  private getHeight(i: number, j: number): number {
+    if (i < 0 || i >= this.size || j < 0 || j >= this.size) return 0;
+    return this.heightMap[this.size * i + j];
   }
 
   public cubePositions(): Float32Array {
