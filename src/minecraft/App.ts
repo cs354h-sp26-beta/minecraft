@@ -1,4 +1,4 @@
-import { Mat4, type Vec3, Vec4 } from "../lib/TSM.js";
+import { Mat4, Vec3, Vec4 } from "../lib/TSM.js";
 import { CanvasAnimation } from "../lib/webglutils/CanvasAnimation.js";
 import { Debugger } from "../lib/webglutils/Debugging.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
@@ -392,6 +392,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     const allPositions = this.getAllCubePositions();
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
+    //this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
     this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
 
   }
