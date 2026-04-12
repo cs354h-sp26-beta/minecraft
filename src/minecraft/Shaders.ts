@@ -39,6 +39,29 @@ const noiseUtils = `
         return vec3(hash(p.xy), hash(p.yz), hash(p.zx));
       }
 
+      vec2 gradient(vec2 p) {
+        float h = hash(p) * 6.2831853;  // angle in [0, 2π]
+        return vec2(cos(h), sin(h));
+      }
+
+      float perlin(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+
+        // Smooth interpolation curve (quintic — Perlin's improved version)
+        vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
+        // Dot products of gradients with offset vectors at 4 corners
+        float a = dot(gradient(i + vec2(0.0, 0.0)), f - vec2(0.0, 0.0));
+        float b = dot(gradient(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+        float c = dot(gradient(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+        float d = dot(gradient(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+
+        // Bilinear blend. Perlin returns values in ~[-0.7, 0.7], remap to [0, 1]
+        float n = mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        return n * 0.5 + 0.5;
+      }
+
       float valueNoise(vec2 p) {
           vec2 i = floor(p);
           vec2 f = fract(p);
@@ -55,7 +78,7 @@ const noiseUtils = `
           float amp = 0.5;
           for (int i = 0; i < 4; i++) {
               if (i >= octaves) break;
-              val += amp * valueNoise(p);
+              val += amp * perlin(p);
               p *= 2.0;
               amp *= 0.5;
           }
@@ -88,9 +111,12 @@ const noiseUtils = `
 const dirtTexture = `
     vec3 makeDirt(vec2 uv) {
         // dirt block: add some noise to brown
+
+        vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
+
         vec3 baseColor = vec3(0.545, 0.271, 0.075);
-        float noise = fbm(floor(uv * 16.0), 4);
-        vec3 textureColor = baseColor * noise + baseColor * 0.8; // add subtle noise
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) * 0.8 + hash(pixelUV) * 0.3;
+        vec3 textureColor = baseColor * noise; // add subtle noise
         if (noise < 0.2) textureColor -= vec3(0.14, 0.08, 0.04); // add some darker spots
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
         return textureColor;
@@ -105,9 +131,13 @@ const waterTexture = `
       vec2 p = pixelWorld.xz * 2.0 + pixelWorld.xy * 0.1 + pixelWorld.zy * 0.1; // combine world coords for noise input, with some scaling
 
       // Two noise layers scrolling in different directions
-      float wave1 = valueNoise(p + vec2(uTime * 0.3, uTime * 0.1));
-      float wave2 = valueNoise(p * 1.5 + vec2(-uTime * 0.2, uTime * 0.25));
-      float wave = (wave1 + wave2) * 0.5;
+      float wave1 = perlin(p + vec2(uTime * 0.3, uTime * 0.1));
+      float wave2 = perlin(p * 2.5 + vec2(-uTime * 0.2, uTime * 0.25));
+      float wave = (wave1 + wave2) * 0.6;
+
+      float glint = wave * 0.9 * wave;
+
+      wave = clamp(pow(wave, 4.5), 0.0, 1.0); // amplify waves and clamp
 
       //highlights
 
@@ -119,9 +149,7 @@ const waterTexture = `
       vec3 shallowColor = vec3(0.2, 0.4, 0.7);
       vec3 bubbleColor = vec3(0.9, 0.95, 1.0);
 
-      float glint = pow(wave, 5.0);
-
-      return mix(mix(deepColor, shallowColor, wave), bubbleColor, specular) + glint * 0.4;
+      return mix(mix(deepColor, shallowColor, wave), bubbleColor, specular) + glint * 0.3;
     }
 `;
 
@@ -200,7 +228,7 @@ export const blankCubeFSText = `
         float dot_nl = dot(normalize(lightDirection), normalize(normal));
 	    dot_nl = clamp(dot_nl, 0.0, 1.0);
 
-        vec3 textureColor;
+        vec3 textureColor = vec3(1.0, 0.5, 1.0);
 
         if (vBlockType == 0.0) {
             textureColor = makeDirt(uv);
@@ -208,9 +236,6 @@ export const blankCubeFSText = `
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
-        }
-        else {
-            textureColor = vec3(1.0);
         }
 
         gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0) * textureColor, 1.0);
