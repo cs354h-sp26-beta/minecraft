@@ -246,11 +246,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.position.z,
     );
     // Apply gravity acceleration.
-    console.log(`[draw]: this.player.position.y=${this.player.position.y}`);
-    console.log(`[draw]: floorY=${floorY}`);
-    console.log(
-      `[draw]: floorY + Player.hitboxHeight=${floorY + Player.hitboxHeight}`,
-    );
     if (this.player.position.y > floorY + Player.hitboxHeight) {
       const gDelta = -9.8 * dt;
       const gDv = new Vec3([0.0, gDelta, 0.0]);
