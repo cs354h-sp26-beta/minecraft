@@ -297,9 +297,6 @@ export class Chunk {
         const rdZ = worldZ - nearZ;
         const hbr = Player.hitboxRadius;
         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
-          //console.log(
-          //  `[floorHeight]: Unit intersects player hitbox at x=${nearX}, z=${nearZ}`,
-          //);
           const cubeWorldY =
             this.heightMap[cubeChunkZ * this.size + cubeChunkX];
           floorY = Math.max(floorY, cubeWorldY - 0.5);
@@ -310,16 +307,17 @@ export class Chunk {
     return floorY;
   }
 
-  // FIXME: Mapping not working (only returns undefined)
+  // Gets the cube type given an x, z, y chunk coordinate.
+  // Returns undefined for an empty cube.
   public cubeType(
     worldX: number,
     worldZ: number,
     worldY: number,
   ): number | undefined {
     const [topLeftX, topLeftZ] = this.origin();
-    const cubeChunkX = Math.round(worldX - topLeftX);
-    const cubeChunkZ = Math.round(worldZ - topLeftZ);
-    const cubeChunkY = Math.round(worldY);
+    const cubeChunkX = Math.floor(worldX - topLeftX);
+    const cubeChunkZ = Math.floor(worldZ - topLeftZ);
+    const cubeChunkY = Math.ceil(worldY);
 
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
     console.log(key);

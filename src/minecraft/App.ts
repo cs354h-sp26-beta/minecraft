@@ -246,11 +246,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.position.z,
     );
     // Apply gravity acceleration.
-    //console.log(`[draw]: this.player.position.y=${this.player.position.y}`);
-    //console.log(`[draw]: floorY=${floorY}`);
-    //console.log(
-    //  `[draw]: floorY + Player.hitboxHeight=${floorY + Player.hitboxHeight}`,
-    //);
     if (this.player.position.y > floorY + Player.hitboxHeight) {
       const gDelta = -9.8 * dt;
       const gDv = new Vec3([0.0, gDelta, 0.0]);
@@ -285,6 +280,29 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
   }
 
+  // TODO: Finish function
+  private intersectCube(
+    rayOrigin: Vec3,
+    rayDir: Vec3,
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+  ): number | null {
+    let cubeX = Math.floor(worldX);
+    let cubeZ = Math.floor(worldZ);
+    let cubeY = Math.ceil(worldY);
+
+    let bestT = Infinity;
+
+    for (let it = 0; it < 6; it++) {
+      let mod0 = it % 3;
+      if (rayDir.at(mod0) == 0) {
+        continue;
+      }
+    }
+    return null;
+  }
+
   public getGUI(): GUI {
     return this.gui;
   }
@@ -304,7 +322,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
-  // TODO: Fix mapping and add cube intersection logic
+  // TODO: Add cube intersection logic
   public intersectCubes(rayOrigin: Vec3, rayDir: Vec3) {
     console.log(
       this.player.position.x,
@@ -312,9 +330,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.position.y,
     );
 
-    for (let dx = -2; dx <= 2; dx++) {
-      for (let dz = -2; dz <= 2; dz++) {
-        for (let dy = -2; dy <= 2; dy++) {
+    let minT = Infinity;
+
+    // Have player's reach extend 4 cubes
+    for (let dx = -4; dx <= 4; dx++) {
+      for (let dz = -4; dz <= 4; dz++) {
+        for (let dy = -4; dy <= 4; dy++) {
           let x = this.player.position.x + dx;
           let z = this.player.position.z + dz;
           let y = this.player.position.y + dy;
@@ -323,6 +344,14 @@ export class MinecraftAnimation extends CanvasAnimation {
           const chunkZ = this.worldToChunkCoord(z);
           let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
           let cubeType = currentChunk.cubeType(x, z, y);
+
+          if (cubeType !== undefined) {
+            let t = this.intersectCube(rayOrigin, rayDir, x, z, y);
+            // TODO: Save identifier of cube and its cube face that was hit for closest intersection
+            if (t !== null && t < minT) {
+              minT = t;
+            }
+          }
         }
       }
     }
