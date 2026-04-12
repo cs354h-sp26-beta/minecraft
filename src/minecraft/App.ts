@@ -13,6 +13,8 @@ import {
 } from "./Shaders.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
+  public static readonly dayDuration = 1440.0;
+
   private gui: GUI;
 
   chunk: Chunk;
@@ -27,6 +29,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private backgroundColor: Vec4;
 
   private canvas2d: HTMLCanvasElement;
+  private overlayCtx: CanvasRenderingContext2D;
 
   // Player's head position in world coordinate.
   // Player should extend two units down from this location, and 0.4 units radially.
@@ -36,6 +39,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     super(canvas);
 
     this.canvas2d = document.getElementById("textCanvas") as HTMLCanvasElement;
+    const overlayCtx = this.canvas2d.getContext("2d");
+    if (!overlayCtx) {
+      throw new Error("Failed to create 2D overlay context.");
+    }
+    this.overlayCtx = overlayCtx;
 
     this.ctx = Debugger.makeDebugContext(this.ctx);
     const gl = this.ctx;
@@ -108,7 +116,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.skyboxRenderPass.addUniform(
       "uTime",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-        gl.uniform1f(loc, performance.now() / 1000);
+        gl.uniform1f(loc, this.getTimeValue());
       },
     );
 
@@ -187,7 +195,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.addUniform(
       "uTime",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-        gl.uniform1f(loc, performance.now() / 1000);
+        gl.uniform1f(loc, this.getTimeValue());
       },
     );
     this.blankCubeRenderPass.addUniform(
@@ -248,6 +256,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
     this.drawScene(0, 0, 1280, 960);
+    this.drawOverlay();
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
@@ -291,6 +300,49 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     //TODO: If the player is not already in the lair, launch them upwards at 10 units/sec.
+  }
+
+  private drawOverlay(): void {
+    const ctx = this.overlayCtx;
+    const x = 18;
+    const y = 18;
+    const timeLine = `Time ${this.formatDayTime(this.getCurrentDayTime())}`;
+
+    ctx.clearRect(0, 0, this.canvas2d.width, this.canvas2d.height);
+    ctx.save();
+    ctx.font = "14px monospace";
+    ctx.textBaseline = "top";
+    const panelWidth = ctx.measureText(timeLine).width + 20;
+    const panelHeight = 32;
+    ctx.fillStyle = "rgba(12, 18, 28, 0.58)";
+    ctx.fillRect(x - 10, y - 8, panelWidth, panelHeight);
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText(timeLine, x, y);
+
+    ctx.restore();
+  }
+
+  private formatDayTime(value: number): string {
+    const wrapped = Math.floor(this.wrapDayTime(value));
+    const hours24 = Math.floor(wrapped / 60);
+    const minutes = wrapped % 60;
+    const suffix = hours24 < 12 ? "AM" : "PM";
+    const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+    const minuteText = minutes < 10 ? `0${minutes}` : String(minutes);
+    return `${hours12}:${minuteText} ${suffix}`;
+  }
+
+  private getCurrentDayTime(): number {
+    return this.wrapDayTime(this.getTimeValue());
+  }
+
+  private getTimeValue(): number {
+    return performance.now() / 1000;
+  }
+
+  private wrapDayTime(value: number): number {
+    const dayDuration = MinecraftAnimation.dayDuration;
+    return ((value % dayDuration) + dayDuration) % dayDuration;
   }
 }
 

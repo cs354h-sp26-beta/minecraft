@@ -251,6 +251,11 @@ export const skyboxFSText = `
     const float CLOUD_COVERAGE = 0.57;
     const float CLOUD_DENSITY = 0.33;
     const int CLOUD_STEPS = 2;
+    const float DAY_DURATION = 1440.0;
+    const float TAU = 6.28318530718;
+    const float SUNSET_TIME = 18.0 / 24.0;
+    const float SUNRISE_TIME = 6.0 / 24.0;
+    const float TWILIGHT_DURATION = 1.5 / 24.0;
 
     vec3 fade(vec3 t) {
         return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
@@ -344,22 +349,88 @@ export const skyboxFSText = `
         return exp(-radialOffset / CLOUD_RANGE_END);
     }
 
+    vec3 rotateAroundAxis(vec3 v, vec3 axis, float angle) {
+        float s = sin(angle);
+        float c = cos(angle);
+        return v * c + cross(axis, v) * s + axis * dot(axis, v) * (1.0 - c);
+    }
+
+    float wrappedPhaseDistance(float a, float b) {
+        float d = abs(a - b);
+        return min(d, 1.0 - d);
+    }
+
+    float twilightWindow(float progress, float center, float duration) {
+        float halfWidth = duration * 0.5;
+        float dist = wrappedPhaseDistance(progress, center);
+        return 1.0 - smoothstep(halfWidth * 0.35, halfWidth, dist);
+    }
+
     void main() {
         vec3 dir = normalize(vDirection);
         float skyHeight = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
 
-        vec3 horizonColor = vec3(0.70, 0.86, 0.98);
-        vec3 zenithColor = vec3(0.18, 0.48, 0.90);
-        vec3 skyColor = mix(horizonColor, zenithColor, pow(skyHeight, 0.65));
+        vec3 dayHorizonColor = vec3(0.70, 0.86, 0.98);
+        vec3 dayZenithColor = vec3(0.18, 0.48, 0.90);
+        vec3 daySkyColor = mix(dayHorizonColor, dayZenithColor, pow(skyHeight, 0.65));
+        vec3 nightHorizonColor = vec3(0.03, 0.06, 0.14);
+        vec3 nightZenithColor = vec3(0.0, 0.0, 0.03);
+        vec3 nightSkyColor = mix(nightHorizonColor, nightZenithColor, pow(skyHeight, 0.78));
 
-        vec3 sunDirection = normalize(vec3(-0.35, 0.82, -0.45));
+        vec3 orbitStartDirection = normalize(vec3(-0.35, 0.82, -0.45));
+        vec3 orbitHorizonDirection = normalize(vec3(orbitStartDirection.x, 0.0, orbitStartDirection.z));
+        vec3 orbitNormal = normalize(cross(vec3(0.0, 1.0, 0.0), orbitHorizonDirection));
+        float dayProgress = mod(uTime, DAY_DURATION) / DAY_DURATION;
+        float solarArc = dayProgress * TAU;
+        vec3 sunDirection = normalize(
+            orbitHorizonDirection * sin(solarArc) + vec3(0.0, 1.0, 0.0) * -cos(solarArc)
+        );
+        vec3 moonDirection = -sunDirection;
+        float dayMix = smoothstep(-0.06, 0.18, sunDirection.y);
+        dayMix = smoothstep(0.04, 0.96, dayMix);
+        float sunriseStrength = twilightWindow(dayProgress, SUNRISE_TIME, TWILIGHT_DURATION);
+        float sunsetStrength = twilightWindow(dayProgress, SUNSET_TIME, TWILIGHT_DURATION);
+        float twilightStrength = max(sunriseStrength, sunsetStrength);
         float sunAmount = max(dot(dir, sunDirection), 0.0);
-        float sunDisk = smoothstep(0.995, 0.9992, sunAmount);
-        float sunGlow = pow(sunAmount, 32.0);
+        float sunDisk = smoothstep(0.9983, 0.99945, sunAmount);
+        float sunGlow = pow(sunAmount, 54.0);
+        float sunSideWide = pow(sunAmount, 1.35);
+        float sunSideCore = pow(sunAmount, 10.0);
+        float horizonBand = 1.0 - smoothstep(0.01, 0.24, max(dir.y, 0.0));
+        horizonBand *= 1.0 - smoothstep(0.24, 0.48, max(dir.y, 0.0));
+        float twilightBlend = twilightStrength * sunSideWide * (0.18 + 0.82 * horizonBand);
+        vec3 sunriseColor = vec3(1.0, 0.48, 0.12);
+        vec3 sunsetColor = vec3(0.96, 0.22, 0.05);
+        vec3 twilightColor = mix(sunriseColor, sunsetColor, sunsetStrength / max(twilightStrength, 0.0001));
+        float solarGlowStrength = mix(0.02, 0.12, smoothstep(-0.02, 0.24, sunDirection.y));
+        vec3 sunGlowColor = mix(twilightColor, vec3(1.0, 0.92, 0.72), smoothstep(-0.04, 0.20, sunDirection.y));
+        vec3 sunDiskColor = mix(vec3(1.0, 0.68, 0.22), vec3(1.0, 0.94, 0.80), smoothstep(-0.02, 0.16, sunDirection.y));
 
-        vec3 background = skyColor;
-        background += vec3(1.0, 0.92, 0.72) * sunGlow * 0.28;
-        background += vec3(1.0, 0.95, 0.82) * sunDisk;
+        vec3 moonRight = normalize(cross(orbitNormal, moonDirection));
+        vec3 moonUp = normalize(cross(moonDirection, moonRight));
+        vec2 moonUv = vec2(dot(dir, moonRight), dot(dir, moonUp));
+        float moonRadius = 0.020;
+        float moonFeather = 0.0025;
+        float moonDisk = 1.0 - smoothstep(moonRadius, moonRadius + moonFeather, length(moonUv));
+        float crescentShadow = 1.0 - smoothstep(
+            moonRadius,
+            moonRadius + moonFeather,
+            length(moonUv + vec2(moonRadius * 0.62, 0.0))
+        );
+        float moonCrescent = moonDisk * (1.0 - crescentShadow);
+        float moonHalo = (1.0 - smoothstep(moonRadius * 1.4, moonRadius * 3.0, length(moonUv))) * 0.18;
+        vec3 moonBodyColor = vec3(0.72, 0.78, 0.84);
+        vec3 moonLightColor = vec3(0.98, 0.99, 1.0);
+
+        vec3 background = mix(nightSkyColor, daySkyColor, dayMix);
+        background = mix(background, mix(background, twilightColor, 0.72), twilightBlend * 0.34);
+        background = mix(background, twilightColor, twilightStrength * horizonBand * sunSideWide * 0.10);
+        background += twilightColor * sunSideCore * twilightStrength * 0.025;
+        background = mix(background, moonBodyColor, moonDisk * 0.06 * (1.0 - dayMix));
+        background = mix(background, moonLightColor, moonCrescent * (1.0 - dayMix * 0.85));
+        background += moonLightColor * moonHalo * (1.0 - dayMix * 0.9);
+        background += sunGlowColor * sunGlow * solarGlowStrength;
+        background += sunDiskColor * sunDisk;
 
         vec3 color = background;
 
@@ -395,10 +466,10 @@ export const skyboxFSText = `
                     float extinction = density * stepSize * CLOUD_DENSITY;
                     float alpha = 1.0 - exp(-extinction);
 
-                    vec3 cloudBase = vec3(0.92, 0.95, 0.98);
-                    vec3 cloudLit = vec3(1.00, 0.99, 0.97);
+                    vec3 cloudBase = mix(vec3(0.10, 0.12, 0.18), vec3(0.92, 0.95, 0.98), dayMix);
+                    vec3 cloudLit = mix(vec3(0.18, 0.21, 0.30), vec3(1.00, 0.99, 0.97), dayMix);
 
-                    float directLight = 0.35 + 0.65 * pow(sunAmount, 2.0);
+                    float directLight = mix(0.16, 0.35, dayMix) + 0.65 * pow(sunAmount, 2.0) * dayMix;
                     float lightTransmittance = exp(-density * 1.15);
 
                     vec3 sampleColor = mix(cloudBase, cloudLit, directLight * lightTransmittance);
