@@ -20,6 +20,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private renderedChunks: Map<string, Chunk>;
 
   private static readonly renderDistance: number = 1;
+  private static readonly chunkSize: number = 64;
 
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -158,8 +159,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private worldToChunkCoord(worldVal: number): number {
-    // returns the center of the chunk on the grid
-    return Math.floor(worldVal / 64) * 64;
+    const s = MinecraftAnimation.chunkSize;
+    return Math.floor((worldVal + s / 2) / s) * s;
   }
 
   private currentChunk(): Chunk {
@@ -189,13 +190,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     const cz = this.worldToChunkCoord(this.player.position.z);
 
     const rd = MinecraftAnimation.renderDistance;
+    const step = MinecraftAnimation.chunkSize;
     for (let di = -rd; di <= rd; di++) {
       for (let dj = -rd; dj <= rd; dj++) {
-        const chunkX = cx + di * 64;
-        const chunkZ = cz + dj * 64;
+        const chunkX = cx + di * step;
+        const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         if (!this.chunkCache.has(key)) {
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, 64));
+          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step));
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
@@ -229,7 +231,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    const walkDx = this.gui.walkDir().scale(dt, new Vec3());
+    const walkDx = this.gui.walkDir();
     const momentumDx = this.player.velocity.scale(dt, new Vec3());
     const totalDx = walkDx.add(momentumDx, new Vec3());
     this.player.position.add(totalDx);
@@ -244,6 +246,11 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.position.z,
     );
     // Apply gravity acceleration.
+    console.log(`[draw]: this.player.position.y=${this.player.position.y}`);
+    console.log(`[draw]: floorY=${floorY}`);
+    console.log(
+      `[draw]: floorY + Player.hitboxHeight=${floorY + Player.hitboxHeight}`,
+    );
     if (this.player.position.y > floorY + Player.hitboxHeight) {
       const gDelta = -9.8 * dt;
       const gDv = new Vec3([0.0, gDelta, 0.0]);

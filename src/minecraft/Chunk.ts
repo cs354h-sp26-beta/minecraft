@@ -291,6 +291,9 @@ export class Chunk {
         const rdZ = worldZ - nearZ;
         const hbr = Player.hitboxRadius;
         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
+          console.log(
+            `[floorHeight]: Unit intersects player hitbox at x=${nearX}, z=${nearZ}`,
+          );
           const cubeWorldY =
             this.heightMap[cubeChunkZ * this.size + cubeChunkX];
           floorY = Math.max(floorY, cubeWorldY - 0.5);
