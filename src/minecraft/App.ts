@@ -259,6 +259,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     return combined;
   }
 
+  private getAllCubeTypes(): Float32Array {
+    let totalCubes = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      totalCubes += chunk.numCubes();
+    }
+    const combined = new Float32Array(totalCubes);
+    let offset = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      const types = chunk.cubeTypes();
+      combined.set(types, offset);
+      offset += types.length;
+    }
+    return combined;
+  }
+
   /**
    * Draws a single frame
    *
@@ -315,8 +330,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.viewport(x, y, width, height);
 
     const allPositions = this.getAllCubePositions();
+    const allTypes = this.getAllCubeTypes();
+    const instanceCount = allTypes.length;
+
+    if (allPositions.length !== instanceCount * 4) {
+      throw new Error(
+        `Instance buffer mismatch: ${allPositions.length / 4} positions vs ${instanceCount} block types`,
+      );
+    }
+
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
-    this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
+    this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.drawInstanced(instanceCount);
   }
 
   public getGUI(): GUI {
