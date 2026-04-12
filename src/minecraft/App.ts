@@ -15,7 +15,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
 
   chunks: Map<string, Chunk> = new Map();
-  private renderDistance: number = 3;
+  private renderDistance: number = 1;
 
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -221,6 +221,41 @@ export class MinecraftAnimation extends CanvasAnimation {
     const allPositions = this.getAllCubePositions();
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
     this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
+  }
+
+  /**
+   * Returns the position of the highest block within n units of the player,
+   * or null if no blocks are found within range.
+   */
+  public getHighestBlockNearby(n: number): Vec3 | null {
+    const px = this.playerPosition.x;
+    const pz = this.playerPosition.z;
+    const nSq = n * n;
+    let bestY = -Infinity;
+    let bestX = 0;
+    let bestZ = 0;
+
+    for (const chunk of this.chunks.values()) {
+      const positions = chunk.cubePositions();
+      const count = chunk.numCubes();
+      for (let i = 0; i < count; i++) {
+        const x = positions[4 * i];
+        const y = positions[4 * i + 1];
+        const z = positions[4 * i + 2];
+        const dx = x - px;
+        const dz = z - pz;
+        if (dx * dx + dz * dz <= nSq && y > bestY) {
+          bestY = y;
+          bestX = x;
+          bestZ = z;
+        }
+      }
+    }
+
+    if (bestY === -Infinity) {
+      return null;
+    }
+    return new Vec3([bestX, bestY, bestZ]);
   }
 
   public getGUI(): GUI {
