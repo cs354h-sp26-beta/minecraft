@@ -140,6 +140,34 @@ export class GUI implements IGUI {
       this.camera.rotate(new Vec3([0, 1, 0]), -GUI.rotationSpeed * dx);
       this.camera.rotate(this.camera.right(), -GUI.rotationSpeed * dy);
     }
+    // Create ray in world coordinates using camera position
+    if (this.dragging) {
+      let mousePos = new Vec4();
+      mousePos.x = (x / this.width) * 2 - 1;
+      mousePos.y = 1 - (y / this.height) * 2;
+      mousePos.z = -1;
+      mousePos.w = 1;
+
+      mousePos = this.projMatrix().inverse(new Mat4()).multiplyVec4(mousePos);
+      mousePos.divide(
+        new Vec4([mousePos.w, mousePos.w, mousePos.w, mousePos.w]),
+      );
+      mousePos = this.viewMatrix().inverse(new Mat4()).multiplyVec4(mousePos);
+
+      let cameraPos = new Vec3([
+        this.camera.pos().x,
+        this.camera.pos().y,
+        this.camera.pos().z,
+      ]);
+      let rayDir = new Vec3([
+        mousePos.x - cameraPos.x,
+        mousePos.y - cameraPos.y,
+        mousePos.z - cameraPos.z,
+      ]);
+      rayDir.normalize();
+      // TODO: Get height at each tile in 5x5 area around player for now (doesn't account for overhangs)
+      this.animation.intersectCubes(cameraPos, rayDir);
+    }
   }
 
   public walkDir(): Vec3 {

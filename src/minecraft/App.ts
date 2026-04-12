@@ -246,11 +246,11 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.position.z,
     );
     // Apply gravity acceleration.
-    console.log(`[draw]: this.player.position.y=${this.player.position.y}`);
-    console.log(`[draw]: floorY=${floorY}`);
-    console.log(
-      `[draw]: floorY + Player.hitboxHeight=${floorY + Player.hitboxHeight}`,
-    );
+    //console.log(`[draw]: this.player.position.y=${this.player.position.y}`);
+    //console.log(`[draw]: floorY=${floorY}`);
+    //console.log(
+    //  `[draw]: floorY + Player.hitboxHeight=${floorY + Player.hitboxHeight}`,
+    //);
     if (this.player.position.y > floorY + Player.hitboxHeight) {
       const gDelta = -9.8 * dt;
       const gDv = new Vec3([0.0, gDelta, 0.0]);
@@ -301,6 +301,30 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.player.position.y <= floorY + Player.hitboxHeight) {
       const dv = new Vec3([0.0, 10.0, 0.0]);
       this.player.velocity.add(dv);
+    }
+  }
+
+  // TODO: Fix mapping and add cube intersection logic
+  public intersectCubes(rayOrigin: Vec3, rayDir: Vec3) {
+    console.log(
+      this.player.position.x,
+      this.player.position.z,
+      this.player.position.y,
+    );
+
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          let x = this.player.position.x + dx;
+          let z = this.player.position.z + dz;
+          let y = this.player.position.y + dy;
+
+          const chunkX = this.worldToChunkCoord(x);
+          const chunkZ = this.worldToChunkCoord(z);
+          let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+          let cubeType = currentChunk.cubeType(x, z, y);
+        }
+      }
     }
   }
 }

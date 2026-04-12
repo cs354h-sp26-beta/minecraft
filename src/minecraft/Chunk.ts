@@ -18,6 +18,8 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
+  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type
+
   // world seed
   public static setWorldSeed(seed: string): void {
     Chunk.worldSeed = seed;
@@ -28,6 +30,7 @@ export class Chunk {
     this.z = centerZ;
     this.size = size;
     this.cubes = size * size;
+    this.positionMap = new Map();
     this.generateCubes();
   }
 
@@ -234,6 +237,9 @@ export class Chunk {
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
           this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+          const key = `${j},${i},${y}`;
+          this.positionMap.set(key, 0.0); // filler type for now
           cubeIdx++;
         }
       }
@@ -291,9 +297,9 @@ export class Chunk {
         const rdZ = worldZ - nearZ;
         const hbr = Player.hitboxRadius;
         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
-          console.log(
-            `[floorHeight]: Unit intersects player hitbox at x=${nearX}, z=${nearZ}`,
-          );
+          //console.log(
+          //  `[floorHeight]: Unit intersects player hitbox at x=${nearX}, z=${nearZ}`,
+          //);
           const cubeWorldY =
             this.heightMap[cubeChunkZ * this.size + cubeChunkX];
           floorY = Math.max(floorY, cubeWorldY - 0.5);
@@ -302,5 +308,21 @@ export class Chunk {
     }
 
     return floorY;
+  }
+
+  // FIXME: Mapping not working (only returns undefined)
+  public cubeType(
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+  ): number | undefined {
+    const [topLeftX, topLeftZ] = this.origin();
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    const cubeChunkY = Math.round(worldY);
+
+    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
+    console.log(key);
+    return this.positionMap.get(key);
   }
 }
