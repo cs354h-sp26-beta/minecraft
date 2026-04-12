@@ -1,15 +1,16 @@
+import { Mat4, type Vec3, Vec4 } from "../lib/TSM.js";
+import { CanvasAnimation } from "../lib/webglutils/CanvasAnimation.js";
 import { Debugger } from "../lib/webglutils/Debugging.js";
-import {
-  CanvasAnimation,
-  WebGLUtilities,
-} from "../lib/webglutils/CanvasAnimation.js";
-import { GUI } from "./Gui.js";
-import { blankCubeFSText, blankCubeVSText } from "./Shaders.js";
-import { Mat4, Vec4, Vec3 } from "../lib/TSM.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
-import { Camera } from "../lib/webglutils/Camera.js";
-import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
+import { Cube } from "./Cube.js";
+import { GUI } from "./Gui.js";
+import {
+  blankCubeFSText,
+  blankCubeVSText,
+  skyboxFSText,
+  skyboxVSText,
+} from "./Shaders.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
@@ -19,6 +20,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   /*  Cube Rendering */
   private cubeGeometry: Cube;
   private blankCubeRenderPass: RenderPass;
+  private skyboxRenderPass: RenderPass;
 
   /* Global Rendering Info */
   private lightPosition: Vec4;
@@ -36,7 +38,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.canvas2d = document.getElementById("textCanvas") as HTMLCanvasElement;
 
     this.ctx = Debugger.makeDebugContext(this.ctx);
-    let gl = this.ctx;
+    const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
     this.playerPosition = this.gui.getCamera().pos();
@@ -49,7 +51,9 @@ export class MinecraftAnimation extends CanvasAnimation {
       blankCubeVSText,
       blankCubeFSText,
     );
+    this.skyboxRenderPass = new RenderPass(gl, skyboxVSText, skyboxFSText);
     this.cubeGeometry = new Cube();
+    this.initSkybox();
     this.initBlankCube();
 
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
@@ -63,6 +67,58 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui.reset();
 
     this.playerPosition = this.gui.getCamera().pos();
+  }
+
+  /**
+   * Sets up the skybox drawing
+   */
+  private initSkybox(): void {
+    this.skyboxRenderPass.setIndexBufferData(this.cubeGeometry.indicesFlat());
+    this.skyboxRenderPass.addAttribute(
+      "aVertPos",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.cubeGeometry.positionsFlat(),
+    );
+
+    this.skyboxRenderPass.addUniform(
+      "uProj",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.projMatrix().all()),
+        );
+      },
+    );
+    this.skyboxRenderPass.addUniform(
+      "uView",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.getSkyboxViewMatrix().all()),
+        );
+      },
+    );
+    this.skyboxRenderPass.addUniform(
+      "uTime",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, performance.now() / 1000);
+      },
+    );
+
+    this.skyboxRenderPass.setDrawData(
+      this.ctx.TRIANGLES,
+      this.cubeGeometry.indicesFlat().length,
+      this.ctx.UNSIGNED_INT,
+      0,
+    );
+    this.skyboxRenderPass.setup();
   }
 
   /**
@@ -198,6 +254,16 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl: WebGLRenderingContext = this.ctx;
     gl.viewport(x, y, width, height);
 
+    gl.depthMask(false);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.CULL_FACE);
+    this.skyboxRenderPass.draw();
+
+    gl.depthMask(true);
+    gl.depthFunc(gl.LESS);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+
     //TODO: Render multiple chunks around the player, using Perlin noise shaders
     this.blankCubeRenderPass.updateAttributeBuffer(
       "aOffset",
@@ -212,6 +278,15 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public getGUI(): GUI {
     return this.gui;
+  }
+
+  private getSkyboxViewMatrix(): Mat4 {
+    const skyboxView = this.gui.viewMatrix().copy();
+    const viewValues = skyboxView.all();
+    viewValues[12] = 0;
+    viewValues[13] = 0;
+    viewValues[14] = 0;
+    return new Mat4(viewValues);
   }
 
   public jump() {

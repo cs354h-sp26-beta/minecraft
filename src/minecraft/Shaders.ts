@@ -216,3 +216,202 @@ export const blankCubeFSText = `
         gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0) * textureColor, 1.0);
     }
 `;
+
+export const skyboxVSText = `
+    precision highp float;
+
+    uniform mat4 uView;
+    uniform mat4 uProj;
+
+    attribute vec4 aVertPos;
+
+    varying vec3 vDirection;
+
+    void main() {
+        vDirection = aVertPos.xyz;
+
+        vec4 clipPos = uProj * uView * aVertPos;
+        gl_Position = clipPos.xyww;
+    }
+`;
+
+export const skyboxFSText = `
+    precision highp float;
+
+    uniform float uTime;
+
+    varying vec3 vDirection;
+
+    const float CLOUD_BOTTOM = 6.2;
+    const float CLOUD_TOP = 20.0;
+    const float CLOUD_RANGE_START = 0.0;
+    const float CLOUD_RANGE_END = 25.0;
+    const float CLOUD_BASE_SCALE = 0.05;
+    const float CLOUD_DETAIL_SCALE = 0.22;
+    const float CLOUD_COVERAGE = 0.57;
+    const float CLOUD_DENSITY = 0.33;
+    const int CLOUD_STEPS = 2;
+
+    vec3 fade(vec3 t) {
+        return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    }
+
+    vec3 permute(vec3 x) {
+        return mod(((x * 34.0) + 1.0) * x, 289.0);
+    }
+
+    float grad(vec3 cell, vec3 offset) {
+        vec3 hashed = permute(permute(permute(cell) + cell.yzx) + cell.zxy);
+        vec3 direction = fract(hashed * 0.1031) * 2.0 - 1.0;
+        return dot(normalize(direction), offset);
+    }
+
+    float perlinNoise(vec3 p) {
+        vec3 cell = floor(p);
+        vec3 local = fract(p);
+        vec3 weights = fade(local);
+
+        float n000 = grad(cell + vec3(0.0, 0.0, 0.0), local - vec3(0.0, 0.0, 0.0));
+        float n100 = grad(cell + vec3(1.0, 0.0, 0.0), local - vec3(1.0, 0.0, 0.0));
+        float n010 = grad(cell + vec3(0.0, 1.0, 0.0), local - vec3(0.0, 1.0, 0.0));
+        float n110 = grad(cell + vec3(1.0, 1.0, 0.0), local - vec3(1.0, 1.0, 0.0));
+        float n001 = grad(cell + vec3(0.0, 0.0, 1.0), local - vec3(0.0, 0.0, 1.0));
+        float n101 = grad(cell + vec3(1.0, 0.0, 1.0), local - vec3(1.0, 0.0, 1.0));
+        float n011 = grad(cell + vec3(0.0, 1.0, 1.0), local - vec3(0.0, 1.0, 1.0));
+        float n111 = grad(cell + vec3(1.0, 1.0, 1.0), local - vec3(1.0, 1.0, 1.0));
+
+        float nx00 = mix(n000, n100, weights.x);
+        float nx10 = mix(n010, n110, weights.x);
+        float nx01 = mix(n001, n101, weights.x);
+        float nx11 = mix(n011, n111, weights.x);
+        float nxy0 = mix(nx00, nx10, weights.y);
+        float nxy1 = mix(nx01, nx11, weights.y);
+
+        return mix(nxy0, nxy1, weights.z);
+    }
+
+    float fbm(vec3 p) {
+        float amplitude = 0.5;
+        float value = 0.0;
+
+        // Rotate each octave a bit so the noise feels less grid-aligned.
+        mat3 octaveRotation = mat3(
+             0.00,  0.80,  0.60,
+            -0.80,  0.36, -0.48,
+            -0.60, -0.48,  0.64
+        );
+
+        for (int i = 0; i < 4; i++) {
+            value += amplitude * perlinNoise(p);
+            p = octaveRotation * p * 2.02 + vec3(17.1, 9.2, 13.7);
+            amplitude *= 0.5;
+        }
+
+        return value;
+    }
+
+    float cloudHeightProfile(float h) {
+        float bottom = smoothstep(0.02, 0.20, h);
+        float top = 1.0 - smoothstep(0.60, 1.00, h);
+        return bottom * top;
+    }
+
+    vec3 cloudStepSeed(float stepIndex) {
+        float n = stepIndex + 1.0;
+        return vec3(19.19 * n, 7.73 * n, 13.47 * n);
+    }
+
+    float sampleCloudDensity(vec3 p, float h, vec3 seedOffset) {
+        // Make the cloud field broad horizontally and thinner vertically.
+        vec3 q = p;
+        q.xz += vec2(uTime * 0.7, uTime * 0.2);
+        q.y *= 0.30;
+        q += seedOffset;
+
+        float base = fbm(q * CLOUD_BASE_SCALE) * 0.5 + 0.5;
+        float detail = fbm(q * CLOUD_DETAIL_SCALE + vec3(13.7, 4.2, 9.1)) * 0.5 + 0.5;
+
+        float density = base * 0.88 + detail * 0.32;
+        density = smoothstep(CLOUD_COVERAGE, CLOUD_COVERAGE + 0.12, density);
+        density *= cloudHeightProfile(h);
+
+        return density;
+    }
+
+    float cloudDistanceFade(float radial) {
+        // Exponential falloff removes the visible outer ring from the cloud slab.
+        float radialOffset = max(radial - CLOUD_RANGE_START, 0.0);
+        return exp(-radialOffset / CLOUD_RANGE_END);
+    }
+
+    void main() {
+        vec3 dir = normalize(vDirection);
+        float skyHeight = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+
+        vec3 horizonColor = vec3(0.70, 0.86, 0.98);
+        vec3 zenithColor = vec3(0.18, 0.48, 0.90);
+        vec3 skyColor = mix(horizonColor, zenithColor, pow(skyHeight, 0.65));
+
+        vec3 sunDirection = normalize(vec3(-0.35, 0.82, -0.45));
+        float sunAmount = max(dot(dir, sunDirection), 0.0);
+        float sunDisk = smoothstep(0.995, 0.9992, sunAmount);
+        float sunGlow = pow(sunAmount, 32.0);
+
+        vec3 background = skyColor;
+        background += vec3(1.0, 0.92, 0.72) * sunGlow * 0.28;
+        background += vec3(1.0, 0.95, 0.82) * sunDisk;
+
+        vec3 color = background;
+
+        // Seam-free cloud sampling:
+        // intersect the ray with a flat cloud slab and sample 3D noise there.
+        // This avoids the 2D cloudUV projection that causes cube-edge distortion.
+        if (dir.y > 0.0) {
+            float cloudRayY = max(dir.y, 0.008);
+            float tEnter = CLOUD_BOTTOM / cloudRayY;
+            float tExit = CLOUD_TOP / cloudRayY;
+            float stepCount = float(CLOUD_STEPS);
+            float stepSize = (tExit - tEnter) / stepCount;
+
+            float transmittance = 1.0;
+            vec3 cloudAccum = vec3(0.0);
+
+            float forwardScatter = pow(sunAmount, 8.0);
+            float horizonFade = smoothstep(0.0, 0.06, dir.y);
+
+            for (int i = 0; i < CLOUD_STEPS; i++) {
+                float f = (float(i) + 0.5) / stepCount;
+                float t = mix(tEnter, tExit, f);
+
+                vec3 samplePos = dir * t;
+                vec3 stepSeed = cloudStepSeed(float(i));
+                float h = (samplePos.y - CLOUD_BOTTOM) / (CLOUD_TOP - CLOUD_BOTTOM);
+                float radial = length(samplePos.xz);
+                float rangeFade = cloudDistanceFade(radial);
+
+                float density = sampleCloudDensity(samplePos, h, stepSeed) * rangeFade * horizonFade;
+
+                if (density > 0.0001) {
+                    float extinction = density * stepSize * CLOUD_DENSITY;
+                    float alpha = 1.0 - exp(-extinction);
+
+                    vec3 cloudBase = vec3(0.92, 0.95, 0.98);
+                    vec3 cloudLit = vec3(1.00, 0.99, 0.97);
+
+                    float directLight = 0.35 + 0.65 * pow(sunAmount, 2.0);
+                    float lightTransmittance = exp(-density * 1.15);
+
+                    vec3 sampleColor = mix(cloudBase, cloudLit, directLight * lightTransmittance);
+                    sampleColor += vec3(1.0, 0.94, 0.82) * forwardScatter * alpha * 0.25;
+
+                    cloudAccum += transmittance * alpha * sampleColor;
+                    transmittance *= (1.0 - alpha);
+                }
+            }
+
+            color = cloudAccum + transmittance * background;
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+    }
+`;
