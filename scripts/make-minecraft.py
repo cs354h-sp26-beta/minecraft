@@ -5,7 +5,12 @@ import shutil
 import subprocess
 
 srcfiles = glob.glob('./src/minecraft/*.ts')
-cmd = 'tsc --allowJs -m ES6 -t ES6 --outDir dist --sourceMap --alwaysStrict ' + " ".join(srcfiles) + ' ./src/lib/vue/vue.js '
+cmd = (
+    'tsc --allowJs -m ES6 -t ES6 --outDir dist --sourceMap --alwaysStrict '
+    '--strictPropertyInitialization false '
+    + " ".join(srcfiles)
+    + ' ./src/lib/vue/vue.js'
+)
 print('Building TypeScript: ' + cmd)
-subprocess.run(cmd, shell=True)
+subprocess.run(cmd, shell=True, check=True)
 shutil.copytree('./src/minecraft/static', './dist', dirs_exist_ok=True)
