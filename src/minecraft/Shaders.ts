@@ -366,6 +366,71 @@ export const skyboxFSText = `
         return 1.0 - smoothstep(halfWidth * 0.35, halfWidth, dist);
     }
 
+    float hash13(vec3 p) {
+        p = fract(p * 0.1031);
+        p += dot(p, p.yzx + 33.33);
+        return fract((p.x + p.y) * p.z);
+    }
+
+    float starField(vec3 dir) {
+        dir = normalize(dir);
+
+        // Use spherical coordinates so star placement feels sky-like instead of box-cell-like.
+        float azimuth = atan(dir.z, dir.x);
+        float elevation = asin(clamp(dir.y, -1.0, 1.0));
+        vec2 skyUv = vec2(azimuth / TAU + 0.5, elevation / 3.14159265359 + 0.5);
+
+        // Large-scale Perlin mask controls where stars appear.
+        // This creates natural sparse and dense regions instead of even distribution.
+        vec2 clusterUv = skyUv * vec2(10.0, 5.0);
+        float clusterA = fbm(vec3(clusterUv * 1.4, 3.7)) * 0.5 + 0.5;
+        float clusterB = perlinNoise(vec3(clusterUv * 3.0 + vec2(8.2, 1.7), -4.3)) * 0.5 + 0.5;
+        float clusterMask = smoothstep(0.4, 0.72, clusterA * 0.72 + clusterB * 0.28);
+
+        // Fine grid for candidate stars.
+        vec2 starGridUv = skyUv * vec2(220.0, 110.0);
+        vec2 cell = floor(starGridUv);
+        vec2 local = fract(starGridUv) - 0.5;
+
+        float cellHash = hash13(vec3(cell, 17.3));
+        float presence = step(0.672 - clusterMask * 0.10, cellHash) * clusterMask;
+
+        // Star center inside the cell.
+        vec2 starOffset = vec2(
+            hash13(vec3(cell, 4.1)),
+            hash13(vec3(cell, 9.7))
+        ) - 0.5;
+
+        vec2 d = local - starOffset * 0.72;
+        float r = length(d);
+
+        // Size distribution: many tiny stars, few large stars.
+        float sizeSeed = hash13(vec3(cell, 23.9));
+        float size = mix(0.007, 0.025, pow(sizeSeed, 3.0));
+
+        // Bright core + soft glow.
+        float core = 1.0 - smoothstep(size * 0.45, size * 1.25, r);
+        float glow = 1.0 - smoothstep(size * 1.2, size * 4.0, r);
+
+        // Cross flare for prettier bright stars.
+        float flareX = exp(-abs(d.x) / max(size * 0.22, 0.0008));
+        float flareY = exp(-abs(d.y) / max(size * 0.22, 0.0008));
+        float flare = max(flareX, flareY) * glow;
+
+        // Rare bright stars get stronger sparkle.
+        float giant = smoothstep(0.94, 0.995, sizeSeed);
+        flare *= mix(0.14, 1.0, giant);
+
+        // Soft twinkle so stars feel alive, but not noisy.
+        float twinkleSeed = hash13(vec3(cell, 31.4));
+        float twinkle = 0.82 + 0.18 * sin(uTime * (0.7 + twinkleSeed * 1.8) + twinkleSeed * TAU);
+
+        float brightness = mix(0.65, 2.2, pow(sizeSeed, 4.0));
+        float star = core * 1.5 + glow * 0.30 + flare * 0.55;
+
+        return presence * star * brightness * twinkle;
+    }
+
     void main() {
         vec3 dir = normalize(vDirection);
         float skyHeight = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
@@ -421,18 +486,30 @@ export const skyboxFSText = `
         float moonHalo = (1.0 - smoothstep(moonRadius * 1.4, moonRadius * 3.0, length(moonUv))) * 0.18;
         vec3 moonBodyColor = vec3(0.72, 0.78, 0.84);
         vec3 moonLightColor = vec3(0.98, 0.99, 1.0);
+        float nightMix = smoothstep(0.04, 0.86, 1.0 - dayMix);
+        float starVisibility = nightMix * (1.0 - smoothstep(0.02, 0.42, twilightStrength));
+        starVisibility *= smoothstep(-0.10, 0.05, dir.y);
+        starVisibility *= mix(0.55, 1.0, skyHeight);
+        float stars = starField(dir) * starVisibility;
+        float starTint = fbm(dir * 28.0 + vec3(8.4, -2.6, 14.1)) * 0.5 + 0.5;
+        vec3 starColor = mix(
+            vec3(0.72, 0.82, 1.0),
+            vec3(1.0, 0.93, 0.82),
+            smoothstep(0.25, 0.85, starTint)
+        );
+        vec3 skyBackground = mix(nightSkyColor, daySkyColor, dayMix);
+        skyBackground = mix(skyBackground, mix(skyBackground, twilightColor, 0.72), twilightBlend * 0.34);
+        skyBackground = mix(skyBackground, twilightColor, twilightStrength * horizonBand * sunSideWide * 0.10);
+        skyBackground += twilightColor * sunSideCore * twilightStrength * 0.025;
+        skyBackground = mix(skyBackground, moonBodyColor, moonDisk * 0.06 * (1.0 - dayMix));
+        skyBackground = mix(skyBackground, moonLightColor, moonCrescent * (1.0 - dayMix * 0.85));
+        skyBackground += moonLightColor * moonHalo * (1.0 - dayMix * 0.9);
+        skyBackground += sunGlowColor * sunGlow * solarGlowStrength;
+        skyBackground += sunDiskColor * sunDisk;
 
-        vec3 background = mix(nightSkyColor, daySkyColor, dayMix);
-        background = mix(background, mix(background, twilightColor, 0.72), twilightBlend * 0.34);
-        background = mix(background, twilightColor, twilightStrength * horizonBand * sunSideWide * 0.10);
-        background += twilightColor * sunSideCore * twilightStrength * 0.025;
-        background = mix(background, moonBodyColor, moonDisk * 0.06 * (1.0 - dayMix));
-        background = mix(background, moonLightColor, moonCrescent * (1.0 - dayMix * 0.85));
-        background += moonLightColor * moonHalo * (1.0 - dayMix * 0.9);
-        background += sunGlowColor * sunGlow * solarGlowStrength;
-        background += sunDiskColor * sunDisk;
+        vec3 starBackground = starColor * stars * 3.2;
 
-        vec3 color = background;
+        vec3 color = skyBackground + starBackground;
 
         // Seam-free cloud sampling:
         // intersect the ray with a flat cloud slab and sample 3D noise there.
@@ -461,6 +538,7 @@ export const skyboxFSText = `
                 float rangeFade = cloudDistanceFade(radial);
 
                 float density = sampleCloudDensity(samplePos, h, stepSeed) * rangeFade * horizonFade;
+                density *= mix(0.35, 1.0, dayMix);
 
                 if (density > 0.0001) {
                     float extinction = density * stepSize * CLOUD_DENSITY;
@@ -480,7 +558,8 @@ export const skyboxFSText = `
                 }
             }
 
-            color = cloudAccum + transmittance * background;
+            float starTransmittance = mix(transmittance, pow(transmittance, 0.45), nightMix);
+            color = cloudAccum + transmittance * skyBackground + starTransmittance * starBackground;
         }
 
         gl_FragColor = vec4(color, 1.0);
