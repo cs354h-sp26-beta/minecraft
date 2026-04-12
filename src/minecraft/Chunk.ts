@@ -228,7 +228,7 @@ export class Chunk {
         );
       }
     }
-    
+
     // Count only visible cubes
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
@@ -267,11 +267,11 @@ export class Chunk {
     }
     return Chunk.blockTypeCobble;
   }
-  
+
   private isExposed(i: number, j: number, y: number): boolean {
     return true;
   }
-  
+
   private getHeight(i: number, j: number): number {
     if (i < 0 || i >= this.size || j < 0 || j >= this.size) return 0;
     return this.heightMap[this.size * i + j];
