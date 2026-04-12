@@ -20,14 +20,11 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private gui: GUI;
 
-  // TODO: Map chunk to seed!
-  private chunkSeeds: Map<string, string>;
-
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
 
-  // 3x3 = 9 chunks
   private static readonly renderDistance: number = 1;
+  private static readonly chunkSize: number = 64;
 
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -57,7 +54,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
-    this.chunkSeeds = new Map();
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     const playerPosition = this.gui.getCamera().pos();
@@ -246,22 +242,14 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private worldToChunkCoord(worldVal: number): number {
-    // returns the center of the chunk on the grid
-    return Math.floor(worldVal / 64) * 64;
+    const s = MinecraftAnimation.chunkSize;
+    return Math.floor((worldVal + s / 2) / s) * s;
   }
 
   private currentChunk(): Chunk {
     const chunkX = this.worldToChunkCoord(this.player.position.x);
     const chunkZ = this.worldToChunkCoord(this.player.position.z);
     return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
-  }
-
-  // Initializes a chunk and maps its seed.
-  private initChunk(chunkX: number, chunkZ: number): Chunk {
-    const chunk = new Chunk(chunkX, chunkZ, 64);
-    const key = `${chunkX},${chunkZ}`;
-    this.chunkSeeds.set(key, chunk.seed);
-    return chunk;
   }
 
   // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
@@ -285,24 +273,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     const cz = this.worldToChunkCoord(this.player.position.z);
 
     const rd = MinecraftAnimation.renderDistance;
+    const step = MinecraftAnimation.chunkSize;
     for (let di = -rd; di <= rd; di++) {
       for (let dj = -rd; dj <= rd; dj++) {
-        const chunkX = cx + di * 64;
-        const chunkZ = cz + dj * 64;
+        const chunkX = cx + di * step;
+        const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         if (!this.chunkCache.has(key)) {
-          const chunkToLoadSeed = this.chunkSeeds.get(key);
-          if (chunkToLoadSeed === undefined) {
-            const initChunk = this.initChunk(chunkX, chunkZ);
-            this.chunkCache.set(key, initChunk);
-          } else {
-            const loadedChunk = this.loadChunkFromSeed(
-              chunkX,
-              chunkZ,
-              chunkToLoadSeed,
-            );
-            this.chunkCache.set(key, loadedChunk);
-          }
+          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step));
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
@@ -345,10 +323,13 @@ export class MinecraftAnimation extends CanvasAnimation {
    *
    */
   public draw(): void {
-    // To slow movement to something more natural, scale the amount we can move per frame.
-    const dt = 1;
+    // Load chunks.
+    this.loadChunksAroundPlayer();
 
-    const walkDx = this.gui.walkDir().scale(dt, new Vec3());
+    // To slow movement to something more natural, scale the amount we can move per frame.
+    const dt = 1 / 60;
+
+    const walkDx = this.gui.walkDir();
     const momentumDx = this.player.velocity.scale(dt, new Vec3());
     const totalDx = walkDx.add(momentumDx, new Vec3());
     this.player.position.add(totalDx);
@@ -374,9 +355,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.velocity = v;
       this.player.position.y = floorY + Player.hitboxHeight;
     }
-
-    this.loadChunksAroundPlayer();
-
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
     const bg: Vec4 = this.backgroundColor;
