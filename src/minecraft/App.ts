@@ -26,7 +26,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
 
-  private static readonly renderDistance: number = 3;
+  // 3x3 = 9 chunks
+  private static readonly renderDistance: number = 1;
 
   /*  Cube Rendering */
   private cubeGeometry: Cube;
