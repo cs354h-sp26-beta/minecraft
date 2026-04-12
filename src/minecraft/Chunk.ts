@@ -10,8 +10,13 @@ import {
 } from "./Biomes.js";
 
 export class Chunk {
+  public static readonly blockTypeDirt: number = 0;
+  public static readonly blockTypeCobble: number = 1;
+  public static readonly blockTypeWater: number = 2;
+
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
+  private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
   private heightMap: Float32Array; // Ground truth of what blocks exist.
   private x: number; // Center of the chunk
   private z: number;
@@ -223,7 +228,7 @@ export class Chunk {
         );
       }
     }
-    
+
     // Count only visible cubes
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
@@ -235,6 +240,7 @@ export class Chunk {
       }
     }
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
+    this.cubeTypesF32 = new Float32Array(this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
@@ -246,17 +252,26 @@ export class Chunk {
             this.cubePositionsF32[4 * cubeIdx + 1] = y;
             this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
             this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+            this.cubeTypesF32[cubeIdx] = this.blockTypeAtHeight(y, height);
             cubeIdx++;
           }
         }
       }
     }
   }
-  
+
+  private blockTypeAtHeight(y: number, columnHeight: number): number {
+    // Keep the visible surface earthy and the bulk of the terrain rocky.
+    if (y >= columnHeight - 3) {
+      return Chunk.blockTypeDirt;
+    }
+    return Chunk.blockTypeCobble;
+  }
+
   private isExposed(i: number, j: number, y: number): boolean {
     return true;
   }
-  
+
   private getHeight(i: number, j: number): number {
     if (i < 0 || i >= this.size || j < 0 || j >= this.size) return 0;
     return this.heightMap[this.size * i + j];
@@ -264,6 +279,10 @@ export class Chunk {
 
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
+  }
+
+  public cubeTypes(): Float32Array {
+    return this.cubeTypesF32;
   }
 
   public numCubes(): number {
