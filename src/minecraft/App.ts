@@ -5,6 +5,9 @@ import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
 import { GUI } from "./Gui.js";
+import { Player } from "./Entity.js";
+import { LruCache } from "./Cache.js";
+import { Camera } from "../lib/webglutils/Camera.js";
 import {
   blankCubeFSText,
   blankCubeVSText,
@@ -17,7 +20,13 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private gui: GUI;
 
-  chunk: Chunk;
+  // TODO: Map chunk to seed!
+  private chunkSeeds: Map<string, string>;
+
+  private chunkCache: LruCache<string, Chunk>;
+  private renderedChunks: Map<string, Chunk>;
+
+  private static readonly renderDistance: number = 3;
 
   /*  Cube Rendering */
   private cubeGeometry: Cube;
@@ -31,9 +40,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private canvas2d: HTMLCanvasElement;
   private overlayCtx: CanvasRenderingContext2D;
 
-  // Player's head position in world coordinate.
-  // Player should extend two units down from this location, and 0.4 units radially.
-  private playerPosition: Vec3;
+  private player: Player;
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -49,10 +56,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     this.gui = new GUI(this.canvas2d, this);
-    this.playerPosition = this.gui.getCamera().pos();
+    this.chunkSeeds = new Map();
+    this.chunkCache = new LruCache();
+    this.renderedChunks = new Map();
+    const playerPosition = this.gui.getCamera().pos();
+    this.player = new Player(playerPosition);
 
-    // Generate initial landscape
-    this.chunk = new Chunk(0.0, 0.0, 64);
+    this.loadChunksAroundPlayer();
 
     this.blankCubeRenderPass = new RenderPass(
       gl,
@@ -74,7 +84,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   public reset(): void {
     this.gui.reset();
 
-    this.playerPosition = this.gui.getCamera().pos();
+    this.player.position = this.gui.getCamera().pos();
   }
 
   /**
@@ -234,15 +244,122 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.setup();
   }
 
+  private worldToChunkCoord(worldVal: number): number {
+    // returns the center of the chunk on the grid
+    return Math.floor(worldVal / 64) * 64;
+  }
+
+  private currentChunk(): Chunk {
+    const chunkX = this.worldToChunkCoord(this.player.position.x);
+    const chunkZ = this.worldToChunkCoord(this.player.position.z);
+    return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+  }
+
+  // Initializes a chunk and maps its seed.
+  private initChunk(chunkX: number, chunkZ: number): Chunk {
+    const chunk = new Chunk(chunkX, chunkZ, 64);
+    const key = `${chunkX},${chunkZ}`;
+    this.chunkSeeds.set(key, chunk.seed);
+    return chunk;
+  }
+
+  // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
+  //
+  // FIXME: Maybe this should be in `Chunk`, but only allowed a single constructor.
+  // Oh well. This can be refactored.
+  private loadChunkFromSeed(
+    centerX: number,
+    centerZ: number,
+    seed: string,
+  ): Chunk {
+    // TODO: Actually do it. For now, just create a new chunk alltogther.
+    return new Chunk(centerX, centerZ, 64);
+  }
+
+  private loadChunksAroundPlayer(): void {
+    // FIXME: Reuse chunks already loaded, instead of re-adding each frame.
+    this.renderedChunks.clear();
+
+    const cx = this.worldToChunkCoord(this.player.position.x);
+    const cz = this.worldToChunkCoord(this.player.position.z);
+
+    const rd = MinecraftAnimation.renderDistance;
+    for (let di = -rd; di <= rd; di++) {
+      for (let dj = -rd; dj <= rd; dj++) {
+        const chunkX = cx + di * 64;
+        const chunkZ = cz + dj * 64;
+        const key = `${chunkX},${chunkZ}`;
+        if (!this.chunkCache.has(key)) {
+          const chunkToLoadSeed = this.chunkSeeds.get(key);
+          if (chunkToLoadSeed === undefined) {
+            const initChunk = this.initChunk(chunkX, chunkZ);
+            this.chunkCache.set(key, initChunk);
+          } else {
+            const loadedChunk = this.loadChunkFromSeed(
+              chunkX,
+              chunkZ,
+              chunkToLoadSeed,
+            );
+            this.chunkCache.set(key, loadedChunk);
+          }
+        }
+        const cachedChunk = this.chunkCache.get(key)!;
+        this.renderedChunks.set(key, cachedChunk);
+      }
+    }
+  }
+
+  private getAllCubePositions(): Float32Array {
+    let totalCubes = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      totalCubes += chunk.numCubes();
+    }
+    const combined = new Float32Array(4 * totalCubes);
+    let offset = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      const positions = chunk.cubePositions();
+      combined.set(positions, offset);
+      offset += positions.length;
+    }
+    return combined;
+  }
+
   /**
    * Draws a single frame
    *
    */
   public draw(): void {
-    //TODO: Logic for a rudimentary walking simulator. Check for collisions and reject attempts to walk into a cube. Handle gravity, jumping, and loading of new chunks when necessary.
-    this.playerPosition.add(this.gui.walkDir());
+    // To slow movement to something more natural, scale the amount we can move per frame.
+    const dt = 1;
 
-    this.gui.getCamera().setPos(this.playerPosition);
+    const walkDx = this.gui.walkDir().scale(dt, new Vec3());
+    const momentumDx = this.player.velocity.scale(dt, new Vec3());
+    const totalDx = walkDx.add(momentumDx, new Vec3());
+    this.player.position.add(totalDx);
+
+    this.gui.getCamera().setPos(this.player.position);
+
+    // Check for collisions.
+    //
+    // FIXME: Ew. This system sucks. It's what the hint says to do but...
+    const floorY = this.currentChunk().floorHeight(
+      this.player.position.x,
+      this.player.position.z,
+    );
+    // Apply gravity acceleration.
+    if (this.player.position.y > floorY + Player.hitboxHeight) {
+      const gDelta = -9.8 * dt;
+      const gDv = new Vec3([0.0, gDelta, 0.0]);
+      this.player.velocity.add(gDv);
+    } else {
+      // Stop all movement in vertical direction.
+      const v = this.player.velocity.copy();
+      v.y = 0.0;
+      this.player.velocity = v;
+      this.player.position.y = floorY + Player.hitboxHeight;
+    }
+
+    this.loadChunksAroundPlayer();
 
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
@@ -273,16 +390,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
 
-    //TODO: Render multiple chunks around the player, using Perlin noise shaders
-    this.blankCubeRenderPass.updateAttributeBuffer(
-      "aOffset",
-      this.chunk.cubePositions(),
-    );
-    this.blankCubeRenderPass.updateAttributeBuffer(
-      "aBlockType",
-      this.chunk.cubeTypes(),
-    );
-    this.blankCubeRenderPass.drawInstanced(this.chunk.numCubes());
+    const allPositions = this.getAllCubePositions();
+    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
+    this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
+
   }
 
   public getGUI(): GUI {
@@ -299,7 +410,18 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public jump() {
-    //TODO: If the player is not already in the lair, launch them upwards at 10 units/sec.
+    // If player is not already in the air, launch them up at 10 units/sec.
+    //
+    // FIXME: Same problem as in draw loop.
+    const floorY = this.currentChunk().floorHeight(
+      this.player.position.x,
+      this.player.position.z,
+    );
+    // FIXME: Wtf. Does this even work?
+    if (this.player.position.y <= floorY + Player.hitboxHeight) {
+      const dv = new Vec3([0.0, 10.0, 0.0]);
+      this.player.velocity.add(dv);
+    }
   }
 
   private drawOverlay(): void {
