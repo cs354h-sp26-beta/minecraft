@@ -307,7 +307,7 @@ export class Chunk {
     return floorY;
   }
 
-  // Gets the cube type given an x, z, y chunk coordinate.
+  // Gets the type of the cube located at the given position in world coordinates.
   // Returns undefined for an empty cube.
   public cubeType(
     worldX: number,
@@ -315,12 +315,11 @@ export class Chunk {
     worldY: number,
   ): number | undefined {
     const [topLeftX, topLeftZ] = this.origin();
-    const cubeChunkX = Math.floor(worldX - topLeftX);
-    const cubeChunkZ = Math.floor(worldZ - topLeftZ);
-    const cubeChunkY = Math.ceil(worldY);
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    const cubeChunkY = Math.round(worldY);
 
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-    console.log(key);
     return this.positionMap.get(key);
   }
 }

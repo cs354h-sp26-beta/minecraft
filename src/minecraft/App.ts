@@ -280,27 +280,67 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
   }
 
-  // TODO: Finish function
+  // Intersects ray with cube at given position in world coordinates.
   private intersectCube(
-    rayOrigin: Vec3,
+    rayPos: Vec3,
     rayDir: Vec3,
     worldX: number,
     worldZ: number,
     worldY: number,
   ): number | null {
-    let cubeX = Math.floor(worldX);
-    let cubeZ = Math.floor(worldZ);
-    let cubeY = Math.ceil(worldY);
+    let centerX = Math.round(worldX);
+    let centerY = Math.round(worldY);
+    let centerZ = Math.round(worldZ);
+    let minCube = new Vec3([centerX - 0.5, centerY - 0.5, centerZ - 0.5]);
+    let maxCube = new Vec3([centerX + 0.5, centerY + 0.5, centerZ + 0.5]);
 
-    let bestT = Infinity;
+    // Calculate inverse directions to avoid division by zero
+    const invDirX = 1.0 / rayDir.x;
+    const invDirY = 1.0 / rayDir.y;
+    const invDirZ = 1.0 / rayDir.z;
 
-    for (let it = 0; it < 6; it++) {
-      let mod0 = it % 3;
-      if (rayDir.at(mod0) == 0) {
-        continue;
-      }
+    let tNear = -Infinity;
+    let tFar = Infinity;
+
+    // x-axis slab
+    const t0x = (minCube.x - rayPos.x) * invDirX;
+    const t1x = (maxCube.x - rayPos.x) * invDirX;
+    const tNearX = Math.min(t0x, t1x);
+    const tFarX = Math.max(t0x, t1x);
+
+    if (tNearX > tNear) {
+      tNear = tNearX;
     }
-    return null;
+    tFar = Math.min(tFar, tFarX);
+
+    // y-axis slab
+    const t0y = (minCube.y - rayPos.y) * invDirY;
+    const t1y = (maxCube.y - rayPos.y) * invDirY;
+    const tNearY = Math.min(t0y, t1y);
+    const tFarY = Math.max(t0y, t1y);
+
+    if (tNearY > tNear) {
+      tNear = tNearY;
+    }
+    tFar = Math.min(tFar, tFarY);
+
+    // z-axis slab
+    const t0z = (minCube.z - rayPos.z) * invDirZ;
+    const t1z = (maxCube.z - rayPos.z) * invDirZ;
+    const tNearZ = Math.min(t0z, t1z);
+    const tFarZ = Math.max(t0z, t1z);
+
+    if (tNearZ > tNear) {
+      tNear = tNearZ;
+    }
+    tFar = Math.min(tFar, tFarZ);
+
+    if (tNear > tFar) return null;
+
+    if (tFar < 0) return null;
+
+    const distance = tNear < 0 ? tFar : tNear;
+    return distance;
   }
 
   public getGUI(): GUI {
@@ -323,13 +363,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   // TODO: Add cube intersection logic
-  public intersectCubes(rayOrigin: Vec3, rayDir: Vec3) {
-    console.log(
-      this.player.position.x,
-      this.player.position.z,
-      this.player.position.y,
-    );
-
+  public intersectCubes(rayPos: Vec3, rayDir: Vec3) {
     let minT = Infinity;
 
     // Have player's reach extend 4 cubes
@@ -346,7 +380,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           let cubeType = currentChunk.cubeType(x, z, y);
 
           if (cubeType !== undefined) {
-            let t = this.intersectCube(rayOrigin, rayDir, x, z, y);
+            let t = this.intersectCube(rayPos, rayDir, x, z, y);
             // TODO: Save identifier of cube and its cube face that was hit for closest intersection
             if (t !== null && t < minT) {
               minT = t;
@@ -355,6 +389,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
       }
     }
+    console.log(minT);
   }
 }
 
