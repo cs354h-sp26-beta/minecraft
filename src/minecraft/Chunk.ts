@@ -268,8 +268,19 @@ export class Chunk {
     return Chunk.blockTypeCobble;
   }
 
+  // Makes the assumption that columns are solid up to the height of the column.
+  // Change when implementing caves and overhangs!
   private isExposed(i: number, j: number, y: number): boolean {
-    return true;
+    // Top face
+    if (y >= this.getHeight(i, j) - 1) return true;
+    // Bottom face
+    if (y === 0) return true;
+    // Four cardinal neighbors
+    if (this.getHeight(i - 1, j) <= y) return true;
+    if (this.getHeight(i + 1, j) <= y) return true;
+    if (this.getHeight(i, j - 1) <= y) return true;
+    if (this.getHeight(i, j + 1) <= y) return true;
+    return false;
   }
 
   private getHeight(i: number, j: number): number {
