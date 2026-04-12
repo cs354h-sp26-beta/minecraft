@@ -9,6 +9,7 @@ import {
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
+  private heightMapF32!: Float32Array;
   private x: number; // Center of the chunk
   private y: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -198,12 +199,12 @@ export class Chunk {
     const activeGridSizes: number[] = [...TERRAIN_OCTAVE_TUNING.gridSizes];
     const activeMultCoeffs: number[] = [...TERRAIN_OCTAVE_TUNING.multCoeffs];
 
-    const heightMap = new Float32Array(this.size * this.size);
+    this.heightMapF32 = new Float32Array(this.size * this.size);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const worldX = topleftx + j;
         const worldZ = toplefty + i;
-        heightMap[this.size * i + j] = this.sampleHeightAtWorld(
+        this.heightMapF32[this.size * i + j] = this.sampleHeightAtWorld(
           worldX,
           worldZ,
           activeGridSizes,
@@ -214,14 +215,14 @@ export class Chunk {
 
     this.cubes = 0;
     for (let k = 0; k < this.size * this.size; k++) {
-      this.cubes += Math.max(heightMap[k], 1); // at least 1 cube per column
+      this.cubes += Math.max(this.heightMapF32[k], 1); // at least 1 cube per column
     }
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(heightMap[this.size * i + j], 1);
+        const height = Math.max(this.heightMapF32[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
           this.cubePositionsF32[4 * cubeIdx + 0] = topleftx + j;
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
@@ -239,5 +240,21 @@ export class Chunk {
 
   public numCubes(): number {
     return this.cubes;
+  }
+
+  public heightMap(): Float32Array {
+    return this.heightMapF32;
+  }
+
+  public topLeftX(): number {
+    return this.x - this.size / 2;
+  }
+
+  public topLeftZ(): number {
+    return this.y - this.size / 2;
+  }
+
+  public chunkSize(): number {
+    return this.size;
   }
 }

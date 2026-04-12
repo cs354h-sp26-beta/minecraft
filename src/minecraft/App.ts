@@ -224,30 +224,37 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   /**
-   * Returns the position of the highest block within n units of the player,
+   * Returns the position of the highest block within an n x n square centered on the player (bird's eye view),
    * or null if no blocks are found within range.
    */
   public getHighestBlockNearby(n: number): Vec3 | null {
     const px = this.playerPosition.x;
     const pz = this.playerPosition.z;
-    const nSq = n * n;
+    const half = n / 2;
     let bestY = -Infinity;
     let bestX = 0;
     let bestZ = 0;
 
     for (const chunk of this.chunks.values()) {
-      const positions = chunk.cubePositions();
-      const count = chunk.numCubes();
-      for (let i = 0; i < count; i++) {
-        const x = positions[4 * i];
-        const y = positions[4 * i + 1];
-        const z = positions[4 * i + 2];
-        const dx = x - px;
-        const dz = z - pz;
-        if (dx * dx + dz * dz <= nSq && y > bestY) {
-          bestY = y;
-          bestX = x;
-          bestZ = z;
+      const tlx = chunk.topLeftX();
+      const tlz = chunk.topLeftZ();
+      const size = chunk.chunkSize();
+      const hmap = chunk.heightMap();
+
+      // clamp to overlap between current chunk and query square
+      const minX = Math.max(0, Math.floor(px - half - tlx));
+      const maxX = Math.min(size - 1, Math.floor(px + half - tlx));
+      const minZ = Math.max(0, Math.floor(pz - half - tlz));
+      const maxZ = Math.min(size - 1, Math.floor(pz + half - tlz));
+
+      for (let i = minZ; i <= maxZ; i++) {
+        for (let j = minX; j <= maxX; j++) {
+          const y = hmap[size * i + j];
+          if (y > bestY) {
+            bestY = y;
+            bestX = tlx + j;
+            bestZ = tlz + i;
+          }
         }
       }
     }
