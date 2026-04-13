@@ -19,6 +19,7 @@ export class Chunk {
   private static worldSeed: string = "default";
 
   private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type
+  private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
 
   // world seed
   public static setWorldSeed(seed: string): void {
@@ -31,6 +32,7 @@ export class Chunk {
     this.size = size;
     this.cubes = size * size;
     this.positionMap = new Map();
+    this.deltaMap = new Map();
     this.generateCubes();
   }
 
@@ -233,12 +235,14 @@ export class Chunk {
       for (let j = 0; j < this.size; j++) {
         const height = Math.max(this.heightMap[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
+          const key = `${j},${i},${y}`;
+          if (this.deltaMap.get(key) == -1.0) continue; // skip empty cube
+
           this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
           this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
-          const key = `${j},${i},${y}`;
           this.positionMap.set(key, 0.0); // filler type for now
           cubeIdx++;
         }
@@ -323,5 +327,29 @@ export class Chunk {
 
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
     return this.positionMap.get(key);
+  }
+
+  /**
+   * Changes the type of the cube at the given world coordinates.
+   */
+  public changeCubeType(
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+    newType: number,
+  ) {
+    const [topLeftX, topLeftZ] = this.origin();
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    const cubeChunkY = Math.round(worldY);
+
+    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
+
+    if (newType == -1.0) {
+      // cube type is empty or air
+      this.positionMap.delete(key);
+    }
+    this.deltaMap.set(key, newType);
+    this.generateCubes(); // re-generate cubes with the modification
   }
 }

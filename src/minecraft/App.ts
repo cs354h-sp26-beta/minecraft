@@ -369,9 +369,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
-  public intersectCubes(rayPos: Vec3, rayDir: Vec3) {
+  public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
     let minT = Infinity;
     let minPos = [-1000, -1000, -1000];
+    let hit = false;
 
     // Have player's reach extend 5 cubes
     for (let dx = -5; dx <= 5; dx++) {
@@ -392,6 +393,7 @@ export class MinecraftAnimation extends CanvasAnimation {
             if (t !== null && t < minT) {
               minT = t;
               minPos = [x, y, z];
+              hit = true;
             }
           }
         }
@@ -403,6 +405,19 @@ export class MinecraftAnimation extends CanvasAnimation {
       Math.round(minPos[2]),
       0,
     ]);
+    return hit;
+  }
+
+  public breakSelectedCube() {
+    const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
+    const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
+    let chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+    chunk.changeCubeType(
+      this.selectedCubePosition.x,
+      this.selectedCubePosition.z,
+      this.selectedCubePosition.y,
+      -1.0,
+    );
   }
 }
 

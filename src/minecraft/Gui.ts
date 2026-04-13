@@ -31,6 +31,7 @@ export class GUI implements IGUI {
   private prevX: number;
   private prevY: number;
   private dragging: boolean;
+  private cubeSelected: boolean;
 
   private height: number;
   private width: number;
@@ -53,6 +54,7 @@ export class GUI implements IGUI {
     this.prevX = 0;
     this.prevY = 0;
     this.dragging = false;
+    this.cubeSelected = false;
     this.Adown = false;
     this.Wdown = false;
     this.Sdown = false;
@@ -118,6 +120,10 @@ export class GUI implements IGUI {
     this.prevX = mouse.screenX;
     this.prevY = mouse.screenY;
     this.dragging = true;
+
+    if (this.cubeSelected) {
+      this.animation.breakSelectedCube();
+    }
   }
   public dragEnd(mouse: MouseEvent): void {
     this.dragging = false;
@@ -163,7 +169,7 @@ export class GUI implements IGUI {
     ]);
     rayDir.normalize();
 
-    this.animation.intersectCubes(cameraPos, rayDir);
+    this.cubeSelected = this.animation.intersectCubes(cameraPos, rayDir);
   }
 
   public walkDir(): Vec3 {
