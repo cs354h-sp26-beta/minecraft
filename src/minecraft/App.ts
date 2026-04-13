@@ -29,10 +29,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   /* Global Rendering Info */
   private lightPosition: Vec4;
   private backgroundColor: Vec4;
+  private selectedCubePosition: Vec4;
 
   private canvas2d: HTMLCanvasElement;
 
   private player: Player;
+  private isectNormal: Vec3;
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -47,6 +49,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.renderedChunks = new Map();
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
+    this.isectNormal = new Vec3();
 
     this.loadChunksAroundPlayer();
 
@@ -60,6 +63,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
+    this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
   }
 
   /**
@@ -146,6 +150,12 @@ export class MinecraftAnimation extends CanvasAnimation {
           false,
           new Float32Array(this.gui.viewMatrix().all()),
         );
+      },
+    );
+    this.blankCubeRenderPass.addUniform(
+      "uSelectedCubePos",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform4fv(loc, this.selectedCubePosition.xyzw);
       },
     );
 
@@ -280,6 +290,72 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
   }
 
+  // Intersects ray with the cube at the given position in world coordinates.
+  private intersectCube(
+    rayPos: Vec3,
+    rayDir: Vec3,
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+  ): intersection | null {
+    let centerX = Math.round(worldX);
+    let centerY = Math.round(worldY);
+    let centerZ = Math.round(worldZ);
+    let minCube = new Vec3([centerX - 0.5, centerY - 0.5, centerZ - 0.5]);
+    let maxCube = new Vec3([centerX + 0.5, centerY + 0.5, centerZ + 0.5]);
+
+    // Calculate inverse directions to avoid division by zero
+    const invDirX = 1.0 / rayDir.x;
+    const invDirY = 1.0 / rayDir.y;
+    const invDirZ = 1.0 / rayDir.z;
+
+    let tNear = -Infinity;
+    let tFar = Infinity;
+    let normal = new Vec3([0, 0, 0]);
+
+    // x-axis slab
+    const t0x = (minCube.x - rayPos.x) * invDirX;
+    const t1x = (maxCube.x - rayPos.x) * invDirX;
+    const tNearX = Math.min(t0x, t1x);
+    const tFarX = Math.max(t0x, t1x);
+
+    if (tNearX > tNear) {
+      tNear = tNearX;
+      normal = new Vec3([invDirX < 0 ? 1 : -1, 0, 0]);
+    }
+    tFar = Math.min(tFar, tFarX);
+
+    // y-axis slab
+    const t0y = (minCube.y - rayPos.y) * invDirY;
+    const t1y = (maxCube.y - rayPos.y) * invDirY;
+    const tNearY = Math.min(t0y, t1y);
+    const tFarY = Math.max(t0y, t1y);
+
+    if (tNearY > tNear) {
+      tNear = tNearY;
+      normal = new Vec3([0, invDirY < 0 ? 1 : -1, 0]);
+    }
+    tFar = Math.min(tFar, tFarY);
+
+    // z-axis slab
+    const t0z = (minCube.z - rayPos.z) * invDirZ;
+    const t1z = (maxCube.z - rayPos.z) * invDirZ;
+    const tNearZ = Math.min(t0z, t1z);
+    const tFarZ = Math.max(t0z, t1z);
+
+    if (tNearZ > tNear) {
+      tNear = tNearZ;
+      normal = new Vec3([0, 0, invDirZ < 0 ? 1 : -1]);
+    }
+    tFar = Math.min(tFar, tFarZ);
+
+    if (tNear > tFar) return null;
+    if (tFar < 0) return null;
+
+    const t = tNear < 0 ? tFar : tNear;
+    return { t, normal };
+  }
+
   public getGUI(): GUI {
     return this.gui;
   }
@@ -298,6 +374,82 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.player.velocity.add(dv);
     }
   }
+
+  public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
+    let bestT = Infinity;
+    let bestPos = [-1000, -1000, -1000];
+    let bestN = new Vec3();
+    let hit = false;
+
+    // Have player's reach extend 5 cubes
+    for (let dx = -5; dx <= 5; dx++) {
+      for (let dz = -5; dz <= 5; dz++) {
+        for (let dy = -5; dy <= 5; dy++) {
+          let x = this.player.position.x + dx;
+          let z = this.player.position.z + dz;
+          let y = this.player.position.y + dy;
+
+          const chunkX = this.worldToChunkCoord(Math.round(x));
+          const chunkZ = this.worldToChunkCoord(Math.round(z));
+          let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+          let cubeType = currentChunk.cubeType(x, z, y);
+
+          if (cubeType !== undefined) {
+            let isect = this.intersectCube(rayPos, rayDir, x, z, y);
+            let t = isect?.t;
+            // TODO: Save the cube face that was hit for placing blocks
+            if (t !== undefined && t < bestT) {
+              bestT = t;
+              bestPos = [x, y, z];
+              bestN = isect?.normal !== undefined ? isect.normal : new Vec3();
+              hit = true;
+            }
+          }
+        }
+      }
+    }
+    this.selectedCubePosition = new Vec4([
+      Math.round(bestPos[0]),
+      Math.round(bestPos[1]),
+      Math.round(bestPos[2]),
+      0,
+    ]);
+    this.isectNormal = bestN;
+    return hit;
+  }
+
+  public breakSelectedCube(): number | undefined {
+    const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
+    const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
+    let chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+
+    let brokenCubeType = chunk.cubeType(
+      this.selectedCubePosition.x,
+      this.selectedCubePosition.z,
+      this.selectedCubePosition.y,
+    );
+    chunk.changeCubeType(
+      this.selectedCubePosition.x,
+      this.selectedCubePosition.z,
+      this.selectedCubePosition.y,
+      -1.0,
+    );
+    return brokenCubeType;
+  }
+
+  public placeCube(cubeType: number) {
+    const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
+    const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
+    let chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+
+    // Place new cube based on side of cube that mouse is pointing at
+    chunk.changeCubeType(
+      this.selectedCubePosition.x + this.isectNormal.x,
+      this.selectedCubePosition.z + this.isectNormal.z,
+      this.selectedCubePosition.y + this.isectNormal.y,
+      cubeType,
+    );
+  }
 }
 
 export function initializeCanvas(): void {
@@ -305,4 +457,9 @@ export function initializeCanvas(): void {
   /* Start drawing */
   const canvasAnimation: MinecraftAnimation = new MinecraftAnimation(canvas);
   canvasAnimation.start();
+}
+
+interface intersection {
+  t: number;
+  normal: Vec3;
 }

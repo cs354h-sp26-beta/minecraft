@@ -31,6 +31,7 @@ export class GUI implements IGUI {
   private prevX: number;
   private prevY: number;
   private dragging: boolean;
+  private cubeSelected: boolean;
 
   private height: number;
   private width: number;
@@ -53,6 +54,7 @@ export class GUI implements IGUI {
     this.prevX = 0;
     this.prevY = 0;
     this.dragging = false;
+    this.cubeSelected = false;
     this.Adown = false;
     this.Wdown = false;
     this.Sdown = false;
@@ -118,6 +120,12 @@ export class GUI implements IGUI {
     this.prevX = mouse.screenX;
     this.prevY = mouse.screenY;
     this.dragging = true;
+
+    if (this.cubeSelected && mouse.buttons == 1) {
+      this.animation.breakSelectedCube();
+    } else if (this.cubeSelected && mouse.buttons == 2) {
+      this.animation.placeCube(0.0); // filler cube type
+    }
   }
   public dragEnd(mouse: MouseEvent): void {
     this.dragging = false;
@@ -140,6 +148,30 @@ export class GUI implements IGUI {
       this.camera.rotate(new Vec3([0, 1, 0]), -GUI.rotationSpeed * dx);
       this.camera.rotate(this.camera.right(), -GUI.rotationSpeed * dy);
     }
+    // Create ray in world coordinates using camera position
+    let mousePos = new Vec4();
+    mousePos.x = (x / this.width) * 2 - 1;
+    mousePos.y = 1 - (y / this.height) * 2;
+    mousePos.z = -1;
+    mousePos.w = 1;
+
+    mousePos = this.projMatrix().inverse(new Mat4()).multiplyVec4(mousePos);
+    mousePos.divide(new Vec4([mousePos.w, mousePos.w, mousePos.w, mousePos.w]));
+    mousePos = this.viewMatrix().inverse(new Mat4()).multiplyVec4(mousePos);
+
+    let cameraPos = new Vec3([
+      this.camera.pos().x,
+      this.camera.pos().y,
+      this.camera.pos().z,
+    ]);
+    let rayDir = new Vec3([
+      mousePos.x - cameraPos.x,
+      mousePos.y - cameraPos.y,
+      mousePos.z - cameraPos.z,
+    ]);
+    rayDir.normalize();
+
+    this.cubeSelected = this.animation.intersectCubes(cameraPos, rayDir);
   }
 
   public walkDir(): Vec3 {
