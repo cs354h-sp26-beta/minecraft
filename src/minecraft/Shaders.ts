@@ -242,6 +242,114 @@ export const blankCubeFSText = `
     }
 `;
 
+export const decorBillboardVSText = `
+    precision mediump float;
+
+    uniform mat4 uView;
+    uniform mat4 uProj;
+    uniform vec3 uCameraRight;
+    uniform vec3 uCameraUp;
+    uniform vec3 uCameraPos;
+    uniform float uTime;
+
+    attribute vec4 aQuadPos;
+    attribute vec2 aQuadUV;
+    attribute vec4 aInstancePos;
+    attribute float aScale;
+    attribute float aVariant;
+    attribute float aType;
+    attribute float aAngle;
+    attribute float aTilt;
+
+    varying vec2 vUV;
+    varying float vType;
+    varying float vVariant;
+    varying vec3 vWorldPos;
+
+    void main() {
+        vec3 right = normalize(uCameraRight);
+        vec3 up = normalize(uCameraUp);
+        vec3 forward = normalize(cross(up, right));
+
+        float c = cos(aAngle);
+        float s = sin(aAngle);
+        vec3 rotatedRight = normalize(right * c + forward * s);
+        vec3 rotatedForward = normalize(-right * s + forward * c);
+        vec3 leanedUp = normalize(up + rotatedForward * aTilt);
+
+        float sway = sin(uTime * 0.8 + aVariant * 12.3);
+        float swayRange = mix(0.015, 0.07, clamp(aType * 0.25, 0.0, 1.0));
+        vec3 swayOffset = rotatedRight * sway * swayRange * aQuadPos.y;
+
+        vec3 billboardOffset = rotatedRight * (aQuadPos.x * aScale) + leanedUp * (aQuadPos.y * aScale);
+        vec3 world = aInstancePos.xyz + billboardOffset + swayOffset;
+        vWorldPos = world;
+        gl_Position = uProj * uView * vec4(world, 1.0);
+
+        vUV = aQuadUV;
+        vType = aType;
+        vVariant = aVariant;
+    }
+`;
+
+export const decorBillboardFSText = `
+    precision mediump float;
+
+    uniform float uTime;
+    uniform vec3 uCameraPos;
+
+    varying vec2 vUV;
+    varying float vType;
+    varying float vVariant;
+    varying vec3 vWorldPos;
+
+    ${noiseUtils}
+
+    vec3 shadeGrass(vec2 uv) {
+        float blade = fbm(uv * 6.0 + vec2(vVariant * 5.7), 2);
+        vec3 base = vec3(0.16, 0.6, 0.16);
+        vec3 tip = vec3(0.32, 0.9, 0.34);
+        return mix(base, tip, blade);
+    }
+
+    vec3 shadeShrub(vec2 uv) {
+        float detail = fbm(uv * 5.0 + vVariant * 3.0, 2);
+        vec3 shadow = vec3(0.12, 0.3, 0.11);
+        vec3 highlight = vec3(0.4, 0.7, 0.25);
+        return mix(shadow, highlight, detail);
+    }
+
+    vec3 shadeRock(vec2 uv) {
+        float detail = fbm(uv * 7.0 + vVariant * 4.0, 3);
+        vec3 base = vec3(0.58, 0.56, 0.55);
+        vec3 highlight = vec3(0.8, 0.78, 0.74);
+        return mix(base, highlight, detail);
+    }
+
+    vec3 shadeTree(vec2 uv) {
+        if (uv.y < 0.3) {
+            return mix(vec3(0.25, 0.16, 0.08), vec3(0.36, 0.23, 0.12), uv.y * 3.0);
+        }
+        float foliage = fbm(vec2(uv.x * 3.5, uv.y * 4.5) + vVariant * 5.0, 3);
+        return mix(vec3(0.12, 0.34, 0.12), vec3(0.22, 0.55, 0.19), foliage);
+    }
+
+    void main() {
+        vec3 color = vec3(0.5);
+        if (vType < 0.5) {
+            color = shadeGrass(vUV);
+        } else if (vType < 1.5) {
+            color = shadeShrub(vUV);
+        } else if (vType < 2.5) {
+            color = shadeRock(vUV);
+        } else {
+            color = shadeTree(vUV);
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+    }
+`;
+
 export const skyboxVSText = `
     precision highp float;
 
