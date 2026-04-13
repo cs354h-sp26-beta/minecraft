@@ -121,8 +121,10 @@ export class GUI implements IGUI {
     this.prevY = mouse.screenY;
     this.dragging = true;
 
-    if (this.cubeSelected) {
+    if (this.cubeSelected && mouse.buttons == 1) {
       this.animation.breakSelectedCube();
+    } else if (this.cubeSelected && mouse.buttons == 2) {
+      this.animation.placeCube(0.0); // filler cube type
     }
   }
   public dragEnd(mouse: MouseEvent): void {

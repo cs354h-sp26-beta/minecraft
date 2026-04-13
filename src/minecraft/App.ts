@@ -34,6 +34,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private canvas2d: HTMLCanvasElement;
 
   private player: Player;
+  private isectNormal: Vec3;
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -48,6 +49,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.renderedChunks = new Map();
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
+    this.isectNormal = new Vec3();
 
     this.loadChunksAroundPlayer();
 
@@ -295,7 +297,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     worldX: number,
     worldZ: number,
     worldY: number,
-  ): number | null {
+  ): intersection | null {
     let centerX = Math.round(worldX);
     let centerY = Math.round(worldY);
     let centerZ = Math.round(worldZ);
@@ -309,6 +311,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     let tNear = -Infinity;
     let tFar = Infinity;
+    let normal = new Vec3([0, 0, 0]);
 
     // x-axis slab
     const t0x = (minCube.x - rayPos.x) * invDirX;
@@ -318,6 +321,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     if (tNearX > tNear) {
       tNear = tNearX;
+      normal = new Vec3([invDirX < 0 ? 1 : -1, 0, 0]);
     }
     tFar = Math.min(tFar, tFarX);
 
@@ -329,6 +333,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     if (tNearY > tNear) {
       tNear = tNearY;
+      normal = new Vec3([0, invDirY < 0 ? 1 : -1, 0]);
     }
     tFar = Math.min(tFar, tFarY);
 
@@ -340,14 +345,15 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     if (tNearZ > tNear) {
       tNear = tNearZ;
+      normal = new Vec3([0, 0, invDirZ < 0 ? 1 : -1]);
     }
     tFar = Math.min(tFar, tFarZ);
 
     if (tNear > tFar) return null;
     if (tFar < 0) return null;
 
-    const distance = tNear < 0 ? tFar : tNear;
-    return distance;
+    const t = tNear < 0 ? tFar : tNear;
+    return { t, normal };
   }
 
   public getGUI(): GUI {
@@ -370,8 +376,9 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
-    let minT = Infinity;
-    let minPos = [-1000, -1000, -1000];
+    let bestT = Infinity;
+    let bestPos = [-1000, -1000, -1000];
+    let bestN = new Vec3();
     let hit = false;
 
     // Have player's reach extend 5 cubes
@@ -388,11 +395,13 @@ export class MinecraftAnimation extends CanvasAnimation {
           let cubeType = currentChunk.cubeType(x, z, y);
 
           if (cubeType !== undefined) {
-            let t = this.intersectCube(rayPos, rayDir, x, z, y);
+            let isect = this.intersectCube(rayPos, rayDir, x, z, y);
+            let t = isect?.t;
             // TODO: Save the cube face that was hit for placing blocks
-            if (t !== null && t < minT) {
-              minT = t;
-              minPos = [x, y, z];
+            if (t !== undefined && t < bestT) {
+              bestT = t;
+              bestPos = [x, y, z];
+              bestN = isect?.normal !== undefined ? isect.normal : new Vec3();
               hit = true;
             }
           }
@@ -400,23 +409,45 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
     }
     this.selectedCubePosition = new Vec4([
-      Math.round(minPos[0]),
-      Math.round(minPos[1]),
-      Math.round(minPos[2]),
+      Math.round(bestPos[0]),
+      Math.round(bestPos[1]),
+      Math.round(bestPos[2]),
       0,
     ]);
+    this.isectNormal = bestN;
     return hit;
   }
 
-  public breakSelectedCube() {
+  public breakSelectedCube(): number | undefined {
     const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
     const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
     let chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+
+    let brokenCubeType = chunk.cubeType(
+      this.selectedCubePosition.x,
+      this.selectedCubePosition.z,
+      this.selectedCubePosition.y,
+    );
     chunk.changeCubeType(
       this.selectedCubePosition.x,
       this.selectedCubePosition.z,
       this.selectedCubePosition.y,
       -1.0,
+    );
+    return brokenCubeType;
+  }
+
+  public placeCube(cubeType: number) {
+    const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
+    const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
+    let chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+
+    // Place new cube based on side of cube that mouse is pointing at
+    chunk.changeCubeType(
+      this.selectedCubePosition.x + this.isectNormal.x,
+      this.selectedCubePosition.z + this.isectNormal.z,
+      this.selectedCubePosition.y + this.isectNormal.y,
+      cubeType,
     );
   }
 }
@@ -426,4 +457,9 @@ export function initializeCanvas(): void {
   /* Start drawing */
   const canvasAnimation: MinecraftAnimation = new MinecraftAnimation(canvas);
   canvasAnimation.start();
+}
+
+interface intersection {
+  t: number;
+  normal: Vec3;
 }
