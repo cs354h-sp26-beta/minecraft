@@ -29,6 +29,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   /* Global Rendering Info */
   private lightPosition: Vec4;
   private backgroundColor: Vec4;
+  private selectedCubePosition: Vec4;
 
   private canvas2d: HTMLCanvasElement;
 
@@ -60,6 +61,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
+    this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
   }
 
   /**
@@ -146,6 +148,12 @@ export class MinecraftAnimation extends CanvasAnimation {
           false,
           new Float32Array(this.gui.viewMatrix().all()),
         );
+      },
+    );
+    this.blankCubeRenderPass.addUniform(
+      "uSelectedCubePos",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform4fv(loc, this.selectedCubePosition.xyzw);
       },
     );
 
@@ -280,7 +288,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
   }
 
-  // Intersects ray with cube at given position in world coordinates.
+  // Intersects ray with the cube at the given position in world coordinates.
   private intersectCube(
     rayPos: Vec3,
     rayDir: Vec3,
@@ -336,7 +344,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     tFar = Math.min(tFar, tFarZ);
 
     if (tNear > tFar) return null;
-
     if (tFar < 0) return null;
 
     const distance = tNear < 0 ? tFar : tNear;
@@ -362,34 +369,40 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
-  // TODO: Add cube intersection logic
   public intersectCubes(rayPos: Vec3, rayDir: Vec3) {
     let minT = Infinity;
+    let minPos = [-1000, -1000, -1000];
 
-    // Have player's reach extend 4 cubes
-    for (let dx = -4; dx <= 4; dx++) {
-      for (let dz = -4; dz <= 4; dz++) {
-        for (let dy = -4; dy <= 4; dy++) {
+    // Have player's reach extend 5 cubes
+    for (let dx = -5; dx <= 5; dx++) {
+      for (let dz = -5; dz <= 5; dz++) {
+        for (let dy = -5; dy <= 5; dy++) {
           let x = this.player.position.x + dx;
           let z = this.player.position.z + dz;
           let y = this.player.position.y + dy;
 
-          const chunkX = this.worldToChunkCoord(x);
-          const chunkZ = this.worldToChunkCoord(z);
+          const chunkX = this.worldToChunkCoord(Math.round(x));
+          const chunkZ = this.worldToChunkCoord(Math.round(z));
           let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
           let cubeType = currentChunk.cubeType(x, z, y);
 
           if (cubeType !== undefined) {
             let t = this.intersectCube(rayPos, rayDir, x, z, y);
-            // TODO: Save identifier of cube and its cube face that was hit for closest intersection
+            // TODO: Save the cube face that was hit for placing blocks
             if (t !== null && t < minT) {
               minT = t;
+              minPos = [x, y, z];
             }
           }
         }
       }
     }
-    console.log(minT);
+    this.selectedCubePosition = new Vec4([
+      Math.round(minPos[0]),
+      Math.round(minPos[1]),
+      Math.round(minPos[2]),
+      0,
+    ]);
   }
 }
 

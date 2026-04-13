@@ -307,8 +307,10 @@ export class Chunk {
     return floorY;
   }
 
-  // Gets the type of the cube located at the given position in world coordinates.
-  // Returns undefined for an empty cube.
+  /**
+   * Gets the type of the cube located at a given position in world coordinates.
+   * Returns undefined for an empty cube.
+   */
   public cubeType(
     worldX: number,
     worldZ: number,
