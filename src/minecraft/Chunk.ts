@@ -17,7 +17,7 @@ export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
   private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
-  private heightMap: Float32Array; // Ground truth of what blocks exist.
+  private heightMapData!: Float32Array; // Ground truth of what blocks exist.
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -210,12 +210,12 @@ export class Chunk {
     const activeGridSizes: number[] = [...TERRAIN_OCTAVE_TUNING.gridSizes];
     const activeMultCoeffs: number[] = [...TERRAIN_OCTAVE_TUNING.multCoeffs];
 
-    this.heightMap = new Float32Array(this.size * this.size);
+    this.heightMapData = new Float32Array(this.size * this.size);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const worldX = topLeftX + j;
         const worldZ = topLeftZ + i;
-        this.heightMap[this.size * i + j] = this.sampleHeightAtWorld(
+        this.heightMapData[this.size * i + j] = this.sampleHeightAtWorld(
           worldX,
           worldZ,
           activeGridSizes,
@@ -228,7 +228,7 @@ export class Chunk {
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(this.heightMap[this.size * i + j], 1);
+        const height = Math.max(this.heightMapData[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
           if (this.isExposed(i, j, y)) this.cubes++;
         }
@@ -240,7 +240,7 @@ export class Chunk {
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(this.heightMap[this.size * i + j], 1);
+        const height = Math.max(this.heightMapData[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
           if (this.isExposed(i, j, y)) {
             this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
@@ -280,7 +280,7 @@ export class Chunk {
 
   private getHeight(i: number, j: number): number {
     if (i < 0 || i >= this.size || j < 0 || j >= this.size) return 0;
-    return this.heightMap[this.size * i + j];
+    return this.heightMapData[this.size * i + j];
   }
 
   public cubePositions(): Float32Array {
@@ -293,6 +293,22 @@ export class Chunk {
 
   public numCubes(): number {
     return this.cubes;
+  }
+
+  public heightMap(): Float32Array {
+    return this.heightMapData;
+  }
+
+  public topLeftX(): number {
+    return this.x - this.size / 2;
+  }
+
+  public topLeftZ(): number {
+    return this.z - this.size / 2;
+  }
+
+  public chunkSize(): number {
+    return this.size;
   }
 
   // Calculates the height of the floor for a given an xz world player coordinate.
@@ -339,7 +355,7 @@ export class Chunk {
         const hbr = Player.hitboxRadius;
         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
           const cubeWorldY =
-            this.heightMap[cubeChunkZ * this.size + cubeChunkX];
+            this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
           floorY = Math.max(floorY, cubeWorldY - 0.5);
         }
       }

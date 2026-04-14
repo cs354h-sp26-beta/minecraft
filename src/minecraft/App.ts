@@ -399,6 +399,48 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(instanceCount);
   }
 
+  /**
+   * Returns the position of the highest block within an n x n square centered on the player (bird's eye view),
+   * or null if no blocks are found within range.
+   */
+  public getHighestBlockNearby(n: number): Vec3 | null {
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    const half = n / 2;
+    let bestY = -Infinity;
+    let bestX = 0;
+    let bestZ = 0;
+
+    for (const chunk of this.renderedChunks.values()) {
+      const tlx = chunk.topLeftX();
+      const tlz = chunk.topLeftZ();
+      const size = chunk.chunkSize();
+      const hmap = chunk.heightMap();
+
+      // clamp to overlap between current chunk and query square
+      const minX = Math.max(0, Math.floor(px - half - tlx));
+      const maxX = Math.min(size - 1, Math.floor(px + half - tlx));
+      const minZ = Math.max(0, Math.floor(pz - half - tlz));
+      const maxZ = Math.min(size - 1, Math.floor(pz + half - tlz));
+
+      for (let i = minZ; i <= maxZ; i++) {
+        for (let j = minX; j <= maxX; j++) {
+          const y = hmap[size * i + j];
+          if (y > bestY) {
+            bestY = y;
+            bestX = tlx + j;
+            bestZ = tlz + i;
+          }
+        }
+      }
+    }
+
+    if (bestY === -Infinity) {
+      return null;
+    }
+    return new Vec3([bestX, bestY, bestZ]);
+  }
+
   public getGUI(): GUI {
     return this.gui;
   }
