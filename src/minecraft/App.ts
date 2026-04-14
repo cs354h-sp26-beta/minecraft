@@ -8,15 +8,6 @@ import { LruCache } from "./Cache.js";
 import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
 import { Player } from "./Entity.js";
-import {
-  BLOCK_PICK_SEARCH_HALF_EXTENT,
-  PLAYER_FOOT_SLACK,
-  PLAYER_GRAVITY,
-  PLAYER_GROUNDED_HEAD_EPSILON,
-  PLAYER_JUMP_IMPULSE_Y,
-  PLAYER_PHYSICS_FIXED_TIMESTEP_S,
-  VOXEL_HALF_EXTENT,
-} from "./PhysicsConstants.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
@@ -229,7 +220,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
     const r = Player.hitboxRadius;
     const h = Player.hitboxHeight;
-    const footSlack = PLAYER_FOOT_SLACK;
+    const footSlack = 0.55;
 
     const walkDx = this.gui.walkDir();
     const momentumH = this.player.velocity.scale(dt, new Vec3());
@@ -269,11 +260,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     const grounded =
         floorHead !== -Infinity &&
-        py <= floorHead + PLAYER_GROUNDED_HEAD_EPSILON;
+        py <= floorHead + 0.02;
 
     if (!grounded) {
       this.player.velocity.add(
-          new Vec3([0.0, -PLAYER_GRAVITY * dt, 0.0]),
+          new Vec3([0.0, -9.8 * dt, 0.0]),
       );
     } else {
       const v = this.player.velocity.copy();
@@ -383,7 +374,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.loadChunksAroundPlayer();
 
     // To slow movement to something more natural, scale the amount we can move per frame.
-    const dt = PLAYER_PHYSICS_FIXED_TIMESTEP_S;
+    const dt = 1 / 60;
 
     this.stepPlayerPhysics(dt);
 
@@ -422,7 +413,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     let centerX = Math.round(worldX);
     let centerY = Math.round(worldY);
     let centerZ = Math.round(worldZ);
-    const h = VOXEL_HALF_EXTENT;
+    const h = 0.5;
     let minCube = new Vec3([centerX - h, centerY - h, centerZ - h]);
     let maxCube = new Vec3([centerX + h, centerY + h, centerZ + h]);
 
@@ -486,7 +477,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
     const r = Player.hitboxRadius;
     const h = Player.hitboxHeight;
-    const footSlack = PLAYER_FOOT_SLACK;
+    const footSlack = 0.55;
     const px = this.player.position.x;
     const py = this.player.position.y;
     const pz = this.player.position.z;
@@ -501,12 +492,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     if (
       floorHead === -Infinity ||
-      py > floorHead + PLAYER_GROUNDED_HEAD_EPSILON ||
+      py > floorHead + 0.02 ||
       !Chunk.verticalCapsuleHasHeadroomForJump(prov, px, py, pz, r, h)
     ) {
       return;
     }
-    this.player.velocity.add(new Vec3([0.0, PLAYER_JUMP_IMPULSE_Y, 0.0]));
+    this.player.velocity.add(new Vec3([0.0, 10.0, 0.0]));
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -515,7 +506,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     let bestN = new Vec3();
     let hit = false;
 
-    const rPick = BLOCK_PICK_SEARCH_HALF_EXTENT;
+    const rPick = 5;
     for (let dx = -rPick; dx <= rPick; dx++) {
       for (let dz = -rPick; dz <= rPick; dz++) {
         for (let dy = -rPick; dy <= rPick; dy++) {
