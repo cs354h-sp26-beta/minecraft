@@ -1,17 +1,22 @@
 import { Debugger } from "../lib/webglutils/Debugging.js";
-import {
-  CanvasAnimation,
-  WebGLUtilities,
-} from "../lib/webglutils/CanvasAnimation.js";
+import { CanvasAnimation } from "../lib/webglutils/CanvasAnimation.js";
 import { GUI } from "./Gui.js";
 import { blankCubeFSText, blankCubeVSText } from "./Shaders.js";
-import { Mat4, Vec4, Vec3 } from "../lib/TSM.js";
+import { Vec4, Vec3 } from "../lib/TSM.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
-import { Camera } from "../lib/webglutils/Camera.js";
 import { LruCache } from "./Cache.js";
 import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
 import { Player } from "./Entity.js";
+import {
+  BLOCK_PICK_SEARCH_HALF_EXTENT,
+  PLAYER_FOOT_SLACK,
+  PLAYER_GRAVITY,
+  PLAYER_GROUNDED_HEAD_EPSILON,
+  PLAYER_JUMP_IMPULSE_Y,
+  PLAYER_PHYSICS_FIXED_TIMESTEP_S,
+  VOXEL_HALF_EXTENT,
+} from "./PhysicsConstants.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   private gui: GUI;
@@ -169,8 +174,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private worldToChunkCoord(worldVal: number): number {
-    const s = MinecraftAnimation.chunkSize;
-    return Math.floor((worldVal + s / 2) / s) * s;
+    return Chunk.worldToChunkAxis(worldVal, MinecraftAnimation.chunkSize);
   }
 
   private currentChunk(): Chunk {
@@ -190,6 +194,146 @@ export class MinecraftAnimation extends CanvasAnimation {
   ): Chunk {
     // TODO: Actually do it. For now, just create a new chunk alltogther.
     return new Chunk(centerX, centerZ, 64);
+  }
+
+  /**
+   * Resolves the chunk that owns the block column at (wx, wz).
+   * Snaps to integer block centers first so values like 31.999999 at a seam still map to the
+   * same chunk as column 32 (avoids phantom air / wrong chunk).
+   */
+  private getChunkAtWorld(wx: number, wz: number): Chunk | undefined {
+    const ix = Math.round(wx);
+    const iz = Math.round(wz);
+    const cx = this.worldToChunkCoord(ix);
+    const cz = this.worldToChunkCoord(iz);
+    const key = `${cx},${cz}`;
+    const live = this.renderedChunks.get(key);
+    if (live !== undefined) {
+      return live;
+    }
+    return this.chunkCache.get(key);
+  }
+
+  private applyVerticalSeparationAndZeroVelocity(
+    newY: number,
+    prevY: number,
+  ): void {
+    this.player.position.y = newY;
+    if (newY === prevY) return;
+    const vy = this.player.velocity.y;
+    if (newY < prevY && vy > 0) this.player.velocity.y = 0;
+    if (newY > prevY && vy < 0) this.player.velocity.y = 0;
+  }
+
+  private stepPlayerPhysics(dt: number): void {
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    const r = Player.hitboxRadius;
+    const h = Player.hitboxHeight;
+    const footSlack = PLAYER_FOOT_SLACK;
+
+    const walkDx = this.gui.walkDir();
+    const momentumH = this.player.velocity.scale(dt, new Vec3());
+    momentumH.y = 0;
+    const totalH = walkDx.add(momentumH, new Vec3());
+
+    let px = this.player.position.x;
+    let py = this.player.position.y;
+    let pz = this.player.position.z;
+
+    const { ax, az } = Chunk.tryHorizontalCylinderMove(
+      prov,
+      px,
+      py,
+      pz,
+      totalH.x,
+      totalH.z,
+      r,
+      h,
+    );
+    if (ax === 0) this.player.velocity.x = 0;
+    if (az === 0) this.player.velocity.z = 0;
+    this.player.position.x += ax;
+    this.player.position.z += az;
+    px = this.player.position.x;
+    py = this.player.position.y;
+    pz = this.player.position.z;
+
+    let floorHead = Chunk.supportedHeadYWorld(
+      prov,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    const grounded =
+        floorHead !== -Infinity &&
+        py <= floorHead + PLAYER_GROUNDED_HEAD_EPSILON;
+
+    if (!grounded) {
+      this.player.velocity.add(
+          new Vec3([0.0, -PLAYER_GRAVITY * dt, 0.0]),
+      );
+    } else {
+      const v = this.player.velocity.copy();
+      if (v.y < 0) v.y = 0;
+      this.player.velocity = v;
+    }
+
+    this.player.position.y += this.player.velocity.y * dt;
+    py = this.player.position.y;
+
+    floorHead = Chunk.supportedHeadYWorld(
+      prov,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    if (floorHead !== -Infinity && py < floorHead) {
+      this.player.position.y = floorHead;
+      if (this.player.velocity.y < 0) this.player.velocity.y = 0;
+      py = this.player.position.y;
+    }
+
+    const yBeforeSep = py;
+    const ySep = Chunk.separateVerticalCapsuleFromSolids(
+      prov,
+      px,
+      py,
+      pz,
+      r,
+      h,
+      this.player.velocity.y,
+    );
+    this.applyVerticalSeparationAndZeroVelocity(ySep, yBeforeSep);
+    py = this.player.position.y;
+
+    if (
+      this.player.velocity.y > 0 &&
+      Chunk.cylinderIntersectsSolidWorld(prov, px, py, pz, r, h)
+    ) {
+      py = Chunk.resolveUpwardPenetration(prov, px, py, pz, r, h);
+      this.player.position.y = py;
+      this.player.velocity.y = 0;
+    }
+
+    floorHead = Chunk.supportedHeadYWorld(
+      prov,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    if (floorHead !== -Infinity && py < floorHead) {
+      this.player.position.y = floorHead;
+      if (this.player.velocity.y < 0) this.player.velocity.y = 0;
+    }
   }
 
   private loadChunksAroundPlayer(): void {
@@ -239,34 +383,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.loadChunksAroundPlayer();
 
     // To slow movement to something more natural, scale the amount we can move per frame.
-    const dt = 1 / 60;
+    const dt = PLAYER_PHYSICS_FIXED_TIMESTEP_S;
 
-    const walkDx = this.gui.walkDir();
-    const momentumDx = this.player.velocity.scale(dt, new Vec3());
-    const totalDx = walkDx.add(momentumDx, new Vec3());
-    this.player.position.add(totalDx);
+    this.stepPlayerPhysics(dt);
 
     this.gui.getCamera().setPos(this.player.position);
-
-    // Check for collisions.
-    //
-    // FIXME: Ew. This system sucks. It's what the hint says to do but...
-    const floorY = this.currentChunk().floorHeight(
-      this.player.position.x,
-      this.player.position.z,
-    );
-    // Apply gravity acceleration.
-    if (this.player.position.y > floorY + Player.hitboxHeight) {
-      const gDelta = -9.8 * dt;
-      const gDv = new Vec3([0.0, gDelta, 0.0]);
-      this.player.velocity.add(gDv);
-    } else {
-      // Stop all movement in vertical direction.
-      const v = this.player.velocity.copy();
-      v.y = 0.0;
-      this.player.velocity = v;
-      this.player.position.y = floorY + Player.hitboxHeight;
-    }
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
     const bg: Vec4 = this.backgroundColor;
@@ -301,8 +422,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     let centerX = Math.round(worldX);
     let centerY = Math.round(worldY);
     let centerZ = Math.round(worldZ);
-    let minCube = new Vec3([centerX - 0.5, centerY - 0.5, centerZ - 0.5]);
-    let maxCube = new Vec3([centerX + 0.5, centerY + 0.5, centerZ + 0.5]);
+    const h = VOXEL_HALF_EXTENT;
+    let minCube = new Vec3([centerX - h, centerY - h, centerZ - h]);
+    let maxCube = new Vec3([centerX + h, centerY + h, centerZ + h]);
 
     // Calculate inverse directions to avoid division by zero
     const invDirX = 1.0 / rayDir.x;
@@ -361,18 +483,30 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public jump() {
-    // If player is not already in the air, launch them up at 10 units/sec.
-    //
-    // FIXME: Same problem as in draw loop.
-    const floorY = this.currentChunk().floorHeight(
-      this.player.position.x,
-      this.player.position.z,
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    const r = Player.hitboxRadius;
+    const h = Player.hitboxHeight;
+    const footSlack = PLAYER_FOOT_SLACK;
+    const px = this.player.position.x;
+    const py = this.player.position.y;
+    const pz = this.player.position.z;
+    const floorHead = Chunk.supportedHeadYWorld(
+      prov,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
     );
-    // FIXME: Wtf. Does this even work?
-    if (this.player.position.y <= floorY + Player.hitboxHeight) {
-      const dv = new Vec3([0.0, 10.0, 0.0]);
-      this.player.velocity.add(dv);
+    if (
+      floorHead === -Infinity ||
+      py > floorHead + PLAYER_GROUNDED_HEAD_EPSILON ||
+      !Chunk.verticalCapsuleHasHeadroomForJump(prov, px, py, pz, r, h)
+    ) {
+      return;
     }
+    this.player.velocity.add(new Vec3([0.0, PLAYER_JUMP_IMPULSE_Y, 0.0]));
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -381,10 +515,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     let bestN = new Vec3();
     let hit = false;
 
-    // Have player's reach extend 5 cubes
-    for (let dx = -5; dx <= 5; dx++) {
-      for (let dz = -5; dz <= 5; dz++) {
-        for (let dy = -5; dy <= 5; dy++) {
+    const rPick = BLOCK_PICK_SEARCH_HALF_EXTENT;
+    for (let dx = -rPick; dx <= rPick; dx++) {
+      for (let dz = -rPick; dz <= rPick; dz++) {
+        for (let dy = -rPick; dy <= rPick; dy++) {
           let x = this.player.position.x + dx;
           let z = this.player.position.z + dz;
           let y = this.player.position.y + dy;
