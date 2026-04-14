@@ -19,7 +19,6 @@ export class Chunk {
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
   private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
   private heightMapData!: Float32Array; // Ground truth of what blocks exist.
-  // private pondMask!: Uint8Array; // 1 = column was carved into a pond basin
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -342,7 +341,6 @@ export class Chunk {
     // Carve pond basins using 3D Perlin noise.
     // Sample noise at sea level to find pond regions, then lower terrain there.
     const seaLvl = Chunk.SEA_LEVEL;
-    // this.pondMask = new Uint8Array(this.size * this.size);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const worldX = topLeftX + j;
@@ -364,7 +362,6 @@ export class Chunk {
             1,
             terrainH - carveDepth,
           );
-          // this.pondMask[this.size * i + j] = 1;
         }
       }
     }
@@ -378,7 +375,6 @@ export class Chunk {
           if (this.isExposed(i, j, y)) this.cubes++;
         }
         // Water blocks only in carved pond basins
-        // if (height < seaLvl && this.pondMask[this.size * i + j]) {
         if (height < seaLvl) {
           for (let y = height; y < seaLvl; y++) {
             if (this.isWaterExposed(i, j, y)) this.cubes++;
@@ -410,7 +406,6 @@ export class Chunk {
           }
         }
         // Place water blocks only in carved pond basins
-        // if (height < seaLvl && this.pondMask[this.size * i + j]) {
         if (height < seaLvl) {
           for (let y = height; y < seaLvl; y++) {
             if (this.isWaterExposed(i, j, y)) {
@@ -455,13 +450,7 @@ export class Chunk {
   // Used for exposure checks so terrain under water isn't culled at pond edges.
   private getEffectiveHeight(i: number, j: number): number {
     const terrain = this.getHeight(i, j);
-    if (
-      i >= 0 &&
-      i < this.size &&
-      j >= 0 &&
-      j < this.size
-      // && this.pondMask[this.size * i + j]
-    ) {
+    if (i >= 0 && i < this.size && j >= 0 && j < this.size) {
       return Math.max(terrain, Chunk.SEA_LEVEL);
     }
     return terrain;
@@ -490,11 +479,7 @@ export class Chunk {
     // Chunk edge
     if (i <= 0 || i >= this.size - 1 || j <= 0 || j >= this.size - 1)
       return true;
-    // Edge of water body: neighbor is not a pond column, or its terrain is above this y
-    // if (!this.pondMask[this.size * (i - 1) + j] && this.getHeight(i - 1, j) <= y) return true;
-    // if (!this.pondMask[this.size * (i + 1) + j] && this.getHeight(i + 1, j) <= y) return true;
-    // if (!this.pondMask[this.size * i + (j - 1)] && this.getHeight(i, j - 1) <= y) return true;
-    // if (!this.pondMask[this.size * i + (j + 1)] && this.getHeight(i, j + 1) <= y) return true;
+    // Edge of water body
     if (this.getHeight(i - 1, j) <= y) return true;
     if (this.getHeight(i + 1, j) <= y) return true;
     if (this.getHeight(i, j - 1) <= y) return true;
