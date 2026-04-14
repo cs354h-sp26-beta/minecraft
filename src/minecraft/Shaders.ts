@@ -165,6 +165,28 @@ const cobbleTexture = `
     }
 `;
 
+const oreTexture = `
+    vec3 makeOre(vec2 uv, vec3 world, float scale, vec3 color) {
+        vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
+        vec3 p = pixelatedWorld * scale;
+        float v = 0.3 * voronoi(p);
+        float groove = smoothstep(0.35, -0.75, v * 0.7);  // dark at edges
+        float coloredGroove = perlin(pixelatedWorld.xz * 2.5 + uv); // add color variation to grooves
+
+        vec3 baseColor = vec3(0.5, 0.5, 0.5);
+        
+        float noise = fbm(uv * 8.0, 2);
+
+        coloredGroove = pow(coloredGroove, 3.0);
+
+        vec3 noColor = baseColor * (0.14 + 0.12 * noise) + groove * 0.8;
+
+        vec3 colored = color * (0.7 - groove + 0.2 * noise);
+
+        return mix(noColor, colored, coloredGroove);
+    }
+`;
+
 // const cellsTexture = `
 //       vec3 makeCobble(vec2 uv, vec3 world, float scale) {
 
@@ -218,6 +240,8 @@ export const blankCubeFSText = `
     ${cobbleTexture}
 
     ${waterTexture}
+
+    ${oreTexture}
     
     void main() {
         vec3 kd = vec3(1.0, 1.0, 1.0);
@@ -236,6 +260,9 @@ export const blankCubeFSText = `
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
+        } else {
+            vec3 oreColor = vec3(0.9, 0.1, 0.2);
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
         }
 
         gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0) * textureColor, 1.0);
