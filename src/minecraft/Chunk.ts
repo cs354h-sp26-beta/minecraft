@@ -10,6 +10,7 @@ import {
 } from "./Biomes.js";
 
 export class Chunk {
+  public static readonly blockTypeAir: number = -1;
   public static readonly blockTypeDirt: number = 0;
   public static readonly blockTypeCobble: number = 1;
   public static readonly blockTypeWater: number = 2;
@@ -255,13 +256,14 @@ export class Chunk {
           // skip empty cube
           if (
             y < height &&
-            (this.deltaMap.get(key) == -1.0 || !this.isExposed(i, j, y))
+            (this.deltaMap.get(key) == Chunk.blockTypeAir ||
+              !this.isExposed(i, j, y))
           ) {
             continue;
           } else if (
             y >= height &&
             (this.deltaMap.get(key) == undefined ||
-              this.deltaMap.get(key) == -1.0)
+              this.deltaMap.get(key) == Chunk.blockTypeAir)
           ) {
             continue;
           }
@@ -411,14 +413,15 @@ export class Chunk {
   }
 
   /**
-   * Changes the type of the cube at the given world coordinates.
+   * Changes the type of the cube at the given world coordinates and returns the chunks
+   * new delta map.
    */
   public changeCubeType(
     worldX: number,
     worldZ: number,
     worldY: number,
     newType: number,
-  ) {
+  ): Map<string, number> {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
@@ -426,8 +429,7 @@ export class Chunk {
 
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
 
-    if (newType == -1.0) {
-      // cube type is empty or air
+    if (newType == Chunk.blockTypeAir) {
       this.positionMap.delete(key);
       this.numCubesAdded--;
     } else {
@@ -435,5 +437,6 @@ export class Chunk {
     }
     this.deltaMap.set(key, newType);
     this.generateCubes(); // re-generate cubes with the modification
+    return this.deltaMap;
   }
 }

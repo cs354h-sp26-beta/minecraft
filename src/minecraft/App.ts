@@ -22,6 +22,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
+  private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
 
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
@@ -58,6 +59,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui = new GUI(this.canvas2d, this);
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
+    this.deltaMaps = new Map();
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
     this.isectNormal = new Vec3();
@@ -588,37 +590,43 @@ export class MinecraftAnimation extends CanvasAnimation {
     return hit;
   }
 
-  public breakSelectedCube(): number | undefined {
+  public breakSelectedBlock(): number | undefined {
     const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
     const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
-    let chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+    let key = `${chunkX},${chunkZ}`;
+    let chunk = this.renderedChunks.get(key)!;
 
     let brokenCubeType = chunk.cubeType(
       this.selectedCubePosition.x,
       this.selectedCubePosition.z,
       this.selectedCubePosition.y,
     );
-    chunk.changeCubeType(
+    let chunkDeltaMap = chunk.changeCubeType(
       this.selectedCubePosition.x,
       this.selectedCubePosition.z,
       this.selectedCubePosition.y,
-      -1.0,
+      Chunk.blockTypeAir,
     );
+
+    this.deltaMaps.set(key, chunkDeltaMap);
     return brokenCubeType;
   }
 
-  public placeCube(cubeType: number) {
+  public placeBlock(cubeType: number) {
     const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
     const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
-    let chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+    let key = `${chunkX},${chunkZ}`;
+    let chunk = this.renderedChunks.get(key)!;
 
     // Place new cube based on side of cube that mouse is pointing at
-    chunk.changeCubeType(
+    let chunkDeltaMap = chunk.changeCubeType(
       this.selectedCubePosition.x + this.isectNormal.x,
       this.selectedCubePosition.z + this.isectNormal.z,
       this.selectedCubePosition.y + this.isectNormal.y,
       cubeType,
     );
+
+    this.deltaMaps.set(key, chunkDeltaMap);
   }
 
   private drawOverlay(): void {
