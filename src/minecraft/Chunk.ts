@@ -13,6 +13,10 @@ export class Chunk {
   public static readonly blockTypeDirt: number = 0;
   public static readonly blockTypeCobble: number = 1;
   public static readonly blockTypeWater: number = 2;
+  public static readonly blockTypeCoalOre: number = 3;
+  public static readonly blockTypeIronOre: number = 4;
+  public static readonly blockTypeGoldOre: number = 5;
+  public static readonly blockTypeDiamondOre: number = 6;
   public static readonly SEA_LEVEL: number = 8;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
@@ -209,7 +213,7 @@ export class Chunk {
     const w = this.fade(dz0);
 
     // gradient indices at corners
-    //  g00 = lower corner, g100 = +x corner, g010 = +y corner, etc.
+    //  g000 = lower corner, g100 = +x corner, g010 = +y corner, etc.
     const g000 = this.grad3At(x0, y0, z0, octave);
     const g100 = this.grad3At(x1, y0, z0, octave);
     const g010 = this.grad3At(x0, y1, z0, octave);
@@ -433,8 +437,38 @@ export class Chunk {
       return Chunk.blockTypeDirt;
     }
 
-    // perlinNoise3D returns [-1, 1]
+    // Ore vein generation
+    const depth = columnHeight - y;
 
+    // Diamond
+    if (depth >= 20) {
+      if (this.perlinNoise3D(worldX, y, worldZ, 150, 0.15) > 0.45) {
+        return Chunk.blockTypeDiamondOre;
+      }
+    }
+
+    // Gold
+    if (depth >= 14) {
+      if (this.perlinNoise3D(worldX, y, worldZ, 140, 0.13) > 0.4) {
+        return Chunk.blockTypeGoldOre;
+      }
+    }
+
+    // Iron
+    if (depth >= 6) {
+      if (this.perlinNoise3D(worldX, y, worldZ, 130, 0.12) > 0.35) {
+        return Chunk.blockTypeIronOre;
+      }
+    }
+
+    // Coal
+    if (depth >= 4) {
+      if (this.perlinNoise3D(worldX, y, worldZ, 120, 0.1) > 0.3) {
+        return Chunk.blockTypeCoalOre;
+      }
+    }
+
+    // Base block type (dirt vs cobble)
     // two octaves at different frequencies for natural-looking variation
     const noise =
       0.7 * this.perlinNoise3D(worldX, y, worldZ, 100, 0.1) +
