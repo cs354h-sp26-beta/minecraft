@@ -114,8 +114,8 @@ const dirtTexture = `
 
         vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
 
-        vec3 baseColor = vec3(0.545, 0.271, 0.075);
-        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) * 0.8 + hash(pixelUV) * 0.3;
+        vec3 baseColor = vec3(0.845, 0.471, 0.18);
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) + hash(pixelUV) * 0.3;
         vec3 textureColor = baseColor * noise; // add subtle noise
         if (noise < 0.2) textureColor -= vec3(0.14, 0.08, 0.04); // add some darker spots
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
@@ -161,7 +161,7 @@ const cobbleTexture = `
       float groove = smoothstep(0.35, -0.55, v * 0.5);  // dark at edges
       float noise = fbm(pixelatedWorld.xz * 8.0, 2);     // surface variation
       vec3 baseColor = vec3(0.65, 0.63, 0.6);
-      return baseColor * (0.31 + 1.8 * groove + 0.42 * noise);
+      return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
     }
 `;
 
