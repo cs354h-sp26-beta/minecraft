@@ -10,6 +10,7 @@ import {
 } from "./Biomes.js";
 
 export class Chunk {
+  public static readonly blockTypeAir: number = -1;
   public static readonly blockTypeDirt: number = 0;
   public static readonly blockTypeCobble: number = 1;
   public static readonly blockTypeWater: number = 2;
@@ -28,6 +29,10 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
+  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type
+  private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
+  private numCubesAdded: number;
+
   // world seed
   public static setWorldSeed(seed: string): void {
     Chunk.worldSeed = seed;
@@ -38,6 +43,9 @@ export class Chunk {
     this.z = centerZ;
     this.size = size;
     this.cubes = size * size;
+    this.positionMap = new Map();
+    this.deltaMap = new Map();
+    this.numCubesAdded = 0;
     this.generateCubes();
   }
 
@@ -386,6 +394,7 @@ export class Chunk {
         }
       }
     }
+    this.cubes += this.numCubesAdded;
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
 
@@ -393,21 +402,44 @@ export class Chunk {
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const height = Math.max(this.heightMapData[this.size * i + j], 1);
-        // Place solid terrain blocks
-        for (let y = 0; y < height; y++) {
-          if (this.isExposed(i, j, y)) {
-            this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
-            this.cubePositionsF32[4 * cubeIdx + 1] = y;
-            this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
-            this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+        for (let y = 0; y <= 100; y++) {
+          const key = `${j},${i},${y}`;
+
+          // skip empty cube
+          if (
+            y < height &&
+            (this.deltaMap.get(key) == Chunk.blockTypeAir ||
+              !this.isExposed(i, j, y))
+          ) {
+            continue;
+          } else if (
+            y >= height &&
+            (this.deltaMap.get(key) == undefined ||
+              this.deltaMap.get(key) == Chunk.blockTypeAir)
+          ) {
+            continue;
+          }
+          this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+          this.cubePositionsF32[4 * cubeIdx + 1] = y;
+          this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+          if (this.deltaMap.has(key)) {
+            this.cubeTypesF32[cubeIdx] = this.deltaMap.get(key)!;
+            this.positionMap.set(key, this.deltaMap.get(key)!);
+          } else {
             this.cubeTypesF32[cubeIdx] = this.blockTypeAt(
               topLeftX + j,
               y,
-              topLeftZ + i,
+              topLeftZ,
               height,
             );
-            cubeIdx++;
+            this.positionMap.set(
+              key,
+              this.blockTypeAt(topLeftX + j, y, topLeftZ, height),
+            );
           }
+          cubeIdx++;
         }
         // Place water blocks only in carved pond basins
         if (height < seaLvl) {
@@ -605,5 +637,51 @@ export class Chunk {
     }
 
     return floorY;
+  }
+
+  /**
+   * Gets the type of the cube located at a given position in world coordinates.
+   * Returns undefined for an empty cube.
+   */
+  public cubeType(
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+  ): number | undefined {
+    const [topLeftX, topLeftZ] = this.origin();
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    const cubeChunkY = Math.round(worldY);
+
+    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
+    return this.positionMap.get(key);
+  }
+
+  /**
+   * Changes the type of the cube at the given world coordinates and returns the chunks
+   * new delta map.
+   */
+  public changeCubeType(
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+    newType: number,
+  ): Map<string, number> {
+    const [topLeftX, topLeftZ] = this.origin();
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    const cubeChunkY = Math.round(worldY);
+
+    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
+
+    if (newType == Chunk.blockTypeAir) {
+      this.positionMap.delete(key);
+      this.numCubesAdded--;
+    } else {
+      this.numCubesAdded++;
+    }
+    this.deltaMap.set(key, newType);
+    this.generateCubes(); // re-generate cubes with the modification
+    return this.deltaMap;
   }
 }
