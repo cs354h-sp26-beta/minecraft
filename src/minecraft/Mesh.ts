@@ -1,5 +1,6 @@
 import {Mat4, Quat, Vec3, Vec4} from "../lib/TSM.js";
 import { AttributeLoader, MeshGeometryLoader, BoneLoader, MeshLoader } from "./AnimationFileLoader.js";
+import {MathUtils} from "../lib/threejs/build/three.module.js";
 
 //General class for handling GLSL attributes
 export class Attribute {
@@ -123,23 +124,26 @@ export class Mesh {
         this.imgSrc = (mesh instanceof Mesh) ? mesh.imgSrc : null;
     }
 
-    public getBoneTranslations(): Float32Array {
-        let trans = new Float32Array(3 * this.bones.length);
+    public getBoneTranslationsUi8(): Uint8Array {
+        let trans = new Uint8Array(4 * this.bones.length);
         this.bones.forEach((bone, index) => {
             let res = bone.position.xyz;
+            res.push(0);
             for (let i = 0; i < res.length; i++) {
-                trans[3 * index + i] = res[i];
+                // res[i] should be in [-4,4]
+                trans[4 * index + i] = MathUtils.clamp(Math.round(255 * (res[i] + 4) / 8), 0, 255);
             }
         });
         return trans;
     }
 
-    public getBoneRotations(): Float32Array {
-        let trans = new Float32Array(4 * this.bones.length);
+    public getBoneRotationsUi8(): Uint8Array {
+        let trans = new Uint8Array(4 * this.bones.length);
         this.bones.forEach((bone, index) => {
             let res = bone.rotation.xyzw;
             for (let i = 0; i < res.length; i++) {
-                trans[4 * index + i] = res[i];
+                // res[i] is in [-1,1]
+                trans[4 * index + i] = MathUtils.clamp(Math.round(255 * (res[i] + 1) / 2), 0, 255);
             }
         });
         return trans;
@@ -157,5 +161,18 @@ export class Mesh {
             bone.relativePos.scale(scaling);
             bone.endpointLocal.scale(scaling);
         });
+    }
+
+    public setPose(pose: [number,number,number,number][]) {
+        for (let i = 0; i < this.bones.length; i++) {
+            this.bones[i].relativeRot = new Quat(pose[i]);
+        }
+
+        // Recursively update rots starting with roots
+        for (let i = 0; i < this.bones.length; i++) {
+            if (this.bones[i].parent < 0) {
+                this.bones[i].updateRecursively();
+            }
+        }
     }
 }

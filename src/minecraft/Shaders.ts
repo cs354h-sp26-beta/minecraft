@@ -606,19 +606,21 @@ export const enemyVSText = `
     attribute vec4 v2;
     attribute vec4 v3;
     
+    attribute float aIdx;
     attribute vec4 aOffset;
     // attribute vec4 aRot;
     
     varying vec4 normal;
     varying vec4 wsPos;
     
-    uniform vec4 uLightPos;    
+    uniform vec4 uLightPos;
     uniform mat4 uView;
     uniform mat4 uProj;
 
-	//Joint translations and rotations to determine weights (assumes up to 64 joints per rig)
-    uniform vec3 jTrans[64];
-    uniform vec4 jRots[64];
+	// Joint translations and rotations to determine weights (assumes up to 64 joints per rig)
+	uniform vec2 uTexDim; // Dimensions of the joint textures (width = numBones, height = numEnemies)
+    uniform sampler2D uJTrans; // Represents range from [-4, 4]
+    uniform sampler2D uJRots; // Represents range from [-1, 1]
 
     vec3 qtrans(vec4 q, vec3 v) {
         return v + 2.0 * cross(cross(v, q.xyz) - q.w*v, q.xyz);
@@ -633,7 +635,7 @@ export const enemyVSText = `
             float weight = skinWeights[i];
             
             if (weight > 0.0) {
-                int index = int(skinIndices[i]);
+                int boneIdx = int(skinIndices[i]);
                 
                 vec3 v = vec3(0.0, 0.0, 0.0);
                 if (i == 0) { v = v0.xyz; }
@@ -641,8 +643,12 @@ export const enemyVSText = `
                 else if (i == 2) { v = v2.xyz; }
                 else if (i == 3) { v = v3.xyz; }
                 
-                weightedPos += weight * (jTrans[index] + qtrans(jRots[index], v));
-                weightedNormal += weight * qtrans(jRots[index], aNorm);
+                vec2 uv = vec2(float(boneIdx) + 0.5, aIdx + 0.5) / uTexDim;
+                vec3 trans = texture2D(uJTrans, uv).xyz * 8.0 - 4.0;
+                vec4 rot = normalize(texture2D(uJRots, uv) * 2.0 - 1.0);
+                
+                weightedPos += weight * (trans + qtrans(rot, v));
+                weightedNormal += weight * qtrans(rot, aNorm);
             }
         }
         	

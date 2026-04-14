@@ -1,5 +1,6 @@
 import { Vec3 } from "../lib/TSM.js";
 import { Chunk } from "./Chunk.js";
+import { Mesh } from "./Mesh.js";
 
 export type Collision = {
   blockCenter: Vec3;
@@ -36,7 +37,10 @@ export class Enemy {
     // The enemy's position in world coordinates.
     public position: Vec3;
 
-    constructor(position: Vec3) {
+    public mesh: Mesh;
+
+    constructor(mesh: Mesh, position: Vec3) {
         this.position = position;
+        this.mesh = new Mesh(mesh);
     }
 }
