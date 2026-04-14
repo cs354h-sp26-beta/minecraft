@@ -26,11 +26,10 @@ export class LruCache<K, V> {
     if (this.cache.has(key)) {
       this.cache.delete(key);
     } else if (this.cache.size >= LruCache.capacity) {
-      // Contains keys in insertion order.
-      //
-      // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map/keys
-      const oKey = this.cache.keys().next().value;
-      this.cache.delete(oKey);
+      const oldest = this.cache.keys().next();
+      if (!oldest.done) {
+        this.cache.delete(oldest.value);
+      }
     }
 
     this.cache.set(key, value);

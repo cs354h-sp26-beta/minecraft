@@ -1,19 +1,23 @@
+import { Mat4, Vec3, Vec4 } from "../lib/TSM.js";
+import { CanvasAnimation } from "../lib/webglutils/CanvasAnimation.js";
 import { Debugger } from "../lib/webglutils/Debugging.js";
-import {
-  CanvasAnimation,
-  WebGLUtilities,
-} from "../lib/webglutils/CanvasAnimation.js";
-import { GUI } from "./Gui.js";
-import { blankCubeFSText, blankCubeVSText } from "./Shaders.js";
-import { Mat4, Vec4, Vec3 } from "../lib/TSM.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
-import { Camera } from "../lib/webglutils/Camera.js";
-import { LruCache } from "./Cache.js";
-import { Cube } from "./Cube.js";
 import { Chunk } from "./Chunk.js";
+import { Cube } from "./Cube.js";
+import { GUI } from "./Gui.js";
 import { Player } from "./Entity.js";
+import { LruCache } from "./Cache.js";
+import { Camera } from "../lib/webglutils/Camera.js";
+import {
+  blankCubeFSText,
+  blankCubeVSText,
+  skyboxFSText,
+  skyboxVSText,
+} from "./Shaders.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
+  public static readonly dayDuration = 1440.0;
+
   private gui: GUI;
 
   private chunkCache: LruCache<string, Chunk>;
@@ -25,6 +29,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   /*  Cube Rendering */
   private cubeGeometry: Cube;
   private blankCubeRenderPass: RenderPass;
+  private skyboxRenderPass: RenderPass;
 
   /* Global Rendering Info */
   private lightPosition: Vec4;
@@ -32,6 +37,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private selectedCubePosition: Vec4;
 
   private canvas2d: HTMLCanvasElement;
+  private overlayCtx: CanvasRenderingContext2D;
 
   private player: Player;
   private isectNormal: Vec3;
@@ -40,6 +46,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     super(canvas);
 
     this.canvas2d = document.getElementById("textCanvas") as HTMLCanvasElement;
+    const overlayCtx = this.canvas2d.getContext("2d");
+    if (!overlayCtx) {
+      throw new Error("Failed to create 2D overlay context.");
+    }
+    this.overlayCtx = overlayCtx;
 
     this.ctx = Debugger.makeDebugContext(this.ctx);
     const gl = this.ctx;
@@ -58,7 +69,9 @@ export class MinecraftAnimation extends CanvasAnimation {
       blankCubeVSText,
       blankCubeFSText,
     );
+    this.skyboxRenderPass = new RenderPass(gl, skyboxVSText, skyboxFSText);
     this.cubeGeometry = new Cube();
+    this.initSkybox();
     this.initBlankCube();
 
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
@@ -73,6 +86,58 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui.reset();
 
     this.player.position = this.gui.getCamera().pos();
+  }
+
+  /**
+   * Sets up the skybox drawing
+   */
+  private initSkybox(): void {
+    this.skyboxRenderPass.setIndexBufferData(this.cubeGeometry.indicesFlat());
+    this.skyboxRenderPass.addAttribute(
+      "aVertPos",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.cubeGeometry.positionsFlat(),
+    );
+
+    this.skyboxRenderPass.addUniform(
+      "uProj",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.projMatrix().all()),
+        );
+      },
+    );
+    this.skyboxRenderPass.addUniform(
+      "uView",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.getSkyboxViewMatrix().all()),
+        );
+      },
+    );
+    this.skyboxRenderPass.addUniform(
+      "uTime",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, this.getTimeValue());
+      },
+    );
+
+    this.skyboxRenderPass.setDrawData(
+      this.ctx.TRIANGLES,
+      this.cubeGeometry.indicesFlat().length,
+      this.ctx.UNSIGNED_INT,
+      0,
+    );
+    this.skyboxRenderPass.setup();
   }
 
   /**
@@ -116,6 +181,17 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     this.blankCubeRenderPass.addInstancedAttribute(
+      "aBlockType",
+      1, // size (1 float)
+      this.ctx.FLOAT,
+      false,
+      1 * Float32Array.BYTES_PER_ELEMENT, // stride (1 float)
+      0, // offset
+      undefined,
+      new Float32Array(0),
+    );
+
+    this.blankCubeRenderPass.addInstancedAttribute(
       "aOffset",
       4,
       this.ctx.FLOAT,
@@ -126,6 +202,13 @@ export class MinecraftAnimation extends CanvasAnimation {
       new Float32Array(0),
     );
 
+    //time variable for animating water & maybe leaves
+    this.blankCubeRenderPass.addUniform(
+      "uTime",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, this.getTimeValue());
+      },
+    );
     this.blankCubeRenderPass.addUniform(
       "uLightPos",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
@@ -230,6 +313,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     return combined;
   }
 
+  private getAllCubeTypes(): Float32Array {
+    let totalCubes = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      totalCubes += chunk.numCubes();
+    }
+    const combined = new Float32Array(totalCubes);
+    let offset = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      const types = chunk.cubeTypes();
+      combined.set(types, offset);
+      offset += types.length;
+    }
+    return combined;
+  }
+
   /**
    * Draws a single frame
    *
@@ -279,15 +377,78 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
     this.drawScene(0, 0, 1280, 960);
+    this.drawOverlay();
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
     const gl: WebGLRenderingContext = this.ctx;
     gl.viewport(x, y, width, height);
 
+    gl.depthMask(false);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.CULL_FACE);
+    this.skyboxRenderPass.draw();
+
+    gl.depthMask(true);
+    gl.depthFunc(gl.LESS);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+
     const allPositions = this.getAllCubePositions();
+    const allTypes = this.getAllCubeTypes();
+    const instanceCount = allTypes.length;
+
+    if (allPositions.length !== instanceCount * 4) {
+      throw new Error(
+        `Instance buffer mismatch: ${allPositions.length / 4} positions vs ${instanceCount} block types`,
+      );
+    }
+
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
-    this.blankCubeRenderPass.drawInstanced(allPositions.length / 4);
+    this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.drawInstanced(instanceCount);
+  }
+
+  /**
+   * Returns the position of the highest block within an n x n square centered on the player (bird's eye view),
+   * or null if no blocks are found within range.
+   */
+  public getHighestBlockNearby(n: number): Vec3 | null {
+    const px = this.player.position.x;
+    const pz = this.player.position.z;
+    const half = n / 2;
+    let bestY = -Infinity;
+    let bestX = 0;
+    let bestZ = 0;
+
+    for (const chunk of this.renderedChunks.values()) {
+      const tlx = chunk.topLeftX();
+      const tlz = chunk.topLeftZ();
+      const size = chunk.chunkSize();
+      const hmap = chunk.heightMap();
+
+      // clamp to overlap between current chunk and query square
+      const minX = Math.max(0, Math.floor(px - half - tlx));
+      const maxX = Math.min(size - 1, Math.floor(px + half - tlx));
+      const minZ = Math.max(0, Math.floor(pz - half - tlz));
+      const maxZ = Math.min(size - 1, Math.floor(pz + half - tlz));
+
+      for (let i = minZ; i <= maxZ; i++) {
+        for (let j = minX; j <= maxX; j++) {
+          const y = hmap[size * i + j];
+          if (y > bestY) {
+            bestY = y;
+            bestX = tlx + j;
+            bestZ = tlz + i;
+          }
+        }
+      }
+    }
+
+    if (bestY === -Infinity) {
+      return null;
+    }
+    return new Vec3([bestX, bestY, bestZ]);
   }
 
   // Intersects ray with the cube at the given position in world coordinates.
@@ -358,6 +519,15 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public getGUI(): GUI {
     return this.gui;
+  }
+
+  private getSkyboxViewMatrix(): Mat4 {
+    const skyboxView = this.gui.viewMatrix().copy();
+    const viewValues = skyboxView.all();
+    viewValues[12] = 0;
+    viewValues[13] = 0;
+    viewValues[14] = 0;
+    return new Mat4(viewValues);
   }
 
   public jump() {
@@ -449,6 +619,49 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.selectedCubePosition.y + this.isectNormal.y,
       cubeType,
     );
+  }
+
+  private drawOverlay(): void {
+    const ctx = this.overlayCtx;
+    const x = 18;
+    const y = 18;
+    const timeLine = `Time ${this.formatDayTime(this.getCurrentDayTime())}`;
+
+    ctx.clearRect(0, 0, this.canvas2d.width, this.canvas2d.height);
+    ctx.save();
+    ctx.font = "14px monospace";
+    ctx.textBaseline = "top";
+    const panelWidth = ctx.measureText(timeLine).width + 20;
+    const panelHeight = 32;
+    ctx.fillStyle = "rgba(12, 18, 28, 0.58)";
+    ctx.fillRect(x - 10, y - 8, panelWidth, panelHeight);
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText(timeLine, x, y);
+
+    ctx.restore();
+  }
+
+  private formatDayTime(value: number): string {
+    const wrapped = Math.floor(this.wrapDayTime(value));
+    const hours24 = Math.floor(wrapped / 60);
+    const minutes = wrapped % 60;
+    const suffix = hours24 < 12 ? "AM" : "PM";
+    const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+    const minuteText = minutes < 10 ? `0${minutes}` : String(minutes);
+    return `${hours12}:${minuteText} ${suffix}`;
+  }
+
+  private getCurrentDayTime(): number {
+    return this.wrapDayTime(this.getTimeValue());
+  }
+
+  private getTimeValue(): number {
+    return performance.now() / 1000;
+  }
+
+  private wrapDayTime(value: number): number {
+    const dayDuration = MinecraftAnimation.dayDuration;
+    return ((value % dayDuration) + dayDuration) % dayDuration;
   }
 }
 
