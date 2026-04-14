@@ -17,20 +17,33 @@ export class Chunk {
   public static readonly blockTypeIronOre: number = 4;
   public static readonly blockTypeGoldOre: number = 5;
   public static readonly blockTypeDiamondOre: number = 6;
+  public static readonly blockTypeAir: number = -1;
   public static readonly SEA_LEVEL: number = 8;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
   private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
-  private heightMapData!: Float32Array; // Ground truth of what blocks exist.
+  private heightMapData!: Float32Array; // Per-column terrain height.
+  private blockData!: Int8Array; // 3D block grid: blockTypeAir = empty, else block type ID
+  private maxHeight!: number; // Maximum terrain height across the chunk
+  private columnFloors!: number[][]; // Per-column sorted arrays of floor Y values (solid with air above)
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
-  private static worldSeed: string = "default";
+  private static worldSeedHash: number = Chunk.computeSeedHash("default");
 
   // world seed
   public static setWorldSeed(seed: string): void {
-    Chunk.worldSeed = seed;
+    Chunk.worldSeedHash = Chunk.computeSeedHash(seed);
+  }
+
+  private static computeSeedHash(seed: string): number {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < seed.length; i++) {
+      h ^= seed.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h;
   }
 
   constructor(centerX: number, centerZ: number, size: number) {
@@ -45,19 +58,69 @@ export class Chunk {
     return [this.x - this.size / 2, this.z - this.size / 2];
   }
 
-  // 32-bit hash so world sampling is deterministic by hash
-  private hash32(input: string): number {
-    let h = 2166136261 >>> 0;
-    for (let i = 0; i < input.length; i++) {
-      h ^= input.charCodeAt(i);
-      h = Math.imul(h, 16777619) >>> 0;
+  // 3D block grid accessors (index: y * size * size + i * size + j)
+  private blockIndex(i: number, j: number, y: number): number {
+    return y * this.size * this.size + i * this.size + j;
+  }
+
+  private getBlock(i: number, j: number, y: number): number {
+    if (
+      i < 0 ||
+      i >= this.size ||
+      j < 0 ||
+      j >= this.size ||
+      y < 0 ||
+      y >= this.maxHeight
+    ) {
+      return Chunk.blockTypeAir;
     }
+    return this.blockData[this.blockIndex(i, j, y)];
+  }
+
+  private setBlock(i: number, j: number, y: number, type: number): void {
+    this.blockData[this.blockIndex(i, j, y)] = type;
+  }
+
+  // Integer-only FNV-1a hash — no string allocation.
+  // Mixes 2-4 integer coordinates with the precomputed seed hash.
+  private static hashInts3(
+    seed: number,
+    a: number,
+    b: number,
+    c: number,
+  ): number {
+    let h = seed;
+    h ^= a;
+    h = Math.imul(h, 16777619) >>> 0;
+    h ^= b;
+    h = Math.imul(h, 16777619) >>> 0;
+    h ^= c;
+    h = Math.imul(h, 16777619) >>> 0;
+    return h;
+  }
+
+  private static hashInts4(
+    seed: number,
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+  ): number {
+    let h = seed;
+    h ^= a;
+    h = Math.imul(h, 16777619) >>> 0;
+    h ^= b;
+    h = Math.imul(h, 16777619) >>> 0;
+    h ^= c;
+    h = Math.imul(h, 16777619) >>> 0;
+    h ^= d;
+    h = Math.imul(h, 16777619) >>> 0;
     return h;
   }
 
   // deterministic float in [0, 1) by lattice coord and octave
   private rand01AtLattice(ix: number, iz: number, octave: number): number {
-    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iz}`);
+    const h = Chunk.hashInts3(Chunk.worldSeedHash, octave, ix, iz);
     return h / 4294967295;
   }
 
@@ -80,7 +143,7 @@ export class Chunk {
 
   // deterministic gradient index at a 3D lattice point
   private grad3At(ix: number, iy: number, iz: number, octave: number): number {
-    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iy}|${iz}`);
+    const h = Chunk.hashInts4(Chunk.worldSeedHash, octave, ix, iy, iz);
     return h % 12;
   }
 
@@ -328,6 +391,7 @@ export class Chunk {
     const activeGridSizes: number[] = [...TERRAIN_OCTAVE_TUNING.gridSizes];
     const activeMultCoeffs: number[] = [...TERRAIN_OCTAVE_TUNING.multCoeffs];
 
+    // Generate 2D heightmap
     this.heightMapData = new Float32Array(this.size * this.size);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
@@ -370,15 +434,97 @@ export class Chunk {
       }
     }
 
-    // Count visible cubes: solid terrain blocks + water blocks
+    // Build 3D block grid from heightmap
+    // Determine max height across the chunk
+    this.maxHeight = 1;
+    for (let idx = 0; idx < this.size * this.size; idx++) {
+      this.maxHeight = Math.max(this.maxHeight, this.heightMapData[idx]);
+    }
+    this.maxHeight = Math.ceil(this.maxHeight) + 1; // +1 for safety
+
+    this.blockData = new Int8Array(this.size * this.size * this.maxHeight);
+    this.blockData.fill(Chunk.blockTypeAir);
+
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const height = Math.max(this.heightMapData[this.size * i + j], 1);
+        const worldX = topLeftX + j;
+        const worldZ = topLeftZ + i;
+        for (let y = 0; y < height; y++) {
+          this.setBlock(i, j, y, this.blockTypeAt(worldX, y, worldZ, height));
+        }
+      }
+    }
+
+    // Carve caves using 3D Perlin noise
+    // To prevent caves from opening at steep terrain transitions, use the
+    // minimum neighbor height as the ceiling for carving
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const height = Math.max(this.heightMapData[this.size * i + j], 1);
+
+        // Find the minimum terrain height among this column and its 4 neighbors.
+        // Caves carved here must stay below that to avoid surface breakthroughs.
+        let minNeighborH = height;
+        for (const [di, dj] of [
+          [-1, 0],
+          [1, 0],
+          [0, -1],
+          [0, 1],
+        ]) {
+          const ni = i + di;
+          const nj = j + dj;
+          if (ni >= 0 && ni < this.size && nj >= 0 && nj < this.size) {
+            minNeighborH = Math.min(
+              minNeighborH,
+              Math.max(this.heightMapData[this.size * ni + nj], 1),
+            );
+          }
+        }
+
+        const carveCeiling = minNeighborH - 4; // don't carve within 4 blocks of surface
+        const worldX = topLeftX + j;
+        const worldZ = topLeftZ + i;
+        for (let y = 1; y < carveCeiling; y++) {
+          const caveNoise = this.perlinNoise3D(worldX, y, worldZ, 300, 0.07);
+          if (caveNoise > 0.6) {
+            this.setBlock(i, j, y, Chunk.blockTypeAir);
+          }
+        }
+      }
+    }
+
+    // Precompute per-column floor levels for fast collision
+    this.columnFloors = new Array(this.size * this.size);
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const floors: number[] = [];
+        const height = Math.max(this.heightMapData[this.size * i + j], 1);
+        for (let y = 0; y < height; y++) {
+          if (
+            this.getBlock(i, j, y) !== Chunk.blockTypeAir &&
+            this.getBlock(i, j, y + 1) === Chunk.blockTypeAir
+          ) {
+            floors.push(y + 0.5); // top of the solid block
+          }
+        }
+        this.columnFloors[this.size * i + j] = floors;
+      }
+    }
+
+    // Count visible cubes and fill GPU arrays
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const height = Math.max(this.heightMapData[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
-          if (this.isExposed(i, j, y)) this.cubes++;
+          if (
+            this.getBlock(i, j, y) !== Chunk.blockTypeAir &&
+            this.isExposed(i, j, y)
+          ) {
+            this.cubes++;
+          }
         }
-        // Water blocks only in carved pond basins
         if (height < seaLvl) {
           for (let y = height; y < seaLvl; y++) {
             if (this.isWaterExposed(i, j, y)) this.cubes++;
@@ -386,6 +532,7 @@ export class Chunk {
         }
       }
     }
+
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
 
@@ -395,17 +542,13 @@ export class Chunk {
         const height = Math.max(this.heightMapData[this.size * i + j], 1);
         // Place solid terrain blocks
         for (let y = 0; y < height; y++) {
-          if (this.isExposed(i, j, y)) {
+          const blockType = this.getBlock(i, j, y);
+          if (blockType !== Chunk.blockTypeAir && this.isExposed(i, j, y)) {
             this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
             this.cubePositionsF32[4 * cubeIdx + 1] = y;
             this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
             this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-            this.cubeTypesF32[cubeIdx] = this.blockTypeAt(
-              topLeftX + j,
-              y,
-              topLeftZ + i,
-              height,
-            );
+            this.cubeTypesF32[cubeIdx] = blockType;
             cubeIdx++;
           }
         }
@@ -480,29 +623,22 @@ export class Chunk {
     return Chunk.blockTypeCobble;
   }
 
-  // Effective height includes water for pond columns only.
-  // Used for exposure checks so terrain under water isn't culled at pond edges.
-  private getEffectiveHeight(i: number, j: number): number {
-    const terrain = this.getHeight(i, j);
-    if (i >= 0 && i < this.size && j >= 0 && j < this.size) {
-      return Math.max(terrain, Chunk.SEA_LEVEL);
-    }
-    return terrain;
-  }
-
-  // Makes the assumption that columns are solid up to the height of the column.
-  // Change when implementing caves and overhangs!
+  // A solid block is exposed (needs rendering) if any of its 6 neighbors is air or water.
   private isExposed(i: number, j: number, y: number): boolean {
-    // Top face
-    if (y >= this.getHeight(i, j) - 1) return true;
-    // Bottom face
-    if (y === 0) return true;
-    // Four cardinal neighbors — use effective height so blocks adjacent to
-    // water are still rendered (water is transparent)
-    if (this.getEffectiveHeight(i - 1, j) <= y) return true;
-    if (this.getEffectiveHeight(i + 1, j) <= y) return true;
-    if (this.getEffectiveHeight(i, j - 1) <= y) return true;
-    if (this.getEffectiveHeight(i, j + 1) <= y) return true;
+    // Six cardinal neighbors — air or out-of-bounds means this face is visible
+    if (this.getBlock(i, j, y + 1) === Chunk.blockTypeAir) return true; // top
+    if (y === 0 || this.getBlock(i, j, y - 1) === Chunk.blockTypeAir)
+      return true; // bottom
+    if (this.getBlock(i - 1, j, y) === Chunk.blockTypeAir) return true;
+    if (this.getBlock(i + 1, j, y) === Chunk.blockTypeAir) return true;
+    if (this.getBlock(i, j - 1, y) === Chunk.blockTypeAir) return true;
+    if (this.getBlock(i, j + 1, y) === Chunk.blockTypeAir) return true;
+    // Also exposed if adjacent to water (transparent)
+    if (this.getBlock(i, j, y + 1) === Chunk.blockTypeWater) return true;
+    if (this.getBlock(i - 1, j, y) === Chunk.blockTypeWater) return true;
+    if (this.getBlock(i + 1, j, y) === Chunk.blockTypeWater) return true;
+    if (this.getBlock(i, j - 1, y) === Chunk.blockTypeWater) return true;
+    if (this.getBlock(i, j + 1, y) === Chunk.blockTypeWater) return true;
     return false;
   }
 
@@ -554,12 +690,25 @@ export class Chunk {
     return this.size;
   }
 
-  // Calculates the height of the floor for a given an xz world player coordinate.
-  //
-  // FIXME: Using this for collisions is not going to work with overhangs.
-  // We will likely need to adapt to an API similar to `Player::collidesWithChunk`.
-  // I also just don't like the coupling here, but oh well it is a prototype.
-  public floorHeight(worldX: number, worldZ: number): number {
+  // Binary search for the highest floor level <= playerY in a sorted floors array.
+  private findFloorBelow(floors: number[], playerY: number): number {
+    let lo = 0;
+    let hi = floors.length - 1;
+    let result = -Infinity;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      if (floors[mid] <= playerY) {
+        result = floors[mid];
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return result;
+  }
+
+  // Calculates the height of the floor for a given world player coordinate.
+  public floorHeight(worldX: number, worldZ: number, playerY: number): number {
     const [topLeftX, topLeftZ] = this.origin();
 
     const centerX = Math.round(worldX - topLeftX);
@@ -597,13 +746,14 @@ export class Chunk {
         const rdZ = worldZ - nearZ;
         const hbr = Player.hitboxRadius;
         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
-          const cubeWorldY =
-            this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
-          floorY = Math.max(floorY, cubeWorldY - 0.5);
+          const floors = this.columnFloors[cubeChunkZ * this.size + cubeChunkX];
+          const f = this.findFloorBelow(floors, playerY);
+          if (f > floorY) floorY = f;
         }
       }
     }
 
-    return floorY;
+    // Bedrock safety: never fall below y=0
+    return Math.max(floorY, 0.5);
   }
 }
