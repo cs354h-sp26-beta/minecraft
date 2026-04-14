@@ -513,7 +513,7 @@ export class Chunk {
   }
 
   // Effective height includes water for pond columns only.
-  // Used for exposure checks so terrain under water isn't culled at pond edges.
+  // Used for exposure checks so terrain under water is culled at pond edges.
   private getEffectiveHeight(i: number, j: number): number {
     const terrain = this.getHeight(i, j);
     if (i >= 0 && i < this.size && j >= 0 && j < this.size) {
