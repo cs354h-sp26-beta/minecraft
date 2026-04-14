@@ -1,3 +1,6 @@
+import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
+import Rand from "../lib/rand-seed/Rand.js";
+import { Player } from "./Entity.js";
 import {
   ACTIVE_BIOME_PROFILES,
   BIOME_BLEND_TUNING,
@@ -7,11 +10,16 @@ import {
 } from "./Biomes.js";
 
 export class Chunk {
+  public static readonly blockTypeDirt: number = 0;
+  public static readonly blockTypeCobble: number = 1;
+  public static readonly blockTypeWater: number = 2;
+
   private cubes: number; // Number of cubes that should be *drawn* each frame
-  private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
-  private heightMapF32!: Float32Array;
+  private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
+  private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
+  private heightMapData!: Float32Array; // Ground truth of what blocks exist.
   private x: number; // Center of the chunk
-  private y: number;
+  private z: number;
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
@@ -20,12 +28,16 @@ export class Chunk {
     Chunk.worldSeed = seed;
   }
 
-  constructor(centerX: number, centerY: number, size: number) {
+  constructor(centerX: number, centerZ: number, size: number) {
     this.x = centerX;
-    this.y = centerY;
+    this.z = centerZ;
     this.size = size;
     this.cubes = size * size;
     this.generateCubes();
+  }
+
+  private origin(): [number, number] {
+    return [this.x - this.size / 2, this.z - this.size / 2];
   }
 
   // 32-bit hash so world sampling is deterministic by hash
@@ -191,20 +203,19 @@ export class Chunk {
   }
 
   private generateCubes() {
-    const topleftx = this.x - this.size / 2;
-    const toplefty = this.y - this.size / 2;
+    const [topLeftX, topLeftZ] = this.origin();
 
     // TODO: wire Chunk.setWorldSeed(...) to a user-provided world seed from app/UI settings.
 
     const activeGridSizes: number[] = [...TERRAIN_OCTAVE_TUNING.gridSizes];
     const activeMultCoeffs: number[] = [...TERRAIN_OCTAVE_TUNING.multCoeffs];
 
-    this.heightMapF32 = new Float32Array(this.size * this.size);
+    this.heightMapData = new Float32Array(this.size * this.size);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const worldX = topleftx + j;
-        const worldZ = toplefty + i;
-        this.heightMapF32[this.size * i + j] = this.sampleHeightAtWorld(
+        const worldX = topLeftX + j;
+        const worldZ = topLeftZ + i;
+        this.heightMapData[this.size * i + j] = this.sampleHeightAtWorld(
           worldX,
           worldZ,
           activeGridSizes,
@@ -213,29 +224,71 @@ export class Chunk {
       }
     }
 
+    // Count only visible cubes
     this.cubes = 0;
-    for (let k = 0; k < this.size * this.size; k++) {
-      this.cubes += Math.max(this.heightMapF32[k], 1); // at least 1 cube per column
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const height = Math.max(this.heightMapData[this.size * i + j], 1);
+        for (let y = 0; y < height; y++) {
+          if (this.isExposed(i, j, y)) this.cubes++;
+        }
+      }
     }
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
+    this.cubeTypesF32 = new Float32Array(this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(this.heightMapF32[this.size * i + j], 1);
+        const height = Math.max(this.heightMapData[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
-          this.cubePositionsF32[4 * cubeIdx + 0] = topleftx + j;
-          this.cubePositionsF32[4 * cubeIdx + 1] = y;
-          this.cubePositionsF32[4 * cubeIdx + 2] = toplefty + i;
-          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-          cubeIdx++;
+          if (this.isExposed(i, j, y)) {
+            this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+            this.cubePositionsF32[4 * cubeIdx + 1] = y;
+            this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+            this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+            this.cubeTypesF32[cubeIdx] = this.blockTypeAtHeight(y, height);
+            cubeIdx++;
+          }
         }
       }
     }
   }
 
+  private blockTypeAtHeight(y: number, columnHeight: number): number {
+    // Keep the visible surface earthy and the bulk of the terrain rocky.
+    if (y >= columnHeight - 3) {
+      return Chunk.blockTypeDirt;
+    }
+    return Chunk.blockTypeCobble;
+  }
+
+  // Makes the assumption that columns are solid up to the height of the column.
+  // Change when implementing caves and overhangs!
+  private isExposed(i: number, j: number, y: number): boolean {
+    // Top face
+    if (y >= this.getHeight(i, j) - 1) return true;
+    // Bottom face
+    if (y === 0) return true;
+    // Four cardinal neighbors
+    if (this.getHeight(i - 1, j) <= y) return true;
+    if (this.getHeight(i + 1, j) <= y) return true;
+    if (this.getHeight(i, j - 1) <= y) return true;
+    if (this.getHeight(i, j + 1) <= y) return true;
+    return false;
+  }
+
+  private getHeight(i: number, j: number): number {
+    if (i < 0 || i >= this.size || j < 0 || j >= this.size) return 0;
+    return this.heightMapData[this.size * i + j];
+  }
+
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
+  }
+
+  public cubeTypes(): Float32Array {
+    return this.cubeTypesF32;
   }
 
   public numCubes(): number {
@@ -243,7 +296,7 @@ export class Chunk {
   }
 
   public heightMap(): Float32Array {
-    return this.heightMapF32;
+    return this.heightMapData;
   }
 
   public topLeftX(): number {
@@ -251,10 +304,63 @@ export class Chunk {
   }
 
   public topLeftZ(): number {
-    return this.y - this.size / 2;
+    return this.z - this.size / 2;
   }
 
   public chunkSize(): number {
     return this.size;
+  }
+
+  // Calculates the height of the floor for a given an xz world player coordinate.
+  //
+  // FIXME: Using this for collisions is not going to work with overhangs.
+  // We will likely need to adapt to an API similar to `Player::collidesWithChunk`.
+  // I also just don't like the coupling here, but oh well it is a prototype.
+  public floorHeight(worldX: number, worldZ: number): number {
+    const [topLeftX, topLeftZ] = this.origin();
+
+    const centerX = Math.round(worldX - topLeftX);
+    const centerZ = Math.round(worldZ - topLeftZ);
+
+    let floorY = -Infinity;
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const cubeChunkX = centerX + dx;
+      if (cubeChunkX < 0 || cubeChunkX >= this.size) {
+        continue;
+      }
+
+      for (let dz = -1; dz <= 1; dz += 1) {
+        const cubeChunkZ = centerZ + dz;
+        if (cubeChunkZ < 0 || cubeChunkZ >= this.size) {
+          continue;
+        }
+
+        const cubeWorldX = topLeftX + cubeChunkX;
+        const cubeWorldZ = topLeftZ + cubeChunkZ;
+
+        // Clamp.
+        // https://stackoverflow.com/questions/11409895/whats-the-most-elegant-way-to-cap-a-number-to-a-segment
+        const nearX = Math.max(
+          cubeWorldX - 0.5,
+          Math.min(cubeWorldX + 0.5, worldX),
+        );
+        const nearZ = Math.max(
+          cubeWorldZ - 0.5,
+          Math.min(cubeWorldZ + 0.5, worldZ),
+        );
+
+        // Radial distance.
+        const rdX = worldX - nearX;
+        const rdZ = worldZ - nearZ;
+        const hbr = Player.hitboxRadius;
+        if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
+          const cubeWorldY =
+            this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
+          floorY = Math.max(floorY, cubeWorldY - 0.5);
+        }
+      }
+    }
+
+    return floorY;
   }
 }
