@@ -5,7 +5,7 @@ import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
 import { GUI } from "./Gui.js";
-import { Player } from "./Entity.js";
+import { Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
 import {
@@ -41,6 +41,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private overlayCtx: CanvasRenderingContext2D;
 
   private player: Player;
+  private fallingBlocks: Block[];
   private isectNormal: Vec3;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -62,6 +63,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.deltaMaps = new Map();
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
+    this.fallingBlocks = [];
     this.isectNormal = new Vec3();
 
     this.loadChunksAroundPlayer();
@@ -613,18 +615,28 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public placeBlock(cubeType: number) {
-    const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
-    const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
+    const cubeX = this.selectedCubePosition.x;
+    const cubeY = this.selectedCubePosition.y;
+    const cubeZ = this.selectedCubePosition.z;
+
+    const chunkX = this.worldToChunkCoord(cubeX);
+    const chunkZ = this.worldToChunkCoord(cubeZ);
     let key = `${chunkX},${chunkZ}`;
     let chunk = this.renderedChunks.get(key)!;
 
     // Place new cube based on side of cube that mouse is pointing at
     let chunkDeltaMap = chunk.changeCubeType(
-      this.selectedCubePosition.x + this.isectNormal.x,
-      this.selectedCubePosition.z + this.isectNormal.z,
-      this.selectedCubePosition.y + this.isectNormal.y,
+      cubeX + this.isectNormal.x,
+      cubeZ + this.isectNormal.z,
+      cubeY + this.isectNormal.y,
       cubeType,
     );
+
+    // TODO: Test falling blocks by checking if block below is empty
+    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
+      this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
+      // TODO: Remove block from chunk's map so that its static version is not rendered
+    }
 
     this.deltaMaps.set(key, chunkDeltaMap);
   }
