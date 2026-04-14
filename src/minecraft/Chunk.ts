@@ -6,10 +6,25 @@ import {
   type BiomeProfile,
 } from "./Biomes.js";
 
+export enum BlockType {
+  Grass = "grass",
+  Dirt = "dirt",
+  Stone = "stone",
+}
+
+export interface BlockData {
+  x: number;
+  y: number;
+  z: number;
+  type: BlockType;
+}
+
 export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates
   private heightMapF32!: Float32Array;
+  private blocks: BlockData[];
+  private blockIndex: Map<string, BlockData>;
   private x: number; // Center of the chunk
   private y: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -25,7 +40,13 @@ export class Chunk {
     this.y = centerY;
     this.size = size;
     this.cubes = size * size;
+    this.blocks = [];
+    this.blockIndex = new Map();
     this.generateCubes();
+  }
+
+  private blockKey(x: number, y: number, z: number): string {
+    return `${x}|${y}|${z}`;
   }
 
   // 32-bit hash so world sampling is deterministic by hash
@@ -213,24 +234,41 @@ export class Chunk {
       }
     }
 
-    this.cubes = 0;
-    for (let k = 0; k < this.size * this.size; k++) {
-      this.cubes += Math.max(this.heightMapF32[k], 1); // at least 1 cube per column
-    }
-    this.cubePositionsF32 = new Float32Array(4 * this.cubes);
+    this.blocks = [];
+    this.blockIndex.clear();
 
-    let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const height = Math.max(this.heightMapF32[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
-          this.cubePositionsF32[4 * cubeIdx + 0] = topleftx + j;
-          this.cubePositionsF32[4 * cubeIdx + 1] = y;
-          this.cubePositionsF32[4 * cubeIdx + 2] = toplefty + i;
-          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-          cubeIdx++;
+          let blockType: BlockType = BlockType.Stone;
+          if (y === height - 1) {
+            blockType = BlockType.Grass;
+          } else if (y >= height - 4) {
+            blockType = BlockType.Dirt;
+          }
+
+          const block: BlockData = {
+            x: topleftx + j,
+            y,
+            z: toplefty + i,
+            type: blockType,
+          };
+
+          this.blocks.push(block);
+          this.blockIndex.set(this.blockKey(block.x, block.y, block.z), block);
         }
       }
+    }
+
+    this.cubes = this.blocks.length;
+    this.cubePositionsF32 = new Float32Array(4 * this.cubes);
+    for (let idx = 0; idx < this.blocks.length; idx++) {
+      const block = this.blocks[idx];
+      this.cubePositionsF32[4 * idx + 0] = block.x;
+      this.cubePositionsF32[4 * idx + 1] = block.y;
+      this.cubePositionsF32[4 * idx + 2] = block.z;
+      this.cubePositionsF32[4 * idx + 3] = 0;
     }
   }
 
@@ -244,6 +282,44 @@ export class Chunk {
 
   public heightMap(): Float32Array {
     return this.heightMapF32;
+  }
+
+  public blockData(): BlockData[] {
+    return this.blocks;
+  }
+
+  public getBlockAt(
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+  ): BlockData | undefined {
+    return this.blockIndex.get(this.blockKey(worldX, worldY, worldZ));
+  }
+
+  public hasBlockAt(worldX: number, worldY: number, worldZ: number): boolean {
+    return this.blockIndex.has(this.blockKey(worldX, worldY, worldZ));
+  }
+
+  public topBlockAt(worldX: number, worldZ: number): BlockData | undefined {
+    const height = this.heightAt(worldX, worldZ);
+    if (height <= 0) {
+      return undefined;
+    }
+    return this.getBlockAt(worldX, height - 1, worldZ);
+  }
+
+  public heightAt(worldX: number, worldZ: number): number {
+    const localX = worldX - this.topLeftX();
+    const localZ = worldZ - this.topLeftZ();
+    if (
+      localX < 0 ||
+      localX >= this.size ||
+      localZ < 0 ||
+      localZ >= this.size
+    ) {
+      return 0;
+    }
+    return Math.max(this.heightMapF32[this.size * localZ + localX], 0);
   }
 
   public topLeftX(): number {
