@@ -31,3 +31,12 @@ export class Player {
     return [];
   }
 }
+
+export class Enemy {
+    // The enemy's position in world coordinates.
+    public position: Vec3;
+
+    constructor(position: Vec3) {
+        this.position = position;
+    }
+}

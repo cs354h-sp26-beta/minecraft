@@ -5,7 +5,7 @@ import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
 import { GUI } from "./Gui.js";
-import { Player } from "./Entity.js";
+import { Enemy, Player } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
 import {
@@ -13,7 +13,11 @@ import {
   blankCubeVSText,
   skyboxFSText,
   skyboxVSText,
+  enemyFSText,
+  enemyVSText,
 } from "./Shaders.js";
+import { Mesh } from "./Mesh.js";
+import { CLoader } from "./AnimationFileLoader.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
@@ -31,6 +35,11 @@ export class MinecraftAnimation extends CanvasAnimation {
   private blankCubeRenderPass: RenderPass;
   private skyboxRenderPass: RenderPass;
 
+  /*  Enemy Rendering */
+  private enemyRenderPass: RenderPass;
+  private enemyMeshLoader: CLoader;
+  private enemyMesh: Mesh;
+
   /* Global Rendering Info */
   private lightPosition: Vec4;
   private backgroundColor: Vec4;
@@ -39,6 +48,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   private overlayCtx: CanvasRenderingContext2D;
 
   private player: Player;
+
+  private enemies: Enemy[];
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -68,8 +79,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     this.skyboxRenderPass = new RenderPass(gl, skyboxVSText, skyboxFSText);
     this.cubeGeometry = new Cube();
+    this.enemyRenderPass = new RenderPass(gl, enemyVSText, enemyFSText);
     this.initSkybox();
     this.initBlankCube();
+
+    this.enemies = [];
+    this.enemyMesh = null;
+    this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
+    this.enemyMeshLoader.load(() => this.initEnemies());
 
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
@@ -241,6 +258,70 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.setup();
   }
 
+  /**
+    * Sets up the enemy drawing
+   */
+  private initEnemies(): void {
+    if (this.enemyMeshLoader.meshes.length === 0) { throw new Error("Failed to load enemy mesh."); }
+    this.enemyMesh = this.enemyMeshLoader.meshes[0];
+
+    let faceCount = this.enemyMesh.geometry.position.count / 3;
+    let fIndices = new Uint32Array(faceCount * 3);
+    for (let i = 0; i < faceCount * 3; i += 3) {
+      fIndices[i] = i;
+      fIndices[i + 1] = i + 1;
+      fIndices[i + 2] = i + 2;
+    }
+    this.enemyRenderPass.setIndexBufferData(fIndices);
+
+    this.enemyRenderPass.addInstancedAttribute("aOffset", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
+
+    this.enemyRenderPass.addAttribute("aNorm", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh.geometry.normal.values);
+    this.enemyRenderPass.addAttribute("skinIndices", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh.geometry.skinIndex.values);
+    this.enemyRenderPass.addAttribute("skinWeights", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh.geometry.skinWeight.values);
+    this.enemyRenderPass.addAttribute("v0", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh.geometry.v0.values);
+    this.enemyRenderPass.addAttribute("v1", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh.geometry.v1.values);
+    this.enemyRenderPass.addAttribute("v2", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh.geometry.v2.values);
+    this.enemyRenderPass.addAttribute("v3", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh.geometry.v3.values);
+
+    this.enemyRenderPass.addUniform("uLightPos",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniform4fv(loc, this.lightPosition.xyzw);
+        },);
+    this.enemyRenderPass.addUniform("uProj",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.projMatrix().all()));
+        });
+    this.enemyRenderPass.addUniform("uView",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.viewMatrix().all()));
+        });
+    this.enemyRenderPass.addUniform("jTrans",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniform3fv(loc, this.enemyMesh.getBoneTranslations());
+        });
+    this.enemyRenderPass.addUniform("jRots",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniform4fv(loc, this.enemyMesh.getBoneRotations());
+        });
+
+    this.enemyRenderPass.setDrawData(this.ctx.TRIANGLES, this.enemyMesh.geometry.position.count, this.ctx.UNSIGNED_INT, 0);
+    this.enemyRenderPass.setup();
+
+    this.enemies.push(new Enemy(new Vec3([this.player.position.x + 2, this.player.position.y - 85, this.player.position.z + 2])));
+    this.enemies.push(new Enemy(new Vec3([this.player.position.x - 2, this.player.position.y - 85, this.player.position.z + 2])));
+    this.enemies.push(new Enemy(new Vec3([this.player.position.x + 2, this.player.position.y - 85, this.player.position.z - 2])));
+    this.enemies.push(new Enemy(new Vec3([this.player.position.x - 2, this.player.position.y - 85, this.player.position.z - 2])));
+  }
+
   private worldToChunkCoord(worldVal: number): number {
     const s = MinecraftAnimation.chunkSize;
     return Math.floor((worldVal + s / 2) / s) * s;
@@ -397,6 +478,19 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
     this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
     this.blankCubeRenderPass.drawInstanced(instanceCount);
+
+    // Enemies
+    const enemyInstanceCount = this.enemies.length;
+    const enemyPositions = new Float32Array(enemyInstanceCount * 4);
+    for (let i = 0; i < this.enemies.length; i++) {
+        const pos = this.enemies[i].position;
+        enemyPositions.set([pos.x, pos.y, pos.z, 0], i * 4);
+    }
+
+    if (this.enemyMesh !== null) {
+      this.enemyRenderPass.updateAttributeBuffer("aOffset", enemyPositions);
+      this.enemyRenderPass.drawInstanced(enemyInstanceCount);
+    }
   }
 
   /**

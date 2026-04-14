@@ -590,3 +590,93 @@ export const skyboxFSText = `
         gl_FragColor = vec4(color, 1.0);
     }
 `;
+
+
+
+export const enemyVSText = `
+    precision mediump float;
+
+    attribute vec3 aNorm;
+    attribute vec4 skinIndices;
+    attribute vec4 skinWeights;
+	
+	//vertices used for bone weights (assumes up to four weights per vertex)
+    attribute vec4 v0;
+    attribute vec4 v1;
+    attribute vec4 v2;
+    attribute vec4 v3;
+    
+    attribute vec4 aOffset;
+    // attribute vec4 aRot;
+    
+    varying vec4 normal;
+    varying vec4 wsPos;
+    
+    uniform vec4 uLightPos;    
+    uniform mat4 uView;
+    uniform mat4 uProj;
+
+	//Joint translations and rotations to determine weights (assumes up to 64 joints per rig)
+    uniform vec3 jTrans[64];
+    uniform vec4 jRots[64];
+
+    vec3 qtrans(vec4 q, vec3 v) {
+        return v + 2.0 * cross(cross(v, q.xyz) - q.w*v, q.xyz);
+    }
+
+    void main () {
+    
+        vec3 weightedPos = vec3(0.0, 0.0, 0.0);
+        vec3 weightedNormal = vec3(0.0, 0.0, 0.0);
+        
+        for (int i = 0; i < 4; i++) {
+            float weight = skinWeights[i];
+            
+            if (weight > 0.0) {
+                int index = int(skinIndices[i]);
+                
+                vec3 v = vec3(0.0, 0.0, 0.0);
+                if (i == 0) { v = v0.xyz; }
+                else if (i == 1) { v = v1.xyz; }
+                else if (i == 2) { v = v2.xyz; }
+                else if (i == 3) { v = v3.xyz; }
+                
+                weightedPos += weight * (jTrans[index] + qtrans(jRots[index], v));
+                weightedNormal += weight * qtrans(jRots[index], aNorm);
+            }
+        }
+        	
+        wsPos = aOffset + vec4(weightedPos, 1.0);
+        normal = normalize(vec4(weightedNormal, 0.0));	
+
+        gl_Position = uProj * uView * wsPos;
+    }
+
+`;
+
+export const enemyFSText = `
+    precision mediump float;
+
+    uniform vec4 uLightPos;
+    uniform float uTime;
+    
+    varying vec4 normal;
+    varying vec4 wsPos;
+    varying vec2 uv;
+
+    void main () {
+        vec3 kd = vec3(1.0, 1.0, 1.0);
+        vec3 ka = vec3(0.1, 0.1, 0.1);
+        
+        /* Compute light fall off */
+        vec4 lightDirection = uLightPos - wsPos;
+        float dot_nl = dot(normalize(lightDirection), normalize(normal));
+	    dot_nl = clamp(dot_nl, 0.0, 1.0);
+
+        vec3 textureColor = vec3(0.4, 0.1, 0.1);
+
+        gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0) * textureColor, 1.0);
+        
+        //gl_FragColor = vec4((normal.x + 1.0)/2.0, (normal.y + 1.0)/2.0, (normal.z + 1.0)/2.0,1.0);
+    }
+`;
