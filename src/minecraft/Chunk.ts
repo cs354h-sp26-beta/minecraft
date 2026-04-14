@@ -56,6 +56,46 @@ export class Chunk {
     return h / 4294967295;
   }
 
+  // gradient directions for 3D Perlin noise
+  // chosen bc not axis-aligned, not favoring one axis, and easy dot products
+  private static readonly GRAD3: [number, number, number][] = [
+    [1, 1, 0],
+    [-1, 1, 0],
+    [1, -1, 0],
+    [-1, -1, 0],
+    [1, 0, 1],
+    [-1, 0, 1],
+    [1, 0, -1],
+    [-1, 0, -1],
+    [0, 1, 1],
+    [0, -1, 1],
+    [0, 1, -1],
+    [0, -1, -1],
+  ];
+
+  // deterministic gradient index at a 3D lattice point
+  private grad3At(ix: number, iy: number, iz: number, octave: number): number {
+    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iy}|${iz}`);
+    return h % 12;
+  }
+
+  // dot product of gradient vector and offset vector at a 3D lattice corner
+  private gradDot3D(
+    gradient_index: number,
+    dx: number,
+    dy: number,
+    dz: number,
+  ): number {
+    const g = Chunk.GRAD3[gradient_index];
+    return g[0] * dx + g[1] * dy + g[2] * dz;
+  }
+
+  // instead of linear interpolation to avoid grid artifacts
+  // from Perlin's "Improving Noise" paper: https://mrl.cs.nyu.edu/~perlin/paper445.pdf
+  private fade(t: number): number {
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
   // linear interpolation
   private lerp(a: number, b: number, t: number): number {
     return a + t * (b - a);
@@ -128,6 +168,79 @@ export class Chunk {
 
     // interpolate between top and bottom
     return this.lerp(a, b, v);
+  }
+
+  // 3D Perlin noise
+  private perlinNoise3D(
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+    octave: number,
+    frequency: number,
+  ): number {
+    const sx = worldX * frequency;
+    const sy = worldY * frequency;
+    const sz = worldZ * frequency;
+
+    // lattice cell coordinates
+    //  lower corner
+    const x0 = Math.floor(sx);
+    const y0 = Math.floor(sy);
+    const z0 = Math.floor(sz);
+    //  upper corner
+    const x1 = x0 + 1;
+    const y1 = y0 + 1;
+    const z1 = z0 + 1;
+
+    // offsets within cell
+    //  lower corner to sample point
+    const dx0 = sx - x0;
+    const dy0 = sy - y0;
+    const dz0 = sz - z0;
+    //  upper corner to sample point
+    const dx1 = dx0 - 1;
+    const dy1 = dy0 - 1;
+    const dz1 = dz0 - 1;
+
+    // get smooth interpolation weights
+    const u = this.fade(dx0);
+    const v = this.fade(dy0);
+    const w = this.fade(dz0);
+
+    // gradient indices at corners
+    //  g00 = lower corner, g100 = +x corner, g010 = +y corner, etc.
+    const g000 = this.grad3At(x0, y0, z0, octave);
+    const g100 = this.grad3At(x1, y0, z0, octave);
+    const g010 = this.grad3At(x0, y1, z0, octave);
+    const g110 = this.grad3At(x1, y1, z0, octave);
+    const g001 = this.grad3At(x0, y0, z1, octave);
+    const g101 = this.grad3At(x1, y0, z1, octave);
+    const g011 = this.grad3At(x0, y1, z1, octave);
+    const g111 = this.grad3At(x1, y1, z1, octave);
+
+    // dot products of gradient and offset vectors at each corner
+    const n000 = this.gradDot3D(g000, dx0, dy0, dz0);
+    const n100 = this.gradDot3D(g100, dx1, dy0, dz0);
+    const n010 = this.gradDot3D(g010, dx0, dy1, dz0);
+    const n110 = this.gradDot3D(g110, dx1, dy1, dz0);
+    const n001 = this.gradDot3D(g001, dx0, dy0, dz1);
+    const n101 = this.gradDot3D(g101, dx1, dy0, dz1);
+    const n011 = this.gradDot3D(g011, dx0, dy1, dz1);
+    const n111 = this.gradDot3D(g111, dx1, dy1, dz1);
+
+    // trilinear interpolation of dot products
+    //  lerp pairs along x
+    const a00 = this.lerp(n000, n100, u);
+    const a10 = this.lerp(n010, n110, u);
+    const a01 = this.lerp(n001, n101, u);
+    const a11 = this.lerp(n011, n111, u);
+
+    //  lerp pairs along y
+    const b0 = this.lerp(a00, a10, v);
+    const b1 = this.lerp(a01, a11, v);
+
+    //  lerp pair along z
+    return this.lerp(b0, b1, w);
   }
 
   // Discrete biome regions in world space with a narrow smooth transition band.
@@ -247,7 +360,12 @@ export class Chunk {
             this.cubePositionsF32[4 * cubeIdx + 1] = y;
             this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
             this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-            this.cubeTypesF32[cubeIdx] = this.blockTypeAtHeight(y, height);
+            this.cubeTypesF32[cubeIdx] = this.blockTypeAt(
+              topLeftX + j,
+              y,
+              topLeftZ + i,
+              height,
+            );
             cubeIdx++;
           }
         }
@@ -255,9 +373,25 @@ export class Chunk {
     }
   }
 
-  private blockTypeAtHeight(y: number, columnHeight: number): number {
-    // Keep the visible surface earthy and the bulk of the terrain rocky.
+  private blockTypeAt(
+    worldX: number,
+    y: number,
+    worldZ: number,
+    columnHeight: number,
+  ): number {
+    // Surface layers are always dirt
     if (y >= columnHeight - 3) {
+      return Chunk.blockTypeDirt;
+    }
+
+    // perlinNoise3D returns [-1, 1]
+
+    // two octaves at different frequencies for natural-looking variation
+    const noise =
+      0.7 * this.perlinNoise3D(worldX, y, worldZ, 100, 0.1) +
+      0.3 * this.perlinNoise3D(worldX, y, worldZ, 101, 0.25);
+
+    if (noise > 0.15) {
       return Chunk.blockTypeDirt;
     }
     return Chunk.blockTypeCobble;
