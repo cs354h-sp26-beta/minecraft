@@ -1,6 +1,7 @@
 import {Quat, Vec3} from "../lib/TSM.js";
 import { Chunk } from "./Chunk.js";
 import { Mesh } from "./Mesh.js";
+import {enemyIdlePose, enemyWalkAnimation, enemyWalkPose1} from "./Animations.js";
 
 export type Collision = {
   blockCenter: Vec3;
@@ -33,6 +34,12 @@ export class Player {
   }
 }
 
+enum EnemyState {
+    Idle,
+    Walking,
+    Attacking
+}
+
 export class Enemy {
     // The enemy's position in world coordinates.
     public position: Vec3;
@@ -40,9 +47,31 @@ export class Enemy {
 
     public mesh: Mesh;
 
+    private state: EnemyState;
+    private animationTime: number;
+
     constructor(mesh: Mesh, position: Vec3) {
         this.position = position;
         this.mesh = new Mesh(mesh);
+        this.mesh.setPose(enemyIdlePose);
+        this.setState(EnemyState.Idle)
+    }
+
+    private setState(state: EnemyState) {
+        console.log("Setting state ", state);
+        this.state = state;
+        this.animationTime = 0;
+    }
+
+    private targetPose() : Quat[] {
+        switch (this.state) {
+            case EnemyState.Idle:
+                return enemyIdlePose;
+            case EnemyState.Walking:
+                return enemyWalkAnimation(this.animationTime);
+            case EnemyState.Attacking:
+                return enemyIdlePose;
+        }
     }
 
     public faceTowards(pos: Vec3): void {
@@ -52,6 +81,22 @@ export class Enemy {
 
     public getRotation(): Quat {
         return Quat.fromAxisAngle(Vec3.up, this.yaw - Math.PI / 2);
+    }
+
+    public update(dt: number, player: Player) {
+        this.animationTime += dt;
+
+        if (this.animationTime >= 8) {
+            if (this.state === EnemyState.Idle) {
+                this.setState(EnemyState.Walking);
+            }
+            else if (this.state === EnemyState.Walking) {
+                this.setState(EnemyState.Idle);
+            }
+        }
+        this.faceTowards(player.position);
+
+        this.mesh.setPose(this.targetPose(), Math.pow(0.01, dt));
     }
 }
 

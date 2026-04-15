@@ -236,6 +236,9 @@ export class Quat {
     }
 
     let cos = Quat.dot(q1, q2);
+    if (cos > 0.999) {
+      return q1;
+    }
     const q2a = q2.copy();
 
     if (cos < 0.0) {
