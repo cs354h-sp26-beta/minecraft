@@ -26,12 +26,15 @@ class Entity {
   // Health stats
   public health: number;
   public maxHealth: number;
+  public food: number;
+  public maxFood: number;
 
   constructor(
     position: Vec3,
     hitboxRadius: number,
     hitboxHeight: number,
-    health: number = 100,
+    health: number = 20,
+    food: number = 20,
   ) {
     this.position = position;
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
@@ -39,6 +42,8 @@ class Entity {
     this.hitboxHeight = hitboxHeight;
     this.health = health;
     this.maxHealth = health;
+    this.food = food;
+    this.maxFood = food;
   }
 
   private applyVerticalSeparationAndZeroVelocity(
@@ -64,6 +69,7 @@ class Entity {
 
     const momentumH = this.velocity.scale(dt, new Vec3());
     momentumH.y = 0;
+    lookDir = lookDir.scale(0.4, new Vec3());
     const totalH = lookDir.add(momentumH, new Vec3());
 
     let px = this.position.x;
@@ -185,7 +191,7 @@ class Entity {
     ) {
       return;
     }
-    this.velocity.add(new Vec3([0.0, 5.0, 0.0]));
+    this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
   }
 
   public takeDamage(amount: number = 1) {
@@ -196,10 +202,24 @@ class Entity {
     }
   }
 
-  public heal(amount: number = 0.5) {
+  public heal(amount: number = 1) {
     this.health += amount;
     if (this.health > this.maxHealth) {
       this.health = this.maxHealth;
+    }
+  }
+
+  public experienceHunger(amount: number = 1) {
+    this.food -= amount;
+    if (this.food < 0) {
+      this.food = 0;
+    }
+  }
+
+  public eat(amount: number = 1) {
+    this.food += amount;
+    if (this.food > this.maxFood) {
+      this.food = this.maxFood;
     }
   }
 
@@ -210,7 +230,7 @@ class Entity {
 
 export class Player extends Entity {
   constructor(position: Vec3) {
-    super(position, 0.4, 2.0, 20);
+    super(position, 0.4, 2.0, 20, 20);
   }
 
   public update(
@@ -249,7 +269,7 @@ export class Enemy extends Entity {
 
   constructor(mesh: Mesh, position: Vec3) {
     // HACK: Enemy centered at CoM rather than head.
-    super(position, 0.4, 1.0, 20);
+    super(position, 0.4, 1.0, 20, 20);
     this.yaw = 0.0;
     this.mesh = new Mesh(mesh);
     this.mesh.setPose(enemyIdlePose);
@@ -343,7 +363,7 @@ export class Block {
     }
 
     // Apply gravity acceleration.
-    const gDelta = -9.8 * dt;
+    const gDelta = -9.8 * 2 * dt;
     const gDv = new Vec3([0.0, gDelta, 0.0]);
     this.velocity.add(gDv);
     return true;

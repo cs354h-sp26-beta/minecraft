@@ -17,6 +17,7 @@ export const blankCubeVSText = `
     varying vec4 wsPos;
     varying vec2 uv;
     varying float selected;
+    varying vec3 vLocalPos; // 3d block-local position
 
     void main () {
 
@@ -26,6 +27,8 @@ export const blankCubeVSText = `
         uv = aUV;
         selected = uSelectedCubePos == aOffset ? 1.0 : 0.0;
         vBlockType = aBlockType;
+
+        vLocalPos = aVertPos.xyz + vec3(0.5); // convert from [-0.5, 0.5] to [0, 1] for easier texturing
     }
 `;
 
@@ -114,6 +117,7 @@ const noiseUtils = `
 const dirtTexture = `
     vec3 makeDirt(vec2 uv) {
         // dirt block: add some noise to brown
+        // TODO: make it tile better with world coordinates
 
         vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
 
@@ -123,6 +127,20 @@ const dirtTexture = `
         if (noise < 0.2) textureColor -= vec3(0.14, 0.08, 0.04); // add some darker spots
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
         return textureColor;
+    }
+`;
+
+const sandTexture = `
+    vec3 makeSand(vec2 uv, vec3 local, vec3 world) {
+        // sand block: light tan with wavy noise pattern
+        uv = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
+        vec2 worldSeed = hash2(floor(world.xz));
+        //vec3 pixelWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
+        vec2 p = uv * 2.0; // combine world coords for noise input, with some scaling
+        float wave = perlin(p * 4.0);
+        float noise = fbm(p * 32.0 + worldSeed, 2);
+        vec3 baseColor = vec3(0.84, 0.76, 0.59);
+        return baseColor * 0.8 + wave * 0.18 + noise * 0.24; // add subtle wave and noise variation
     }
 `;
 
@@ -156,6 +174,28 @@ const waterTexture = `
     }
 `;
 
+const grassTexture = `
+    vec3 makeGrass(vec2 uv, vec3 local, vec3 world, float scale) {
+
+    vec3 pixelCubeLocal = floor(local * 16.0) / 16.0; // snap block-local coords to a grid for pixelated texture
+    vec3 pixelWorld = floor(world * 16.0) / 16.0; // same with world
+
+    float nearTop = pixelCubeLocal.y;
+
+    float noise = fbm(pixelCubeLocal.xz * 12.0 + pixelWorld.xz * 11.0, 2);
+
+    nearTop = clamp(nearTop + noise * 0.4, 0.0, 1.0);
+
+    nearTop = pow(nearTop, 10.0);   
+
+    vec3 dirtColor = makeDirt(uv);
+
+    vec3 grassColor = makeDirt(uv) * vec3(0.3, 0.8, 0.3) + vec3(0.02, 0.1, 0.02); // base dirt color tinted green
+
+    return mix(dirtColor, grassColor, nearTop);
+}
+`;
+
 const cobbleTexture = `
     vec3 makeCobble(vec2 uv, vec3 world, float scale) {
       vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
@@ -164,8 +204,8 @@ const cobbleTexture = `
       float groove = smoothstep(0.35, -0.55, v * 0.5);  // dark at edges
       float noise = fbm(pixelatedWorld.xz * 8.0, 2);     // surface variation
       vec3 baseColor = vec3(0.65, 0.63, 0.6);
-      return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
-    }
+    return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
+}
 `;
 
 const oreTexture = `
@@ -180,14 +220,14 @@ const oreTexture = `
         
         float noise = fbm(uv * 8.0, 2);
 
-        coloredGroove = pow(coloredGroove, 3.0);
+    coloredGroove = pow(coloredGroove, 3.0);
 
         vec3 noColor = baseColor * (0.14 + 0.12 * noise) + groove * 0.8;
 
         vec3 colored = color * (0.7 - groove + 0.2 * noise);
 
-        return mix(noColor, colored, coloredGroove);
-    }
+    return mix(noColor, colored, coloredGroove);
+}
 `;
 
 // const cellsTexture = `
@@ -233,6 +273,7 @@ export const blankCubeFSText = `
     
     varying vec4 normal;
     varying vec4 wsPos;
+    varying vec3 vLocalPos;
     varying vec2 uv;
     varying float selected;
     varying float vBlockType;
@@ -240,6 +281,10 @@ export const blankCubeFSText = `
     ${noiseUtils}
 
     ${dirtTexture}
+
+    ${sandTexture}
+
+    ${grassTexture}
 
     ${cobbleTexture}
 
@@ -265,9 +310,32 @@ export const blankCubeFSText = `
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
-        } else {
-            vec3 oreColor = vec3(0.9, 0.1, 0.2);
+        } else if (vBlockType == 3.0) {
+            // Coal Ore: black veins
+            vec3 oreColor = vec3(0.1, 0.1, 0.2);
             textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
+        } else if (vBlockType == 4.0) {
+            // Iron Ore: reddish veins
+            vec3 oreColor = vec3(0.6, 0.2, 0.1);
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
+        } else if (vBlockType == 5.0) {
+            // Gold Ore: yellow veins
+            vec3 oreColor = vec3(0.8, 0.7, 0.1);
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
+        } else if (vBlockType == 6.0) {
+            // Diamond Ore: cyan veins
+            vec3 oreColor = vec3(0.3, 0.8, 0.8);
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
+        } else if (vBlockType == 7.0) {
+            textureColor = makeGrass(uv, vLocalPos, wsPos.xyz, 3.0);
+        } else if (vBlockType == 8.0) {
+            textureColor = makeSand(uv, vLocalPos, wsPos.xyz);
+        } else if (vBlockType == 9.0) {
+            // TODO: make real sandstone texture
+            textureColor = makeSand(uv, vLocalPos, wsPos.xyz) * 1.2 * makeCobble(uv, wsPos.xyz, 5.0);
+        } else if (vBlockType == 10.0) {
+            // TODO: make real snow texture
+            textureColor = makeDirt(uv) * 0.5 + vec3(0.8, 0.8, 0.9); 
         }
 
         gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
@@ -714,5 +782,50 @@ export const enemyFSText = `
         gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0) * textureColor, 1.0);
         
         //gl_FragColor = vec4((normal.x + 1.0)/2.0, (normal.y + 1.0)/2.0, (normal.z + 1.0)/2.0,1.0);
+    }
+`;
+
+export const portalVSText = `
+    precision mediump float;
+
+    uniform mat4 uView;
+    uniform mat4 uProj;
+
+    attribute vec4 aVertPos;
+    attribute vec4 aOffset;
+    attribute vec2 aUV;
+
+    varying vec2 vUV;
+
+    void main () {
+        gl_Position = uProj * uView * (aVertPos + aOffset);
+        vUV = aUV;
+    }
+`;
+
+export const portalFSText = `
+    precision mediump float;
+
+    uniform sampler2D uPortalTex; // FBO for destination scene
+    uniform vec2 uResolution;
+    // uniform float uTime; Could use in animated portal effect
+
+    varying vec2 vUV;
+
+    void main() {
+        // Sample the portal FBO using screen-space UVs
+        vec2 screenUV = gl_FragCoord.xy / uResolution; // [0, 1]
+        vec4 color = texture2D(uPortalTex, screenUV);
+
+        // Nether portal tint, light purple rn
+        color.rgb *= vec3(0.85, 0.65, 0.8);
+
+        // Vignette using block-local UVs (edges darken)
+        vec2 centered = vUV - 0.5;
+        float vignette = 1.0 - dot(centered, centered) * 2.0; // distance^2 from center
+        vignette = clamp(vignette, 0.3, 1.0);
+        color.rgb *= vignette;
+
+        gl_FragColor = color;
     }
 `;

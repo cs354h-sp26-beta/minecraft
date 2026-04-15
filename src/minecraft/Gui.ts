@@ -43,12 +43,16 @@ export class GUI implements IGUI {
   private Sdown: boolean;
   private Ddown: boolean;
 
+  private _pointerLocked: boolean;
+  private canvas: HTMLCanvasElement;
+
   /**
    *
    * @param canvas required to get the width and height of the canvas
    * @param animation required as a back pointer for some of the controls
    */
   constructor(canvas: HTMLCanvasElement, animation: MinecraftAnimation) {
+    this.canvas = canvas;
     this.height = canvas.height;
     this.width = canvas.width;
     this.prevX = 0;
@@ -59,6 +63,7 @@ export class GUI implements IGUI {
     this.Wdown = false;
     this.Sdown = false;
     this.Ddown = false;
+    this._pointerLocked = false;
 
     this.animation = animation;
 
@@ -122,22 +127,27 @@ export class GUI implements IGUI {
     return this.camera;
   }
 
+  public get pointerLocked(): boolean {
+    return this._pointerLocked;
+  }
+
   public dragStart(mouse: MouseEvent): void {
-    if (this.animation.isPlayerDead()) {
+    if (this.animation.isPlayerDead() || !this._pointerLocked) {
       return;
     }
-    this.prevX = mouse.screenX;
-    this.prevY = mouse.screenY;
-    this.dragging = true;
 
-    if (mouse.buttons == 1) {
+    if (mouse.button === 0) {
       this.animation.leftClick(this.cubeSelected);
-    } else if (mouse.buttons == 2) {
-      this.animation.rightClick(this.cubeSelected); // filler cube type
+    } else if (mouse.button === 2) {
+      this.animation.rightClick(this.cubeSelected);
     }
+
+    // Re-raycast after block updates
+    this.raycastFromScreenPos(this.width / 2, this.height / 2);
   }
+
   public dragEnd(mouse: MouseEvent): void {
-    this.dragging = false;
+    // nothing for now
   }
 
   /**
@@ -150,16 +160,26 @@ export class GUI implements IGUI {
     if (this.animation.isPlayerDead()) {
       return;
     }
-    let x = mouse.offsetX;
-    let y = mouse.offsetY;
-    const dx = mouse.screenX - this.prevX;
-    const dy = mouse.screenY - this.prevY;
-    this.prevX = mouse.screenX;
-    this.prevY = mouse.screenY;
-    if (this.dragging) {
+    if (this._pointerLocked) {
+      // Pointer lcoked: movementX/Y gives raw delta
+      const dx = mouse.movementX;
+      const dy = mouse.movementY;
       this.camera.rotate(new Vec3([0, 1, 0]), -GUI.rotationSpeed * dx);
       this.camera.rotate(this.camera.right(), -GUI.rotationSpeed * dy);
+
+      // raycast from crosshair (screen center)
+      this.raycastFromScreenPos(this.width / 2, this.height / 2);
+      return;
     }
+  }
+
+  /**
+   * performs a raycast from the camera through the given screen
+   * coordinates and updates cubeSelected
+   * @param x
+   * @param y
+   */
+  private raycastFromScreenPos(x: number, y: number): void {
     // Create ray in world coordinates using camera position
     let mousePos = new Vec4();
     mousePos.x = (x / this.width) * 2 - 1;
@@ -326,6 +346,18 @@ export class GUI implements IGUI {
     canvas.addEventListener("mouseup", (mouse: MouseEvent) =>
       this.dragEnd(mouse),
     );
+
+    // TODO: document.exitPointerLock() on inventory open or anything else you need mouse for
+
+    canvas.addEventListener("click", () => {
+      if (!this._pointerLocked) {
+        canvas.requestPointerLock();
+      }
+    });
+
+    document.addEventListener("pointerlockchange", () => {
+      this._pointerLocked = document.pointerLockElement === canvas;
+    });
 
     /* Event listener to stop the right click menu */
     canvas.addEventListener("contextmenu", (event: any) =>
