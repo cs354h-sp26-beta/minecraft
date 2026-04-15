@@ -1350,6 +1350,92 @@ export class MinecraftAnimation extends CanvasAnimation {
     return hit;
   }
 
+  /**
+   *
+   */
+  private setFallingBlocksBFS(worldX: number, worldZ: number, worldY: number) {
+    const cubeX = Math.round(worldX);
+    const cubeY = Math.round(worldY);
+    const cubeZ = Math.round(worldZ);
+
+    // Only start search if block is not air
+    let chunk = this.getChunkAtWorld(worldX, worldZ);
+    if (
+      chunk === undefined ||
+      !chunk.isSolidBlockAtWorld(worldX, worldY, worldZ)
+    ) {
+      return;
+    }
+
+    const visited = new Set(); // track visited blocks
+    visited.add(`${cubeX},${cubeY},${cubeZ}`);
+    const queue = [[cubeX, cubeY, cubeZ]];
+    const blocksToUpdate = [];
+    let foundGround = false;
+
+    const directions = [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ];
+
+    while (queue.length > 0) {
+      const currBlockPos = queue.shift();
+      blocksToUpdate.push(currBlockPos);
+
+      // Check if current block is touching "ground" by checking y = 0
+      if (currBlockPos!.at(1)! === 0) {
+        foundGround = true;
+        console.log(foundGround);
+        break;
+      }
+
+      for (const [dx, dy, dz] of directions) {
+        const x = currBlockPos!.at(0)! + dx;
+        const y = currBlockPos!.at(1)! + dy;
+        const z = currBlockPos!.at(2)! + dz;
+
+        const blockKey = `${x},${y},${z}`;
+        let chunk = this.getChunkAtWorld(x, z);
+
+        // Only visit if cube contains a solid block
+        if (
+          chunk !== undefined &&
+          chunk.isSolidBlockAtWorld(x, y, z) &&
+          !visited.has(blockKey)
+        ) {
+          visited.add(blockKey);
+          queue.push([x, y, z]);
+        }
+      }
+    }
+    // Do nothing if ground is found, but mark all blocks searched as falling if ground is not found
+    if (foundGround === false) {
+      for (const blockPos of blocksToUpdate) {
+        const fallingBlockType = chunk.cubeType(
+          blockPos!.at(0)!,
+          blockPos!.at(2)!,
+          blockPos!.at(1)!,
+        )!; // x, z, y
+        this.fallingBlocks.push(
+          new Block(
+            new Vec3([blockPos!.at(0)!, blockPos!.at(1)!, blockPos!.at(2)!]),
+            fallingBlockType,
+          ),
+        );
+        chunk.changeCubeType(
+          blockPos!.at(0)!,
+          blockPos!.at(2)!,
+          blockPos!.at(1)!,
+          Chunk.blockTypeAir,
+        );
+      }
+    }
+  }
+
   public leftClick(cubeSelected: boolean): void {
     if (!cubeSelected) {
       return;
@@ -1360,17 +1446,28 @@ export class MinecraftAnimation extends CanvasAnimation {
     let key = `${chunkX},${chunkZ}`;
     let chunk = this.renderedChunks.get(key)!;
 
-    let brokenCubeType = chunk.cubeType(
-      this.selectedCubePosition.x,
-      this.selectedCubePosition.z,
-      this.selectedCubePosition.y,
-    );
+    const cubeX = this.selectedCubePosition.x;
+    const cubeY = this.selectedCubePosition.y;
+    const cubeZ = this.selectedCubePosition.z;
+
+    let brokenCubeType = chunk.cubeType(cubeX, cubeZ, cubeY);
     let chunkDeltaMap = chunk.changeCubeType(
-      this.selectedCubePosition.x,
-      this.selectedCubePosition.z,
-      this.selectedCubePosition.y,
+      cubeX,
+      cubeZ,
+      cubeY,
       Chunk.blockTypeAir,
     );
+
+    // TODO: Set blocks to fall according to bottom support if sand or gravel
+
+    // Perform BFS beginning at each of the six surrounding cubes to update sets of blocks
+    // connected to the ground
+    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY + 1);
+    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY - 1);
+    this.setFallingBlocksBFS(cubeX, cubeZ + 1, cubeY);
+    this.setFallingBlocksBFS(cubeX, cubeZ - 1, cubeY);
+    this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
+    this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
 
     this.deltaMaps.set(key, chunkDeltaMap);
     if (
@@ -1421,15 +1518,6 @@ export class MinecraftAnimation extends CanvasAnimation {
           cubeY,
           blockType,
         );
-
-        // Test falling blocks
-        if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
-          const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
-          this.fallingBlocks.push(
-            new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
-          );
-          chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
-        }
 
         this.deltaMaps.set(key, chunkDeltaMap);
         this.blocksPlaced++;
