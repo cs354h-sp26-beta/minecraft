@@ -1330,6 +1330,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       document.exitPointerLock();
     } else {
       this.canvas2d.requestPointerLock();
+      this.inventory.insertStack(this.inventory.mouseItem);
+      this.inventory.mouseItem = null;
     }
   }
 
@@ -1469,8 +1471,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.blocksPlaced++;
 
         this.inventory.editSlotCount(
-          this.selectedHotbarIdx,
-          0,
+          Inventory.slotIndex(this.selectedHotbarIdx, 0),
           item!.count - 1,
         );
       }
@@ -1770,7 +1771,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.lineWidth = highlight ? 4 : 2;
     ctx.stroke();
 
-    const item = this.inventory.getItemStack(col, invRow);
+    const item = this.inventory.getItemStack(Inventory.slotIndex(col, invRow));
     if (item) {
       const img = item.itemType!.img;
       if (img) {
@@ -1800,7 +1801,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
     const hotbarY = this.canvas2d.height - SLOT_SIZE - 35;
 
-    const selectedItem = this.inventory.getItemStack(this.selectedHotbarIdx, 0);
+    const selectedItem = this.inventory.getItemStack(Inventory.slotIndex(this.selectedHotbarIdx, 0));
     ctx.font = "16px monospace";
     const titleHeight = selectedItem ? 18 : 0;
 
@@ -1864,6 +1865,29 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.drawSlot(ctx, x, y, col, invRow, invRow === 0 && col === this.selectedHotbarIdx);
     });
 
+    // Draw item held by mouse
+    const mouseItem = this.inventory.mouseItem;
+    if (mouseItem) {
+      const { SLOT_SIZE } = MinecraftAnimation;
+      const mx = this.gui.mouseX - originX - SLOT_SIZE / 2;
+      const my = this.gui.mouseY - originY - SLOT_SIZE / 2;
+      const img = mouseItem.itemType.img;
+      if (img) {
+        ctx.drawImage(img, mx + 9, my + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
+      } else {
+        ctx.fillStyle = "#d81cd5";
+        ctx.fillRect(mx + 9, my + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
+      }
+
+      if (mouseItem.count > 1) {
+        ctx.fillStyle = "#fff6d7";
+        ctx.font = "16px monospace";
+        ctx.textBaseline = "bottom";
+        ctx.textAlign = "right";
+        ctx.fillText(String(mouseItem.count), mx + SLOT_SIZE - 8, my + SLOT_SIZE - 6);
+      }
+    }
+
     ctx.restore();
   }
 
@@ -1882,7 +1906,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private onInventorySlotClick(col: number, row: number, button: number): void {
-    console.log(`Inventory slot clicked: col=${col}, row=${row}, button=${button}`);
+    this.inventory.clickSlot(Inventory.slotIndex(col, row), button);
   }
 
   public setHotbarSlot(number: number) {
@@ -1890,7 +1914,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public heldItem(): ItemStack | null {
-    return this.inventory.getItemStack(this.selectedHotbarIdx, 0);
+    return this.inventory.getItemStack(Inventory.slotIndex(this.selectedHotbarIdx, 0));
   }
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;

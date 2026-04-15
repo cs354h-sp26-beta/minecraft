@@ -155,6 +155,7 @@ export class ItemStack {
 
 export class Inventory {
   private items: (ItemStack | null)[];
+  public mouseItem: ItemStack | null;
 
   public static width = 9;
   public static height = 4;
@@ -164,6 +165,7 @@ export class Inventory {
     for (let i = 0; i < this.items.length; i++) {
       this.items[i] = null;
     }
+    this.mouseItem = null;
   }
 
   public insertStack(itemStack: ItemStack | null): boolean {
@@ -216,13 +218,16 @@ export class Inventory {
     return false;
   }
 
-  public editSlotCount(x: number, y: number, count: number): void {
-    const index = y * Inventory.width + x;
+  public static slotIndex(x: number, y: number): number {
+    return y * Inventory.width + x;
+  }
+
+  public editSlotCount(index: number, count: number): void {
     if (index < 0 || index >= this.items.length) {
-      throw new Error(`Invalid inventory coordinates: (${x}, ${y})`);
+      throw new Error(`Invalid inventory slot index: ${index}`);
     }
     if (this.items[index] === null) {
-      throw new Error(`No item stack at inventory coordinates: (${x}, ${y})`);
+      throw new Error(`No item stack at inventory slot index: ${index}`);
     }
     if (count <= 0) {
       this.items[index] = null;
@@ -231,11 +236,58 @@ export class Inventory {
     }
   }
 
-  public getItemStack(x: number, y: number): ItemStack | null {
-    const index = y * Inventory.width + x;
+  public getItemStack(index: number): ItemStack | null {
     if (index < 0 || index >= this.items.length) {
-      throw new Error(`Invalid inventory coordinates: (${x}, ${y})`);
+      throw new Error(`Invalid inventory slot index: ${index}`);
     }
     return this.items[index];
+  }
+
+  public clickSlot(index: number, button: number): void {
+    const slotItem = this.getItemStack(index);
+    if (button === 0) {
+      if (this.mouseItem && slotItem && this.mouseItem.itemType.id === slotItem.itemType.id) {
+        // If same item type, try to merge mouse item into slot item
+        const spaceLeft = slotItem.itemType.maxStackSize - slotItem.count;
+        const toAdd = Math.min(spaceLeft, this.mouseItem.count);
+        slotItem.count += toAdd;
+        this.mouseItem.count -= toAdd;
+        if (this.mouseItem.count <= 0) {
+          this.mouseItem = null;
+        }
+        return;
+      }
+
+      // Left click: swap mouse item with slot item
+      const temp = this.getItemStack(index);
+      this.items[index] = this.mouseItem;
+      this.mouseItem = temp;
+    } else if (button === 2) {
+      // Right click: if mouse item is null, take half of slot item; else try to add one to slot item
+
+      if (this.mouseItem === null && slotItem) {
+        const halfCount = Math.ceil(slotItem.count / 2);
+        this.mouseItem = new ItemStack(slotItem.itemType, halfCount);
+        slotItem.count -= halfCount;
+        if (slotItem.count <= 0) {
+          this.items[index] = null;
+        }
+      } else if (this.mouseItem && !slotItem) {
+        // If slot is empty, place one item from mouse item into slot
+        this.items[index] = new ItemStack(this.mouseItem.itemType, 1);
+        this.mouseItem.count -= 1;
+        if (this.mouseItem.count <= 0) {
+          this.mouseItem = null;
+        }
+      } else if (this.mouseItem && slotItem
+            && slotItem.itemType.id === this.mouseItem.itemType.id
+            && slotItem.count < slotItem.itemType.maxStackSize) {
+        slotItem.count += 1;
+        this.mouseItem.count -= 1;
+        if (this.mouseItem.count <= 0) {
+          this.mouseItem = null;
+        }
+      }
+    }
   }
 }
