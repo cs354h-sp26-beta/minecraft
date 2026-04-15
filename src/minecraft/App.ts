@@ -1320,6 +1320,19 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.showAchievements = !this.showAchievements;
   }
 
+  public isInventoryOpen(): boolean {
+    return this.isInInventory;
+  }
+
+  public toggleInventory(): void {
+    this.isInInventory = !this.isInInventory;
+    if (this.isInInventory) {
+      document.exitPointerLock();
+    } else {
+      this.canvas2d.requestPointerLock();
+    }
+  }
+
   public isPlayerDead(): boolean {
     return this.player.isDead();
   }
@@ -1711,6 +1724,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private drawHotbar(): void {
+    if (this.isInInventory) { return; }
+
     const ctx = this.overlayCtx;
     const hotbarSize = Inventory.width;
     const slotSize = 60;
@@ -1718,17 +1733,29 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
     const hotbarY = this.canvas2d.height - slotSize - 35;
 
+    const selectedItem = this.inventory.getItemStack(this.selectedHotbarIdx, 0);
+    ctx.font = "16px monospace";
+    const titleHeight = selectedItem ? 18 : 0;
+
     ctx.save();
     ctx.translate(hotbarX, hotbarY);
 
-    // background
+    // background (extended upward for title)
     ctx.beginPath();
-    ctx.roundRect(-15, -15, hotbarWidth + 30, slotSize + 30, 6);
+    ctx.roundRect(-15, -15 - titleHeight, hotbarWidth + 30, slotSize + 30 + titleHeight, 6);
     ctx.strokeStyle = "#737981";
     ctx.lineWidth = 4;
     ctx.fillStyle = "rgba(21,27,41,0.6)";
     ctx.fill();
     ctx.stroke();
+
+    // item title
+    if (selectedItem) {
+      ctx.fillStyle = "#e1d8b7";
+      ctx.textBaseline = "bottom";
+      ctx.textAlign = "center";
+      ctx.fillText(selectedItem!.itemType.name, hotbarWidth / 2, -8);
+    }
 
     // slots
     ctx.font = "16px monospace";
@@ -1785,7 +1812,92 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
-  private drawInventory(): void {}
+  private drawInventory(): void {
+    const ctx = this.overlayCtx;
+    const cols = Inventory.width;
+    const rows = Inventory.height;
+    const slotSize = 60;
+    const gap = 10;
+    const padding = 15;
+    const hotbarGap = 30;
+
+    const gridWidth = cols * slotSize + (cols - 1) * gap;
+    const gridHeight =
+      rows * slotSize + (rows - 2) * gap + hotbarGap;
+    const panelX = (this.canvas2d.width - gridWidth) / 2 - padding;
+    const panelY = (this.canvas2d.height - gridHeight) / 2 - padding;
+
+    ctx.save();
+    ctx.translate(panelX + padding, panelY + padding);
+
+    // background
+    ctx.beginPath();
+    ctx.roundRect(-padding, -padding, gridWidth + padding * 2, gridHeight + padding * 2, 6);
+    ctx.strokeStyle = "#737981";
+    ctx.lineWidth = 4;
+    ctx.fillStyle = "rgba(21,27,41,0.85)";
+    ctx.fill();
+    ctx.stroke();
+
+    // label
+    ctx.font = "18px monospace";
+    ctx.fillStyle = "#e1d8b7";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "left";
+    ctx.fillText("Inventory", 0, -padding - 4);
+
+    ctx.font = "16px monospace";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "right";
+
+    // Draw rows: rows 1-3 (main inventory) then row 0 (hotbar) at the bottom
+    for (let row = 0; row < rows; row++) {
+      // Map display row to inventory row: top 3 rows are inv rows 1-3, bottom is row 0 (hotbar)
+      const invRow = row < rows - 1 ? row + 1 : 0;
+      const yOffset =
+        row < rows - 1
+          ? row * (slotSize + gap)
+          : row * slotSize + (rows - 2) * gap + hotbarGap;
+
+      for (let col = 0; col < cols; col++) {
+        const x = col * (slotSize + gap);
+
+        ctx.beginPath();
+        ctx.roundRect(x, yOffset, slotSize, slotSize, 4);
+        ctx.fillStyle = "rgba(15,15,25,0.6)";
+        ctx.fill();
+        ctx.strokeStyle = "#1b1717";
+        ctx.lineWidth = 2;
+        if (invRow === 0 && col === this.selectedHotbarIdx) {
+          ctx.strokeStyle = "#e1d8b7";
+          ctx.lineWidth = 4;
+        }
+        ctx.stroke();
+
+        const item = this.inventory.getItemStack(col, invRow);
+        if (item) {
+          const img = item.itemType.img!;
+          if (img) {
+            ctx.drawImage(img, x + 9, yOffset + 9, slotSize - 18, slotSize - 18);
+          } else {
+            ctx.fillStyle = "#d81cd5";
+            ctx.fillRect(x + 9, yOffset + 9, slotSize - 18, slotSize - 18);
+          }
+
+          if (item.count > 1) {
+            ctx.fillStyle = "#fff6d7";
+            ctx.fillText(
+              String(item.count),
+              x + slotSize - 8,
+              yOffset + slotSize - 6,
+            );
+          }
+        }
+      }
+    }
+
+    ctx.restore();
+  }
 
   public setHotbarSlot(number: number) {
     this.selectedHotbarIdx = number;

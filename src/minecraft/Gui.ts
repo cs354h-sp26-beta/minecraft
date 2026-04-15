@@ -286,6 +286,10 @@ export class GUI implements IGUI {
         this.animation.giveRandomItem();
         break;
       }
+      case "KeyE": {
+        this.animation.toggleInventory();
+        break;
+      }
       case "KeyG": {
         this.animation.toggleAchievements();
         break;
@@ -347,10 +351,8 @@ export class GUI implements IGUI {
       this.dragEnd(mouse),
     );
 
-    // TODO: document.exitPointerLock() on inventory open or anything else you need mouse for
-
     canvas.addEventListener("click", () => {
-      if (!this._pointerLocked) {
+      if (!this._pointerLocked && !this.animation.isInventoryOpen()) {
         canvas.requestPointerLock();
       }
     })
