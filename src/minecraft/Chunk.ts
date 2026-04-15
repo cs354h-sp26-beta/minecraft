@@ -17,12 +17,14 @@ export class Chunk {
   public static readonly blockTypeIronOre: number = 4;
   public static readonly blockTypeGoldOre: number = 5;
   public static readonly blockTypeDiamondOre: number = 6;
+  public static readonly blockTypeAir: number = -1;
   public static readonly SEA_LEVEL: number = 8;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
   private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
   private heightMapData!: Float32Array; // Ground truth of what blocks exist.
+  private blockTypeData!: Int8Array; // 3D cache of block types for cave-aware rendering
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
@@ -370,15 +372,32 @@ export class Chunk {
       }
     }
 
+    // Pre-compute 3D block types for cave-aware rendering
+    let maxH = 0;
+    for (let k = 0; k < this.size * this.size; k++) {
+      if (this.heightMapData[k] > maxH) maxH = this.heightMapData[k];
+    }
+    this.blockTypeData = new Int8Array(this.size * this.size * maxH);
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const h = this.heightMapData[this.size * i + j];
+        for (let y = 0; y < h; y++) {
+          this.blockTypeData[y * this.size * this.size + i * this.size + j] =
+            this.blockTypeAt(topLeftX + j, y, topLeftZ + i, h);
+        }
+      }
+    }
+
     // Count visible cubes: solid terrain blocks + water blocks
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
         const height = Math.max(this.heightMapData[this.size * i + j], 1);
         for (let y = 0; y < height; y++) {
+          if (this.getGeneratedBlockType(i, j, y) === Chunk.blockTypeAir)
+            continue;
           if (this.isExposed(i, j, y)) this.cubes++;
         }
-        // Water blocks only in carved pond basins
         if (height < seaLvl) {
           for (let y = height; y < seaLvl; y++) {
             if (this.isWaterExposed(i, j, y)) this.cubes++;
@@ -386,6 +405,7 @@ export class Chunk {
         }
       }
     }
+
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
 
@@ -395,17 +415,14 @@ export class Chunk {
         const height = Math.max(this.heightMapData[this.size * i + j], 1);
         // Place solid terrain blocks
         for (let y = 0; y < height; y++) {
+          const blockType = this.getGeneratedBlockType(i, j, y);
+          if (blockType === Chunk.blockTypeAir) continue;
           if (this.isExposed(i, j, y)) {
             this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
             this.cubePositionsF32[4 * cubeIdx + 1] = y;
             this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
             this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-            this.cubeTypesF32[cubeIdx] = this.blockTypeAt(
-              topLeftX + j,
-              y,
-              topLeftZ + i,
-              height,
-            );
+            this.cubeTypesF32[cubeIdx] = blockType;
             cubeIdx++;
           }
         }
@@ -432,13 +449,18 @@ export class Chunk {
     worldZ: number,
     columnHeight: number,
   ): number {
-    // Surface layers are always dirt
+    // Surface layers are always dirt (no caves near surface)
     if (y >= columnHeight - 3) {
       return Chunk.blockTypeDirt;
     }
 
-    // Ore vein generation
+    // Cave carving
     const depth = columnHeight - y;
+    if (depth >= 5) {
+      if (this.perlinNoise3D(worldX, y, worldZ, 160, 0.05) > 0.3) {
+        return Chunk.blockTypeAir;
+      }
+    }
 
     // Diamond
     if (depth >= 20) {
@@ -480,29 +502,29 @@ export class Chunk {
     return Chunk.blockTypeCobble;
   }
 
-  // Effective height includes water for pond columns only.
-  // Used for exposure checks so terrain under water is culled at pond edges.
-  private getEffectiveHeight(i: number, j: number): number {
-    const terrain = this.getHeight(i, j);
-    if (i >= 0 && i < this.size && j >= 0 && j < this.size) {
-      return Math.max(terrain, Chunk.SEA_LEVEL);
-    }
-    return terrain;
+  private getGeneratedBlockType(i: number, j: number, y: number): number {
+    return this.blockTypeData[y * this.size * this.size + i * this.size + j];
   }
 
-  // Makes the assumption that columns are solid up to the height of the column.
-  // Change when implementing caves and overhangs!
+  // Returns true if the block at (i, j, y) is a solid (non-transparent) block.
+  // Out-of-bounds and above-terrain positions are not solid.
+  private isSolidAt(i: number, j: number, y: number): boolean {
+    if (i < 0 || i >= this.size || j < 0 || j >= this.size) return false;
+    if (y < 0) return true; // below world is solid
+    const height = this.heightMapData[this.size * i + j];
+    if (y >= height) return false; // above terrain = air or water (transparent)
+    return this.getGeneratedBlockType(i, j, y) !== Chunk.blockTypeAir;
+  }
+
+  // A solid block is exposed if any of its 6 neighbors is non-solid
+  // (air, water, cave, or out of chunk bounds).
   private isExposed(i: number, j: number, y: number): boolean {
-    // Top face
-    if (y >= this.getHeight(i, j) - 1) return true;
-    // Bottom face
-    if (y === 0) return true;
-    // Four cardinal neighbors — use effective height so blocks adjacent to
-    // water are still rendered (water is transparent)
-    if (this.getEffectiveHeight(i - 1, j) <= y) return true;
-    if (this.getEffectiveHeight(i + 1, j) <= y) return true;
-    if (this.getEffectiveHeight(i, j - 1) <= y) return true;
-    if (this.getEffectiveHeight(i, j + 1) <= y) return true;
+    if (!this.isSolidAt(i, j, y + 1)) return true; // above
+    if (y === 0 || !this.isSolidAt(i, j, y - 1)) return true; // below
+    if (!this.isSolidAt(i - 1, j, y)) return true;
+    if (!this.isSolidAt(i + 1, j, y)) return true;
+    if (!this.isSolidAt(i, j - 1, y)) return true;
+    if (!this.isSolidAt(i, j + 1, y)) return true;
     return false;
   }
 
