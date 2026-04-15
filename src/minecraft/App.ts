@@ -8,7 +8,6 @@ import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
-import { enemyIdlePose } from "./Animations.js";
 import {
   blankCubeFSText,
   blankCubeVSText,
@@ -514,9 +513,6 @@ export class MinecraftAnimation extends CanvasAnimation {
         ]),
       ),
     );
-
-    this.enemies[0].mesh.setPose(enemyIdlePose);
-    this.enemies[2].mesh.setPose(enemyIdlePose);
   }
 
   private loadEnemyBoneTranslations(gl: WebGLRenderingContext): void {
@@ -663,6 +659,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
+    this.enemies.forEach((enemy) => {
+      enemy.update(dt, this.player);
+    });
+
     const walkDx = this.gui.walkDir().scale(0.1);
     const momentumDx = this.player.velocity.scale(dt, new Vec3());
     const totalDx = walkDx.add(momentumDx, new Vec3());
@@ -734,10 +734,6 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Enemies
     if (this.enemyMesh !== null) {
-      for (const e of this.enemies) {
-        e.faceTowards(this.player.position);
-      }
-
       const enemyInstanceCount = this.enemies.length;
       const enemyPositions = new Float32Array(enemyInstanceCount * 4);
       const enemyRotations = new Float32Array(enemyInstanceCount * 4);
