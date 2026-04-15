@@ -661,8 +661,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       offset += types.length;
     }
     for (const block of this.fallingBlocks) {
-      // TODO: Change to be the true falling block type
-      combined.set([Chunk.blockTypeCoalOre], offset);
+      combined.set([block.type], offset);
       offset += 1;
     }
     return combined;
@@ -928,7 +927,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
           let cubeType = currentChunk.cubeType(x, z, y);
 
-          if (cubeType !== undefined) {
+          if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
             // TODO: Save the cube face that was hit for placing blocks
@@ -992,8 +991,11 @@ export class MinecraftAnimation extends CanvasAnimation {
       cubeType,
     );
 
-    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
-      this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
+    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
+      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY);
+      this.fallingBlocks.push(
+        new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
+      );
       chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
     }
 

@@ -29,7 +29,7 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
-  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type
+  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type. Empty -> Chunk.blockTypeAir
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
   private numCubesAdded: number;
 
@@ -643,18 +643,14 @@ export class Chunk {
    * Gets the type of the cube located at a given position in world coordinates.
    * Returns undefined for an empty cube.
    */
-  public cubeType(
-    worldX: number,
-    worldZ: number,
-    worldY: number,
-  ): number | undefined {
+  public cubeType(worldX: number, worldZ: number, worldY: number): number {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
     const cubeChunkY = Math.round(worldY);
 
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-    return this.positionMap.get(key);
+    return this.positionMap.get(key) ?? Chunk.blockTypeAir;
   }
 
   /**
