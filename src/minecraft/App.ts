@@ -276,10 +276,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   /**
-    * Sets up the enemy drawing
+   * Sets up the enemy drawing
    */
   private initEnemies(): void {
-    if (this.enemyMeshLoader.meshes.length === 0) { throw new Error("Failed to load enemy mesh."); }
+    if (this.enemyMeshLoader.meshes.length === 0) {
+      throw new Error("Failed to load enemy mesh.");
+    }
     this.enemyMesh = this.enemyMeshLoader.meshes[0];
     this.enemyMesh!.scale(0.5);
 
@@ -292,40 +294,134 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
     this.enemyRenderPass.setIndexBufferData(fIndices);
 
-    this.enemyRenderPass.addInstancedAttribute("aOffset", 4, this.ctx.FLOAT, false,
-        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
-    this.enemyRenderPass.addInstancedAttribute("aRot", 4, this.ctx.FLOAT, false,
-        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
-    this.enemyRenderPass.addInstancedAttribute("aIdx", 1, this.ctx.FLOAT, false,
-        1 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
+    this.enemyRenderPass.addInstancedAttribute(
+      "aOffset",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.enemyRenderPass.addInstancedAttribute(
+      "aRot",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.enemyRenderPass.addInstancedAttribute(
+      "aIdx",
+      1,
+      this.ctx.FLOAT,
+      false,
+      1 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
 
-    this.enemyRenderPass.addAttribute("aNorm", 3, this.ctx.FLOAT, false,
-        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.normal.values);
-    this.enemyRenderPass.addAttribute("skinIndices", 4, this.ctx.FLOAT, false,
-        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.skinIndex.values);
-    this.enemyRenderPass.addAttribute("skinWeights", 4, this.ctx.FLOAT, false,
-        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.skinWeight.values);
-    this.enemyRenderPass.addAttribute("v0", 3, this.ctx.FLOAT, false,
-        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v0.values);
-    this.enemyRenderPass.addAttribute("v1", 3, this.ctx.FLOAT, false,
-        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v1.values);
-    this.enemyRenderPass.addAttribute("v2", 3, this.ctx.FLOAT, false,
-        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v2.values);
-    this.enemyRenderPass.addAttribute("v3", 3, this.ctx.FLOAT, false,
-        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v3.values);
+    this.enemyRenderPass.addAttribute(
+      "aNorm",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.normal.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "skinIndices",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.skinIndex.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "skinWeights",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.skinWeight.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v0",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v0.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v1",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v1.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v2",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v2.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v3",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v3.values,
+    );
 
-    this.enemyRenderPass.addUniform("uLightPos",
-        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-          gl.uniform4fv(loc, this.lightPosition.xyzw);
-        },);
-    this.enemyRenderPass.addUniform("uProj",
-        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-          gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.projMatrix().all()));
-        });
-    this.enemyRenderPass.addUniform("uView",
-        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-          gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.viewMatrix().all()));
-        });
+    this.enemyRenderPass.addUniform(
+      "uLightPos",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform4fv(loc, this.lightPosition.xyzw);
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uProj",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.projMatrix().all()),
+        );
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uView",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.viewMatrix().all()),
+        );
+      },
+    );
 
     this.enemyBoneTransTex = this.ctx.createTexture();
     if (this.enemyBoneTransTex === null) {
@@ -336,24 +432,30 @@ export class MinecraftAnimation extends CanvasAnimation {
       console.error("Error creating texture");
     }
 
-    this.enemyRenderPass.addUniform("uTexDim",
-        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-            const width = this.enemyMesh!.bones.length;
-            const height = this.enemies.length;
-            gl.uniform2f(loc, width, height);
-        });
-    this.enemyRenderPass.addUniform("uJTrans",
-        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-          gl.activeTexture(gl.TEXTURE0);
-          this.loadEnemyBoneTranslations(gl);
-          gl.uniform1i(loc, 0);
-        });
-    this.enemyRenderPass.addUniform("uJRots",
-        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
-          gl.activeTexture(gl.TEXTURE1);
-          this.loadEnemyBoneRotations(gl);
-          gl.uniform1i(loc, 1);
-        });
+    this.enemyRenderPass.addUniform(
+      "uTexDim",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const width = this.enemyMesh!.bones.length;
+        const height = this.enemies.length;
+        gl.uniform2f(loc, width, height);
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uJTrans",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.activeTexture(gl.TEXTURE0);
+        this.loadEnemyBoneTranslations(gl);
+        gl.uniform1i(loc, 0);
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uJRots",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.activeTexture(gl.TEXTURE1);
+        this.loadEnemyBoneRotations(gl);
+        gl.uniform1i(loc, 1);
+      },
+    );
 
     // this.enemyRenderPass.addUniform("jTrans",
     //     (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
@@ -364,13 +466,54 @@ export class MinecraftAnimation extends CanvasAnimation {
     //       gl.uniform4fv(loc, this.enemyMesh!.getBoneRotations());
     //     });
 
-    this.enemyRenderPass.setDrawData(this.ctx.TRIANGLES, this.enemyMesh!.geometry.position.count, this.ctx.UNSIGNED_INT, 0);
+    this.enemyRenderPass.setDrawData(
+      this.ctx.TRIANGLES,
+      this.enemyMesh!.geometry.position.count,
+      this.ctx.UNSIGNED_INT,
+      0,
+    );
     this.enemyRenderPass.setup();
 
-    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x + 2, this.player.position.y - 85, this.player.position.z + 2])));
-    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x - 2, this.player.position.y - 85, this.player.position.z + 2])));
-    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x + 2, this.player.position.y - 85, this.player.position.z - 2])));
-    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x - 2, this.player.position.y - 85, this.player.position.z - 2])));
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x + 2,
+          this.player.position.y - 85,
+          this.player.position.z + 2,
+        ]),
+      ),
+    );
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x - 2,
+          this.player.position.y - 85,
+          this.player.position.z + 2,
+        ]),
+      ),
+    );
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x + 2,
+          this.player.position.y - 85,
+          this.player.position.z - 2,
+        ]),
+      ),
+    );
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x - 2,
+          this.player.position.y - 85,
+          this.player.position.z - 2,
+        ]),
+      ),
+    );
 
     this.enemies[0].mesh.setPose(enemyIdlePose);
     this.enemies[2].mesh.setPose(enemyIdlePose);
@@ -382,13 +525,23 @@ export class MinecraftAnimation extends CanvasAnimation {
     let boneTransData = new Uint8Array(width * height * 4);
 
     for (let i = 0; i < this.enemies.length; i++) {
-        const enemy = this.enemies[i];
-        const boneTrans = enemy.mesh.getBoneTranslationsUi8();
-        boneTransData.set(boneTrans, i * width * 4);
+      const enemy = this.enemies[i];
+      const boneTrans = enemy.mesh.getBoneTranslationsUi8();
+      boneTransData.set(boneTrans, i * width * 4);
     }
 
     gl.bindTexture(gl.TEXTURE_2D, this.enemyBoneTransTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, boneTransData);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      boneTransData,
+    );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -406,7 +559,17 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     gl.bindTexture(gl.TEXTURE_2D, this.enemyBoneRotTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, boneRotData);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      boneRotData,
+    );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -464,12 +627,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(4 * totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const positions = chunk.cubePositions();
       combined.set(positions, offset);
       offset += positions.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set(
+        [block.position.x, block.position.y, block.position.z, 0],
+        offset,
+      );
+      offset += 4;
     }
     return combined;
   }
@@ -479,12 +651,19 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const types = chunk.cubeTypes();
       combined.set(types, offset);
       offset += types.length;
+    }
+    for (const block of this.fallingBlocks) {
+      // TODO: Change to be the true falling block type
+      combined.set([Chunk.blockTypeCoalOre], offset);
+      offset += 1;
     }
     return combined;
   }
@@ -813,10 +992,9 @@ export class MinecraftAnimation extends CanvasAnimation {
       cubeType,
     );
 
-    // TODO: Test falling blocks by checking if block below is empty
     if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
       this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
-      // TODO: Remove block from chunk's map so that its static version is not rendered
+      chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);
