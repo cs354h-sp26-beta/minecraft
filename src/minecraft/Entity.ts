@@ -161,6 +161,7 @@ export class Enemy {
         this.setState(EnemyState.Idle);
       }
     }
+
     this.mesh.setPose(this.targetPose(), Math.pow(0.01, dt));
   }
 }
