@@ -775,7 +775,7 @@ export class Chunk {
     worldX: number,
     worldZ: number,
     yMaxInclusive: number = 100,
-  ): number {
+  ): {type: number, height: number} | undefined {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
@@ -785,15 +785,18 @@ export class Chunk {
       cubeChunkZ < 0 ||
       cubeChunkZ >= this.size
     ) {
-      return -Infinity;
+      return undefined;
     }
 
-    for (let y = yMaxInclusive; y >= 0; y--) {
-      if (this.cubeType(worldX, worldZ, y) !== undefined) {
-        return y;
-      }
+    let y = this.heightMapData[this.size * cubeChunkZ + cubeChunkX]
+    while (y < 100 && this.getLocalCubeType(cubeChunkZ, cubeChunkX, y) !== Chunk.blockTypeAir) {
+      y++;
     }
-    return -Infinity;
+    while (y >= 0 && this.getLocalCubeType(cubeChunkZ, cubeChunkX, y) === Chunk.blockTypeAir) {
+      y--;
+    }
+    return {type: this.getLocalCubeType(cubeChunkZ, cubeChunkX, y), height: y};
+
   }
 
   ///// Cylinder-voxel collision
