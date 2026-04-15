@@ -1402,6 +1402,33 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillText(this.achievementToast.description, x + 12, y + 44);
     ctx.restore();
   }
+
+  private drawAchievementToast(): void {
+    if (this.achievementToast === null) {
+      return;
+    }
+
+    const ctx = this.overlayCtx;
+    const width = 260;
+    const height = 60;
+    const x = this.canvas2d.width - width - 18;
+    const y = this.canvas2d.height - height - 18;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(52, 35, 12, 0.82)";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "#f7d774";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillStyle = "#f7d774";
+    ctx.fillText("Advancement Made!", x + 12, y + 10);
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText(this.achievementToast.title, x + 12, y + 28);
+    ctx.fillStyle = "#ddd3ba";
+    ctx.fillText(this.achievementToast.description, x + 12, y + 44);
+    ctx.restore();
+  }
+
   private drawDeathOverlay(): void {
     const ctx = this.overlayCtx;
     const centerX = this.canvas2d.width / 2;
