@@ -717,54 +717,54 @@ export class Chunk {
   // FIXME: Using this for collisions is not going to work with overhangs.
   // We will likely need to adapt to an API similar to `Player::collidesWithChunk`.
   // I also just don't like the coupling here, but oh well it is a prototype.
-//   public floorHeight(worldX: number, worldZ: number): number {
-//     const [topLeftX, topLeftZ] = this.origin();
+  //   public floorHeight(worldX: number, worldZ: number): number {
+  //     const [topLeftX, topLeftZ] = this.origin();
 
-//     const centerX = Math.round(worldX - topLeftX);
-//     const centerZ = Math.round(worldZ - topLeftZ);
+  //     const centerX = Math.round(worldX - topLeftX);
+  //     const centerZ = Math.round(worldZ - topLeftZ);
 
-//     let floorY = -Infinity;
-//     for (let dx = -1; dx <= 1; dx += 1) {
-//       const cubeChunkX = centerX + dx;
-//       if (cubeChunkX < 0 || cubeChunkX >= this.size) {
-//         continue;
-//       }
+  //     let floorY = -Infinity;
+  //     for (let dx = -1; dx <= 1; dx += 1) {
+  //       const cubeChunkX = centerX + dx;
+  //       if (cubeChunkX < 0 || cubeChunkX >= this.size) {
+  //         continue;
+  //       }
 
-//       for (let dz = -1; dz <= 1; dz += 1) {
-//         const cubeChunkZ = centerZ + dz;
-//         if (cubeChunkZ < 0 || cubeChunkZ >= this.size) {
-//           continue;
-//         }
+  //       for (let dz = -1; dz <= 1; dz += 1) {
+  //         const cubeChunkZ = centerZ + dz;
+  //         if (cubeChunkZ < 0 || cubeChunkZ >= this.size) {
+  //           continue;
+  //         }
 
-//         const cubeWorldX = topLeftX + cubeChunkX;
-//         const cubeWorldZ = topLeftZ + cubeChunkZ;
+  //         const cubeWorldX = topLeftX + cubeChunkX;
+  //         const cubeWorldZ = topLeftZ + cubeChunkZ;
 
-//         // Clamp.
-//         // https://stackoverflow.com/questions/11409895/whats-the-most-elegant-way-to-cap-a-number-to-a-segment
-//         const nearX = Math.max(
-//           cubeWorldX - 0.5,
-//           Math.min(cubeWorldX + 0.5, worldX),
-//         );
-//         const nearZ = Math.max(
-//           cubeWorldZ - 0.5,
-//           Math.min(cubeWorldZ + 0.5, worldZ),
-//         );
+  //         // Clamp.
+  //         // https://stackoverflow.com/questions/11409895/whats-the-most-elegant-way-to-cap-a-number-to-a-segment
+  //         const nearX = Math.max(
+  //           cubeWorldX - 0.5,
+  //           Math.min(cubeWorldX + 0.5, worldX),
+  //         );
+  //         const nearZ = Math.max(
+  //           cubeWorldZ - 0.5,
+  //           Math.min(cubeWorldZ + 0.5, worldZ),
+  //         );
 
-//         // Radial distance.
-//         const rdX = worldX - nearX;
-//         const rdZ = worldZ - nearZ;
-//         const hbr = Player.hitboxRadius;
-//         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
-//           const cubeWorldY = this.topBlockAt(cubeWorldX, cubeWorldZ);
-//           if (cubeWorldY !== -Infinity) {
-//             floorY = Math.max(floorY, cubeWorldY - 0.5);
-//           }
-//         }
-//       }
-//     }
+  //         // Radial distance.
+  //         const rdX = worldX - nearX;
+  //         const rdZ = worldZ - nearZ;
+  //         const hbr = Player.hitboxRadius;
+  //         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
+  //           const cubeWorldY = this.topBlockAt(cubeWorldX, cubeWorldZ);
+  //           if (cubeWorldY !== -Infinity) {
+  //             floorY = Math.max(floorY, cubeWorldY - 0.5);
+  //           }
+  //         }
+  //       }
+  //     }
 
-//     return floorY;
-//   }
+  //     return floorY;
+  //   }
 
   /**
    * Highest occupied block center Y in the world column at (worldX, worldZ).
@@ -775,7 +775,7 @@ export class Chunk {
     worldX: number,
     worldZ: number,
     yMaxInclusive: number = 100,
-  ): {type: number, height: number} | undefined {
+  ): { type: number; height: number } | undefined {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
@@ -788,15 +788,23 @@ export class Chunk {
       return undefined;
     }
 
-    let y = this.heightMapData[this.size * cubeChunkZ + cubeChunkX]
-    while (y < 100 && this.getLocalCubeType(cubeChunkZ, cubeChunkX, y) !== Chunk.blockTypeAir) {
+    let y = this.heightMapData[this.size * cubeChunkZ + cubeChunkX];
+    while (
+      y < 100 &&
+      this.getLocalCubeType(cubeChunkZ, cubeChunkX, y) !== Chunk.blockTypeAir
+    ) {
       y++;
     }
-    while (y >= 0 && this.getLocalCubeType(cubeChunkZ, cubeChunkX, y) === Chunk.blockTypeAir) {
+    while (
+      y >= 0 &&
+      this.getLocalCubeType(cubeChunkZ, cubeChunkX, y) === Chunk.blockTypeAir
+    ) {
       y--;
     }
-    return {type: this.getLocalCubeType(cubeChunkZ, cubeChunkX, y), height: y};
-
+    return {
+      type: this.getLocalCubeType(cubeChunkZ, cubeChunkX, y),
+      height: y,
+    };
   }
 
   ///// Cylinder-voxel collision

@@ -153,7 +153,7 @@ export class GUI implements IGUI {
   /**
    * The callback function for a drag event.
    * This event happens after dragStart and
-   * before dragEnd. 
+   * before dragEnd.
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
@@ -162,8 +162,8 @@ export class GUI implements IGUI {
     }
     if (this._pointerLocked) {
       // Pointer lcoked: movementX/Y gives raw delta
-      const dx = mouse.movementX; 
-      const dy = mouse.movementY; 
+      const dx = mouse.movementX;
+      const dy = mouse.movementY;
       this.camera.rotate(new Vec3([0, 1, 0]), -GUI.rotationSpeed * dx);
       this.camera.rotate(this.camera.right(), -GUI.rotationSpeed * dy);
 
@@ -174,10 +174,10 @@ export class GUI implements IGUI {
   }
 
   /**
-   * performs a raycast from the camera through the given screen 
+   * performs a raycast from the camera through the given screen
    * coordinates and updates cubeSelected
-   * @param x 
-   * @param y 
+   * @param x
+   * @param y
    */
   private raycastFromScreenPos(x: number, y: number): void {
     // Create ray in world coordinates using camera position
@@ -353,11 +353,11 @@ export class GUI implements IGUI {
       if (!this._pointerLocked) {
         canvas.requestPointerLock();
       }
-    })
+    });
 
     document.addEventListener("pointerlockchange", () => {
       this._pointerLocked = document.pointerLockElement === canvas;
-    })
+    });
 
     /* Event listener to stop the right click menu */
     canvas.addEventListener("contextmenu", (event: any) =>

@@ -34,7 +34,7 @@ class Entity {
     hitboxRadius: number,
     hitboxHeight: number,
     health: number = 20,
-    food: number = 20
+    food: number = 20,
   ) {
     this.position = position;
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
