@@ -18,7 +18,13 @@ import {
 } from "./Shaders.js";
 import { Mesh } from "./Mesh.js";
 import { CLoader } from "./AnimationFileLoader.js";
-import {Inventory, ItemAction, ItemStack, itemTypes, registerItemTypes} from "./Inventory.js";
+import {
+  Inventory,
+  ItemAction,
+  ItemStack,
+  itemTypes,
+  registerItemTypes,
+} from "./Inventory.js";
 
 type Achievement = {
   id: string;
@@ -90,7 +96,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /* Overlay information */
   private minimapPixelSize = 135;
-  private minimapColors: Map<number, [number,number,number]>;
+  private minimapColors: Map<number, [number, number, number]>;
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -153,7 +159,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.inventory = new Inventory();
     this.selectedHotbarIdx = 0;
-    
+
     // Load heart icon for health bar
     const heartImg = new Image();
     heartImg.src = "./static/assets/heart.png";
@@ -259,9 +265,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.minimapColors = new Map();
     // index corresponds to block type, value is [r, g, b] color for minimap
     const putColor = (blockType: number, hex: string) => {
-      this.minimapColors.set(blockType,
-          [Number.parseInt(hex.slice(0,2), 16), Number.parseInt(hex.slice(2,4), 16), Number.parseInt(hex.slice(4,6), 16)]);
-    }
+      this.minimapColors.set(blockType, [
+        Number.parseInt(hex.slice(0, 2), 16),
+        Number.parseInt(hex.slice(2, 4), 16),
+        Number.parseInt(hex.slice(4, 6), 16),
+      ]);
+    };
 
     putColor(Chunk.blockTypeDirt, "8b4513");
     putColor(Chunk.blockTypeCobble, "a6a199");
@@ -375,11 +384,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.wasPlayerGrounded = grounded;
   }
 
-
   public giveRandomItem(): void {
     // Give the player a random item from the whole item pool
     const allItemTypes = Array.from(itemTypes.values());
-    const randomItemType = allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
+    const randomItemType =
+      allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
     this.inventory.insertStack(new ItemStack(randomItemType, 1));
   }
 
@@ -1246,7 +1255,9 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public leftClick(cubeSelected: boolean): void {
-    if (!cubeSelected) { return; }
+    if (!cubeSelected) {
+      return;
+    }
 
     const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
     const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
@@ -1278,17 +1289,23 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public rightClick(cubeSelected: boolean) {
     const item = this.heldItem();
-    if (item === null) { return; }
+    if (item === null) {
+      return;
+    }
 
     const itemType = item.itemType!;
     switch (itemType.actionType) {
-      case ItemAction.None: { return; }
+      case ItemAction.None: {
+        return;
+      }
       case ItemAction.Use: {
         itemType.useAction(item!, this.player);
         return;
       }
       case ItemAction.Place: {
-        if (!cubeSelected) { return; }
+        if (!cubeSelected) {
+          return;
+        }
 
         const blockType = itemType.getBlockType();
 
@@ -1302,7 +1319,12 @@ export class MinecraftAnimation extends CanvasAnimation {
         let key = `${chunkX},${chunkZ}`;
         let chunk = this.renderedChunks.get(key)!;
 
-        let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, blockType);
+        let chunkDeltaMap = chunk.changeCubeType(
+          cubeX,
+          cubeZ,
+          cubeY,
+          blockType,
+        );
 
         // Test falling blocks
         if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
@@ -1315,8 +1337,12 @@ export class MinecraftAnimation extends CanvasAnimation {
 
         this.deltaMaps.set(key, chunkDeltaMap);
         this.blocksPlaced++;
-        
-        this.inventory.editSlotCount(this.selectedHotbarIdx, 0, item!.count - 1);
+
+        this.inventory.editSlotCount(
+          this.selectedHotbarIdx,
+          0,
+          item!.count - 1,
+        );
       }
     }
   }
@@ -1375,32 +1401,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       ctx.fillText(achievement.description, x + 26, rowY + 14);
       ctx.font = "14px monospace";
     });
-  }
-
-  private drawAchievementToast(): void {
-    if (this.achievementToast === null) {
-      return;
-    }
-
-    const ctx = this.overlayCtx;
-    const width = 260;
-    const height = 60;
-    const x = this.canvas2d.width - width - 18;
-    const y = this.canvas2d.height - height - 18;
-
-    ctx.save();
-    ctx.fillStyle = "rgba(52, 35, 12, 0.82)";
-    ctx.fillRect(x, y, width, height);
-    ctx.strokeStyle = "#f7d774";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, width, height);
-    ctx.fillStyle = "#f7d774";
-    ctx.fillText("Advancement Made!", x + 12, y + 10);
-    ctx.fillStyle = "#fff6d7";
-    ctx.fillText(this.achievementToast.title, x + 12, y + 28);
-    ctx.fillStyle = "#ddd3ba";
-    ctx.fillText(this.achievementToast.description, x + 12, y + 44);
-    ctx.restore();
   }
 
   private drawAchievementToast(): void {
@@ -1499,10 +1499,17 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
 
         const topBlock = chunk.topBlockAt(worldX, worldZ);
-        const color = !topBlock ? undefined : this.minimapColors.get(topBlock.type)
+        const color = !topBlock
+          ? undefined
+          : this.minimapColors.get(topBlock.type);
         if (!topBlock || !color) {
           ctx.fillStyle = "#C7C0B7";
-          ctx.fillRect(i * scale, j * scale, Math.ceil(scale), Math.ceil(scale));
+          ctx.fillRect(
+            i * scale,
+            j * scale,
+            Math.ceil(scale),
+            Math.ceil(scale),
+          );
           continue;
         }
 
@@ -1555,9 +1562,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.translate(size / 2, size / 2);
     ctx.rotate(angle);
     ctx.beginPath();
-    ctx.moveTo(0*scale, 6*scale);
-    ctx.lineTo(-4*scale, -4*scale);
-    ctx.lineTo(4*scale, -4*scale);
+    ctx.moveTo(0 * scale, 6 * scale);
+    ctx.lineTo(-4 * scale, -4 * scale);
+    ctx.lineTo(4 * scale, -4 * scale);
     ctx.closePath();
     ctx.fillStyle = "#0a9e2e";
     ctx.fill();
@@ -1569,7 +1576,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       const ez = enemy.position.z - playerPos.z + size / 2;
       if (ex >= 0 && ex < size && ez >= 0 && ez < size) {
         ctx.fillStyle = "#ff0000";
-        ctx.fillRect(ex - scale, ez - scale, 2*scale, 2*scale);
+        ctx.fillRect(ex - scale, ez - scale, 2 * scale, 2 * scale);
       }
     });
 
@@ -1624,16 +1631,31 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (item) {
         const img = item.itemType.img!;
         if (img) {
-          ctx.drawImage(img, i * (slotSize + 10) + 9, 9, slotSize - 18, slotSize - 18);
+          ctx.drawImage(
+            img,
+            i * (slotSize + 10) + 9,
+            9,
+            slotSize - 18,
+            slotSize - 18,
+          );
         } else {
-            // draw a rectangle for items without icons
-            ctx.fillStyle = "#d81cd5";
-            ctx.fillRect(i * (slotSize + 10) + 9, 9, slotSize - 18, slotSize - 18);
+          // draw a rectangle for items without icons
+          ctx.fillStyle = "#d81cd5";
+          ctx.fillRect(
+            i * (slotSize + 10) + 9,
+            9,
+            slotSize - 18,
+            slotSize - 18,
+          );
         }
 
         if (item.count > 1) {
           ctx.fillStyle = "#fff6d7";
-          ctx.fillText(String(item.count), i * (slotSize + 10) + slotSize - 8, slotSize - 6);
+          ctx.fillText(
+            String(item.count),
+            i * (slotSize + 10) + slotSize - 8,
+            slotSize - 6,
+          );
         }
       }
     }
