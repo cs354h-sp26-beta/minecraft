@@ -1723,15 +1723,82 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
+  private static readonly SLOT_SIZE = 60;
+  private static readonly SLOT_GAP = 10;
+  private static readonly INV_PADDING = 15;
+  private static readonly HOTBAR_GAP = 30;
+
+  /** Iterates over all inventory slots, calling cb with (col, invRow, x, y) relative to grid origin. */
+  private forEachInventorySlot(cb: (col: number, invRow: number, x: number, y: number) => void): void {
+    const { SLOT_SIZE, SLOT_GAP, HOTBAR_GAP } = MinecraftAnimation;
+    const cols = Inventory.width;
+    const rows = Inventory.height;
+
+    for (let row = 0; row < rows; row++) {
+      const invRow = row < rows - 1 ? row + 1 : 0;
+      const y = row < rows - 1
+        ? row * (SLOT_SIZE + SLOT_GAP)
+        : row * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
+
+      for (let col = 0; col < cols; col++) {
+        cb(col, invRow, col * (SLOT_SIZE + SLOT_GAP), y);
+      }
+    }
+  }
+
+  private inventoryGridOrigin(): [number, number] {
+    const { SLOT_SIZE, SLOT_GAP, HOTBAR_GAP } = MinecraftAnimation;
+    const cols = Inventory.width;
+    const rows = Inventory.height;
+    const gridWidth = cols * SLOT_SIZE + (cols - 1) * SLOT_GAP;
+    const gridHeight = rows * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
+    return [
+      (this.canvas2d.width - gridWidth) / 2,
+      (this.canvas2d.height - gridHeight) / 2,
+    ];
+  }
+
+  /** Draws a single inventory slot. */
+  private drawSlot(ctx: CanvasRenderingContext2D, x: number, y: number, col: number, invRow: number, highlight: boolean): void {
+    const { SLOT_SIZE } = MinecraftAnimation;
+
+    ctx.beginPath();
+    ctx.roundRect(x, y, SLOT_SIZE, SLOT_SIZE, 4);
+    ctx.fillStyle = "rgba(15,15,25,0.6)";
+    ctx.fill();
+    ctx.strokeStyle = highlight ? "#e1d8b7" : "#1b1717";
+    ctx.lineWidth = highlight ? 4 : 2;
+    ctx.stroke();
+
+    const item = this.inventory.getItemStack(col, invRow);
+    if (item) {
+      const img = item.itemType!.img;
+      if (img) {
+        ctx.drawImage(img!, x + 9, y + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
+      } else {
+        ctx.fillStyle = "#d81cd5";
+        ctx.fillRect(x + 9, y + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
+      }
+
+      if (item.count > 1) {
+        ctx.fillStyle = "#fff6d7";
+        ctx.font = "16px monospace";
+        ctx.textBaseline = "bottom";
+        ctx.textAlign = "right";
+        ctx.fillText(String(item.count), x + SLOT_SIZE - 8, y + SLOT_SIZE - 6);
+      }
+    }
+  }
+
   private drawHotbar(): void {
     if (this.isInInventory) { return; }
 
+    const { SLOT_SIZE, SLOT_GAP } = MinecraftAnimation;
     const ctx = this.overlayCtx;
-    const hotbarSize = Inventory.width;
-    const slotSize = 60;
-    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
+    const cols = Inventory.width;
+    const hotbarWidth = cols * SLOT_SIZE + (cols - 1) * SLOT_GAP;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
+    const hotbarY = this.canvas2d.height - SLOT_SIZE - 35;
 
     const selectedItem = this.inventory.getItemStack(this.selectedHotbarIdx, 0);
     ctx.font = "16px monospace";
@@ -1742,7 +1809,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // background (extended upward for title)
     ctx.beginPath();
-    ctx.roundRect(-15, -15 - titleHeight, hotbarWidth + 30, slotSize + 30 + titleHeight, 6);
+    ctx.roundRect(-15, -15 - titleHeight, hotbarWidth + 30, SLOT_SIZE + 30 + titleHeight, 6);
     ctx.strokeStyle = "#737981";
     ctx.lineWidth = 4;
     ctx.fillStyle = "rgba(21,27,41,0.6)";
@@ -1757,82 +1824,29 @@ export class MinecraftAnimation extends CanvasAnimation {
       ctx.fillText(selectedItem!.itemType.name, hotbarWidth / 2, -8);
     }
 
-    // slots
-    ctx.font = "16px monospace";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "right";
-
-    for (let i = 0; i < hotbarSize; i++) {
-      ctx.beginPath();
-      ctx.roundRect(i * (slotSize + 10), 0, slotSize, slotSize, 4);
-      ctx.fillStyle = "rgba(15,15,25,0.6)";
-      ctx.fill();
-      ctx.strokeStyle = "#1b1717";
-      ctx.lineWidth = 2;
-      if (i === this.selectedHotbarIdx) {
-        ctx.strokeStyle = "#e1d8b7";
-        ctx.lineWidth = 4;
-      }
-      ctx.stroke();
-
-      // item icons
-      const item = this.inventory.getItemStack(i, 0);
-      if (item) {
-        const img = item.itemType.img!;
-        if (img) {
-          ctx.drawImage(
-            img,
-            i * (slotSize + 10) + 9,
-            9,
-            slotSize - 18,
-            slotSize - 18,
-          );
-        } else {
-          // draw a rectangle for items without icons
-          ctx.fillStyle = "#d81cd5";
-          ctx.fillRect(
-            i * (slotSize + 10) + 9,
-            9,
-            slotSize - 18,
-            slotSize - 18,
-          );
-        }
-
-        if (item.count > 1) {
-          ctx.fillStyle = "#fff6d7";
-          ctx.fillText(
-            String(item.count),
-            i * (slotSize + 10) + slotSize - 8,
-            slotSize - 6,
-          );
-        }
-      }
+    for (let i = 0; i < cols; i++) {
+      this.drawSlot(ctx, i * (SLOT_SIZE + SLOT_GAP), 0, i, 0, i === this.selectedHotbarIdx);
     }
 
     ctx.restore();
   }
 
   private drawInventory(): void {
+    const { SLOT_SIZE, SLOT_GAP, INV_PADDING, HOTBAR_GAP } = MinecraftAnimation;
     const ctx = this.overlayCtx;
     const cols = Inventory.width;
     const rows = Inventory.height;
-    const slotSize = 60;
-    const gap = 10;
-    const padding = 15;
-    const hotbarGap = 30;
+    const gridWidth = cols * SLOT_SIZE + (cols - 1) * SLOT_GAP;
+    const gridHeight = rows * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
 
-    const gridWidth = cols * slotSize + (cols - 1) * gap;
-    const gridHeight =
-      rows * slotSize + (rows - 2) * gap + hotbarGap;
-    const panelX = (this.canvas2d.width - gridWidth) / 2 - padding;
-    const panelY = (this.canvas2d.height - gridHeight) / 2 - padding;
+    const [originX, originY] = this.inventoryGridOrigin();
 
     ctx.save();
-    ctx.translate(panelX + padding, panelY + padding);
+    ctx.translate(originX, originY);
 
     // background
     ctx.beginPath();
-    ctx.roundRect(-padding, -padding, gridWidth + padding * 2, gridHeight + padding * 2, 6);
+    ctx.roundRect(-INV_PADDING, -INV_PADDING, gridWidth + INV_PADDING * 2, gridHeight + INV_PADDING * 2, 6);
     ctx.strokeStyle = "#737981";
     ctx.lineWidth = 4;
     ctx.fillStyle = "rgba(21,27,41,0.85)";
@@ -1844,94 +1858,27 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillStyle = "#e1d8b7";
     ctx.textBaseline = "bottom";
     ctx.textAlign = "left";
-    ctx.fillText("Inventory", 0, -padding - 4);
+    ctx.fillText("Inventory", 0, -INV_PADDING - 4);
 
-    ctx.font = "16px monospace";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "right";
-
-    // Draw rows: rows 1-3 (main inventory) then row 0 (hotbar) at the bottom
-    for (let row = 0; row < rows; row++) {
-      // Map display row to inventory row: top 3 rows are inv rows 1-3, bottom is row 0 (hotbar)
-      const invRow = row < rows - 1 ? row + 1 : 0;
-      const yOffset =
-        row < rows - 1
-          ? row * (slotSize + gap)
-          : row * slotSize + (rows - 2) * gap + hotbarGap;
-
-      for (let col = 0; col < cols; col++) {
-        const x = col * (slotSize + gap);
-
-        ctx.beginPath();
-        ctx.roundRect(x, yOffset, slotSize, slotSize, 4);
-        ctx.fillStyle = "rgba(15,15,25,0.6)";
-        ctx.fill();
-        ctx.strokeStyle = "#1b1717";
-        ctx.lineWidth = 2;
-        if (invRow === 0 && col === this.selectedHotbarIdx) {
-          ctx.strokeStyle = "#e1d8b7";
-          ctx.lineWidth = 4;
-        }
-        ctx.stroke();
-
-        const item = this.inventory.getItemStack(col, invRow);
-        if (item) {
-          const img = item.itemType.img!;
-          if (img) {
-            ctx.drawImage(img, x + 9, yOffset + 9, slotSize - 18, slotSize - 18);
-          } else {
-            ctx.fillStyle = "#d81cd5";
-            ctx.fillRect(x + 9, yOffset + 9, slotSize - 18, slotSize - 18);
-          }
-
-          if (item.count > 1) {
-            ctx.fillStyle = "#fff6d7";
-            ctx.fillText(
-              String(item.count),
-              x + slotSize - 8,
-              yOffset + slotSize - 6,
-            );
-          }
-        }
-      }
-    }
+    this.forEachInventorySlot((col, invRow, x, y) => {
+      this.drawSlot(ctx, x, y, col, invRow, invRow === 0 && col === this.selectedHotbarIdx);
+    });
 
     ctx.restore();
   }
 
   public inventoryClick(mouseX: number, mouseY: number, button: number): void {
-    const cols = Inventory.width;
-    const rows = Inventory.height;
-    const slotSize = 60;
-    const gap = 10;
-
-    const hotbarGap = 30;
-    const gridWidth = cols * slotSize + (cols - 1) * gap;
-    const gridHeight = rows * slotSize + (rows - 2) * gap + hotbarGap;
-    const originX = (this.canvas2d.width - gridWidth) / 2;
-    const originY = (this.canvas2d.height - gridHeight) / 2;
-
-    // Position relative to inventory grid origin
+    const { SLOT_SIZE } = MinecraftAnimation;
+    const [originX, originY] = this.inventoryGridOrigin();
     const relX = mouseX - originX;
     const relY = mouseY - originY;
 
-    for (let row = 0; row < rows; row++) {
-      const invRow = row < rows - 1 ? row + 1 : 0;
-      const yOffset =
-        row < rows - 1
-          ? row * (slotSize + gap)
-          : row * slotSize + (rows - 2) * gap + hotbarGap;
-
-      for (let col = 0; col < cols; col++) {
-        const x = col * (slotSize + gap);
-
-        if (relX >= x && relX < x + slotSize &&
-            relY >= yOffset && relY < yOffset + slotSize) {
-          this.onInventorySlotClick(col, invRow, button);
-          return;
-        }
+    this.forEachInventorySlot((col, invRow, x, y) => {
+      if (relX >= x && relX < x + SLOT_SIZE &&
+          relY >= y && relY < y + SLOT_SIZE) {
+        this.onInventorySlotClick(col, invRow, button);
       }
-    }
+    });
   }
 
   private onInventorySlotClick(col: number, row: number, button: number): void {
