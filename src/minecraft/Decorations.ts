@@ -14,6 +14,8 @@ export interface DecorBuffer {
   types: Float32Array;
   angles: Float32Array;
   tilts: Float32Array;
+  treeCubePositions: Float32Array;
+  treeCubeTypes: Float32Array;
   count: number;
 }
 
@@ -25,11 +27,15 @@ type ColumnSample = {
 
 export class DecorationGenerator {
   private static readonly maxInstancesPerChunk = 260;
+  public static readonly blockTypeWood = 20;
+  public static readonly blockTypeLeaves = 21;
 
   public generateForChunk(chunkKey: string, chunk: Chunk): DecorBuffer {
     const columnSamples = this.sampleColumns(chunk);
 
     const instances: ColumnSample[] = [];
+    const treeCubePositions: number[] = [];
+    const treeCubeTypes: number[] = [];
     for (const sample of columnSamples.values()) {
       if (instances.length >= DecorationGenerator.maxInstancesPerChunk) {
         break;
@@ -44,6 +50,12 @@ export class DecorationGenerator {
       if (placementChance > threshold) {
         continue;
       }
+      const seedBase = `${chunkKey}|${sample.x}|${sample.z}`;
+      const type = this.pickType(seedBase, sample.topY);
+      if (type === DecorType.Tree) {
+        this.addTreeCubes(sample, seedBase, treeCubePositions, treeCubeTypes);
+        continue;
+      }
       instances.push(sample);
     }
 
@@ -55,6 +67,8 @@ export class DecorationGenerator {
         types: new Float32Array(0),
         angles: new Float32Array(0),
         tilts: new Float32Array(0),
+        treeCubePositions: new Float32Array(treeCubePositions),
+        treeCubeTypes: new Float32Array(treeCubeTypes),
         count: 0,
       };
     }
@@ -85,7 +99,7 @@ export class DecorationGenerator {
       variants[idx] = randomVariant;
       types[idx] = type;
       angles[idx] = randomAngle * Math.PI * 2;
-      const tiltRange = type === DecorType.Tree ? 0.12 : 0.3;
+      const tiltRange = type === DecorType.Grass ? 0.12 : 0.04;
       tilts[idx] = (randomTilt - 0.5) * tiltRange;
     });
 
@@ -96,8 +110,63 @@ export class DecorationGenerator {
       types,
       angles,
       tilts,
+      treeCubePositions: new Float32Array(treeCubePositions),
+      treeCubeTypes: new Float32Array(treeCubeTypes),
       count: instances.length,
     };
+  }
+
+  private addTreeCubes(
+    sample: ColumnSample,
+    seed: string,
+    positions: number[],
+    types: number[],
+  ): void {
+    const trunkHeight = 3 + Math.floor(this.rand01(`${seed}|trunk`) * 2);
+    const baseY = Math.ceil(sample.topY);
+    for (let y = 0; y < trunkHeight; y++) {
+      this.pushTreeCube(
+        positions,
+        types,
+        sample.x,
+        baseY + y,
+        sample.z,
+        DecorationGenerator.blockTypeWood,
+      );
+    }
+
+    const leafBase = baseY + trunkHeight - 1;
+    for (let dy = 0; dy <= 2; dy++) {
+      const radius = dy === 2 ? 1 : 2;
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          const corner = Math.abs(dx) === radius && Math.abs(dz) === radius;
+          if (corner && radius === 2) {
+            continue;
+          }
+          this.pushTreeCube(
+            positions,
+            types,
+            sample.x + dx,
+            leafBase + dy,
+            sample.z + dz,
+            DecorationGenerator.blockTypeLeaves,
+          );
+        }
+      }
+    }
+  }
+
+  private pushTreeCube(
+    positions: number[],
+    types: number[],
+    x: number,
+    y: number,
+    z: number,
+    type: number,
+  ): void {
+    positions.push(x, y, z, 0);
+    types.push(type);
   }
 
   private sampleColumns(chunk: Chunk): Map<string, ColumnSample> {
@@ -140,7 +209,7 @@ export class DecorationGenerator {
 
   private pickType(seed: string, worldY: number): DecorType {
     const r = this.rand01(`${seed}|type`);
-    if (worldY > 50 && r < 0.04) {
+    if (worldY > 12 && r < 0.045) {
       return DecorType.Tree;
     }
     if (r < 0.58) {
@@ -158,14 +227,14 @@ export class DecorationGenerator {
   private scaleForType(type: DecorType, randomScale: number): number {
     switch (type) {
       case DecorType.Tree:
-        return 1.6 + randomScale * 0.8;
+        return 1.8 + randomScale * 0.7;
       case DecorType.Rock:
-        return 0.55 + randomScale * 0.35;
+        return 0.5 + randomScale * 0.25;
       case DecorType.Shrub:
-        return 0.45 + randomScale * 0.3;
+        return 0.42 + randomScale * 0.22;
       case DecorType.Grass:
       default:
-        return 0.25 + randomScale * 0.2;
+        return 0.18 + randomScale * 0.14;
     }
   }
 

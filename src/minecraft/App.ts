@@ -807,6 +807,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    for (const key of this.renderedChunks.keys()) {
+      const decor = this.decorationCache.get(key);
+      if (decor) {
+        totalCubes += decor.treeCubeTypes.length;
+      }
+    }
     totalCubes += this.fallingBlocks.length;
 
     const combined = new Float32Array(4 * totalCubes);
@@ -815,6 +821,14 @@ export class MinecraftAnimation extends CanvasAnimation {
       const positions = chunk.cubePositions();
       combined.set(positions, offset);
       offset += positions.length;
+    }
+    for (const key of this.renderedChunks.keys()) {
+      const decor = this.decorationCache.get(key);
+      if (!decor || decor.treeCubePositions.length === 0) {
+        continue;
+      }
+      combined.set(decor.treeCubePositions, offset);
+      offset += decor.treeCubePositions.length;
     }
     for (const block of this.fallingBlocks) {
       combined.set(
@@ -831,6 +845,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    for (const key of this.renderedChunks.keys()) {
+      const decor = this.decorationCache.get(key);
+      if (decor) {
+        totalCubes += decor.treeCubeTypes.length;
+      }
+    }
     totalCubes += this.fallingBlocks.length;
 
     const combined = new Float32Array(totalCubes);
@@ -839,6 +859,14 @@ export class MinecraftAnimation extends CanvasAnimation {
       const types = chunk.cubeTypes();
       combined.set(types, offset);
       offset += types.length;
+    }
+    for (const key of this.renderedChunks.keys()) {
+      const decor = this.decorationCache.get(key);
+      if (!decor || decor.treeCubeTypes.length === 0) {
+        continue;
+      }
+      combined.set(decor.treeCubeTypes, offset);
+      offset += decor.treeCubeTypes.length;
     }
     for (const block of this.fallingBlocks) {
       combined.set([block.type], offset);

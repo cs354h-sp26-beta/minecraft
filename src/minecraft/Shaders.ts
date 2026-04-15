@@ -124,6 +124,30 @@ const dirtTexture = `
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
         return textureColor;
     }
+
+    vec3 makeGrassBlock(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float noise = fbm(pixelUV * 6.0 + vec2(1.7), 2) + hash(pixelUV + vec2(3.0)) * 0.2;
+        return mix(vec3(0.12, 0.46, 0.12), vec3(0.28, 0.68, 0.20), noise);
+    }
+`;
+
+const treeTextures = `
+    vec3 makeWood(vec2 uv, vec3 world) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float grain = valueNoise(vec2(pixelUV.x * 3.0, world.y * 0.35));
+        float stripe = step(0.55, fract(pixelUV.x * 5.0 + grain * 0.45));
+        return mix(vec3(0.28, 0.15, 0.07), vec3(0.47, 0.28, 0.12), stripe);
+    }
+
+    vec3 makeLeaves(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 8.0) / 8.0;
+        float noise = fbm(pixelWorld.xz * 3.0 + vec2(pixelWorld.y), 2);
+        float speckle = hash(floor(uv * 8.0) + vec2(world.x, world.z));
+        vec3 darkLeaf = vec3(0.05, 0.27, 0.07);
+        vec3 lightLeaf = vec3(0.18, 0.48, 0.13);
+        return mix(darkLeaf, lightLeaf, noise * 0.7 + speckle * 0.25);
+    }
 `;
 
 const waterTexture = `
@@ -241,6 +265,8 @@ export const blankCubeFSText = `
 
     ${dirtTexture}
 
+    ${treeTextures}
+
     ${cobbleTexture}
 
     ${waterTexture}
@@ -260,11 +286,19 @@ export const blankCubeFSText = `
         vec3 textureColor = vec3(1.0, 0.5, 1.0);
 
         if (vBlockType == 0.0) {
-            textureColor = makeDirt(uv);
+            if (normal.y > 0.5) {
+                textureColor = makeGrassBlock(uv);
+            } else {
+                textureColor = makeDirt(uv);
+            }
         } else if (vBlockType == 1.0) {
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
+        } else if (vBlockType == 20.0) {
+            textureColor = makeWood(uv, wsPos.xyz);
+        } else if (vBlockType == 21.0) {
+            textureColor = makeLeaves(uv, wsPos.xyz);
         } else {
             vec3 oreColor = vec3(0.9, 0.1, 0.2);
             textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
@@ -313,7 +347,23 @@ export const decorBillboardVSText = `
         float swayRange = mix(0.015, 0.07, clamp(aType * 0.25, 0.0, 1.0));
         vec3 swayOffset = rotatedRight * sway * swayRange * aQuadPos.y;
 
-        vec3 billboardOffset = rotatedRight * (aQuadPos.x * aScale) + leanedUp * (aQuadPos.y * aScale);
+        float widthScale = 1.0;
+        float heightScale = 1.0;
+        if (aType < 0.5) {
+            widthScale = 0.62;
+            heightScale = 0.9;
+        } else if (aType < 1.5) {
+            widthScale = 0.95;
+            heightScale = 0.72;
+        } else if (aType < 2.5) {
+            widthScale = 0.9;
+            heightScale = 0.42;
+        } else {
+            widthScale = 0.82;
+            heightScale = 1.35;
+        }
+
+        vec3 billboardOffset = rotatedRight * (aQuadPos.x * aScale * widthScale) + leanedUp * (aQuadPos.y * aScale * heightScale);
         vec3 world = aInstancePos.xyz + billboardOffset + swayOffset;
         vWorldPos = world;
         gl_Position = uProj * uView * vec4(world, 1.0);
@@ -337,45 +387,108 @@ export const decorBillboardFSText = `
 
     ${noiseUtils}
 
+    float pixelNoise(vec2 uv, float scale) {
+        vec2 cell = floor(uv * scale);
+        return hash(cell + vec2(vVariant * 31.7, vVariant * 11.3));
+    }
+
+    float grassMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float bladeA = step(5.0, x) * step(x, 6.0) * step(y, 11.0);
+        float bladeB = step(8.0, x) * step(x, 9.0) * step(y, 14.0);
+        float bladeC = step(11.0, x) * step(x, 12.0) * step(y, 9.0);
+        float bladeD = step(2.0, x) * step(x, 3.0) * step(y, 7.0);
+        float base = step(y, 2.0) * step(2.0, x) * step(x, 13.0);
+        return clamp(bladeA + bladeB + bladeC + bladeD + base, 0.0, 1.0);
+    }
+
+    float shrubMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(12.0, 12.0));
+        float x = p.x;
+        float y = p.y;
+        float lower = step(2.0, x) * step(x, 9.0) * step(1.0, y) * step(y, 6.0);
+        float upper = step(3.0, x) * step(x, 8.0) * step(6.0, y) * step(y, 9.0);
+        float sideL = step(1.0, x) * step(x, 2.0) * step(3.0, y) * step(y, 5.0);
+        float sideR = step(9.0, x) * step(x, 10.0) * step(3.0, y) * step(y, 5.0);
+        float hole = step(0.92, pixelNoise(uv + vec2(3.0, 1.0), 8.0));
+        return clamp(lower + upper + sideL + sideR - hole, 0.0, 1.0);
+    }
+
+    float rockMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(12.0, 12.0));
+        float x = p.x;
+        float y = p.y;
+        float base = step(2.0, x) * step(x, 9.0) * step(y, 3.0);
+        float mid = step(3.0, x) * step(x, 8.0) * step(3.0, y) * step(y, 5.0);
+        float top = step(5.0, x) * step(x, 7.0) * step(6.0, y) * step(y, 6.0);
+        return clamp(base + mid + top, 0.0, 1.0);
+    }
+
+    float treeMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float trunk = step(7.0, x) * step(x, 8.0) * step(y, 8.0);
+        float leavesBottom = step(3.0, x) * step(x, 12.0) * step(6.0, y) * step(y, 10.0);
+        float leavesMid = step(4.0, x) * step(x, 11.0) * step(10.0, y) * step(y, 13.0);
+        float leavesTop = step(6.0, x) * step(x, 9.0) * step(14.0, y) * step(y, 15.0);
+        float notch = step(0.95, pixelNoise(uv + vec2(12.0, 6.0), 7.0));
+        return clamp(trunk + leavesBottom + leavesMid + leavesTop - notch, 0.0, 1.0);
+    }
+
     vec3 shadeGrass(vec2 uv) {
-        float blade = fbm(uv * 6.0 + vec2(vVariant * 5.7), 2);
-        vec3 base = vec3(0.16, 0.6, 0.16);
-        vec3 tip = vec3(0.32, 0.9, 0.34);
-        return mix(base, tip, blade);
+        float blade = pixelNoise(uv + vec2(vVariant * 5.7), 8.0);
+        vec3 base = vec3(0.08, 0.42, 0.10);
+        vec3 tip = vec3(0.22, 0.78, 0.22);
+        return mix(base, tip, blade + uv.y * 0.35);
     }
 
     vec3 shadeShrub(vec2 uv) {
-        float detail = fbm(uv * 5.0 + vVariant * 3.0, 2);
-        vec3 shadow = vec3(0.12, 0.3, 0.11);
-        vec3 highlight = vec3(0.4, 0.7, 0.25);
+        float detail = pixelNoise(uv + vVariant * 3.0, 10.0);
+        vec3 shadow = vec3(0.06, 0.24, 0.08);
+        vec3 highlight = vec3(0.22, 0.52, 0.18);
         return mix(shadow, highlight, detail);
     }
 
     vec3 shadeRock(vec2 uv) {
-        float detail = fbm(uv * 7.0 + vVariant * 4.0, 3);
-        vec3 base = vec3(0.58, 0.56, 0.55);
-        vec3 highlight = vec3(0.8, 0.78, 0.74);
+        float detail = pixelNoise(uv + vVariant * 4.0, 9.0);
+        vec3 base = vec3(0.42, 0.41, 0.39);
+        vec3 highlight = vec3(0.72, 0.7, 0.66);
         return mix(base, highlight, detail);
     }
 
     vec3 shadeTree(vec2 uv) {
-        if (uv.y < 0.3) {
-            return mix(vec3(0.25, 0.16, 0.08), vec3(0.36, 0.23, 0.12), uv.y * 3.0);
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float trunkMask = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 8.0);
+        if (trunkMask > 0.5) {
+            float bark = pixelNoise(vec2(uv.x * 0.3, uv.y), 10.0);
+            return mix(vec3(0.24, 0.14, 0.07), vec3(0.42, 0.26, 0.12), bark);
         }
-        float foliage = fbm(vec2(uv.x * 3.5, uv.y * 4.5) + vVariant * 5.0, 3);
-        return mix(vec3(0.12, 0.34, 0.12), vec3(0.22, 0.55, 0.19), foliage);
+        float foliage = pixelNoise(uv + vVariant * 5.0, 9.0);
+        return mix(vec3(0.05, 0.24, 0.07), vec3(0.16, 0.46, 0.14), foliage);
     }
 
     void main() {
         vec3 color = vec3(0.5);
+        float mask = 0.0;
         if (vType < 0.5) {
+            mask = grassMask(vUV);
             color = shadeGrass(vUV);
         } else if (vType < 1.5) {
+            mask = shrubMask(vUV);
             color = shadeShrub(vUV);
         } else if (vType < 2.5) {
+            mask = rockMask(vUV);
             color = shadeRock(vUV);
         } else {
+            mask = treeMask(vUV);
             color = shadeTree(vUV);
+        }
+
+        if (mask < 0.5) {
+            discard;
         }
 
         gl_FragColor = vec4(color, 1.0);
