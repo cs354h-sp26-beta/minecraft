@@ -18,6 +18,7 @@ import {
 } from "./Shaders.js";
 import { Mesh } from "./Mesh.js";
 import { CLoader } from "./AnimationFileLoader.js";
+import {Inventory, ItemAction, ItemStack, itemTypes, registerItemTypes} from "./Inventory.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
@@ -58,6 +59,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private enemies: Enemy[];
 
+  /* Inventory */
+  private inventory: Inventory;
+  private selectedHotbarIdx: number;
+
   /* Overlay information */
   private minimapPixelSize = 135;
   private minimapColors = [ // index corresponds to block type, value is [r, g, b] color for minimap
@@ -82,6 +87,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.ctx = Debugger.makeDebugContext(this.ctx);
     const gl = this.ctx;
+
+    registerItemTypes();
 
     this.gui = new GUI(this.canvas2d, this);
     this.chunkCache = new LruCache();
@@ -115,6 +122,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
+
+    this.inventory = new Inventory();
+    this.selectedHotbarIdx = 0;
   }
 
   /**
@@ -124,6 +134,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui.reset();
 
     this.player.position = this.gui.getCamera().pos();
+  }
+
+  public giveRandomItem(): void {
+    // Give the player a random item from the whole item pool
+    const allItemTypes = Array.from(itemTypes.values());
+    const randomItemType = allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
+    this.inventory.insertStack(new ItemStack(randomItemType, 1));
   }
 
   /**
@@ -933,7 +950,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     return hit;
   }
 
-  public breakSelectedBlock(): number | undefined {
+  public leftClick(cubeSelected: boolean): void {
+    if (!cubeSelected) { return; }
+
     const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
     const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
     let key = `${chunkX},${chunkZ}`;
@@ -953,30 +972,49 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.deltaMaps.set(key, chunkDeltaMap);
     this.numBlocksAddedMap.set(key, this.numBlocksAddedMap.get(key) ?? 0 - 1);
-    return brokenCubeType;
+
+    this.inventory.insertStack(ItemStack.dropsFrom(brokenCubeType ?? -1));
   }
 
-  public placeBlock(cubeType: number) {
-    // Place new cube based on side of cube that mouse is pointing at
-    const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
-    const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
-    const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
+  public rightClick(cubeSelected: boolean) {
+    const item = this.heldItem();
+    if (item === null) { return; }
 
-    const chunkX = this.worldToChunkCoord(cubeX);
-    const chunkZ = this.worldToChunkCoord(cubeZ);
-    let key = `${chunkX},${chunkZ}`;
-    let chunk = this.renderedChunks.get(key)!;
+    const itemType = item.itemType!;
+    switch (itemType.actionType) {
+      case ItemAction.None: { return; }
+      case ItemAction.Use: {
+        itemType.useAction(item!, this.player);
+        return;
+      }
+      case ItemAction.Place: {
+        if (!cubeSelected) { return; }
 
-    let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
+        const blockType = itemType.getBlockType();
 
-    // TODO: Test falling blocks by checking if block below is empty
-    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
-      this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
-      // TODO: Remove block from chunk's map so that its static version is not rendered
+        // Place new cube based on side of cube that mouse is pointing at
+        const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
+        const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
+        const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
+
+        const chunkX = this.worldToChunkCoord(cubeX);
+        const chunkZ = this.worldToChunkCoord(cubeZ);
+        let key = `${chunkX},${chunkZ}`;
+        let chunk = this.renderedChunks.get(key)!;
+
+        let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, blockType);
+
+        // TODO: Test falling blocks by checking if block below is empty
+        if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
+          this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
+          // TODO: Remove block from chunk's map so that its static version is not rendered
+        }
+
+        this.deltaMaps.set(key, chunkDeltaMap);
+        this.numBlocksAddedMap.set(key, this.numBlocksAddedMap.get(key) ?? 0 + 1);
+        this.inventory.editSlotCount(this.selectedHotbarIdx, 0, item!.count - 1);
+      }
     }
-
-    this.deltaMaps.set(key, chunkDeltaMap);
-    this.numBlocksAddedMap.set(key, this.numBlocksAddedMap.get(key) ?? 0 + 1);
   }
 
   private drawOverlay(): void {
@@ -997,6 +1035,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillText(timeLine, x, y);
 
     this.drawMinimap();
+    this.drawHotbar();
 
     ctx.restore();
   }
@@ -1120,6 +1159,74 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.strokeRect(0, 0, size, size);
 
     ctx.restore();
+  }
+
+  private drawHotbar(): void {
+    const ctx = this.overlayCtx;
+    const hotbarSize = Inventory.width;
+    const slotSize = 80;
+    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
+    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
+    const hotbarY = this.canvas2d.height - slotSize - 35;
+
+    ctx.save();
+    ctx.translate(hotbarX, hotbarY);
+
+    // background
+    ctx.beginPath();
+    ctx.roundRect(-15, -15, hotbarWidth + 30, slotSize + 30, 6);
+    ctx.strokeStyle = "#737981";
+    ctx.lineWidth = 4;
+    ctx.fillStyle = "rgba(21,27,41,0.6)";
+    ctx.fill();
+    ctx.stroke();
+
+    // slots
+    ctx.font = "16px monospace";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "right";
+
+    for (let i = 0; i < hotbarSize; i++) {
+      ctx.beginPath();
+      ctx.roundRect(i * (slotSize + 10), 0, slotSize, slotSize, 4);
+      ctx.fillStyle = "rgba(15,15,25,0.6)";
+      ctx.fill();
+      ctx.strokeStyle = "#1b1717";
+      ctx.lineWidth = 2;
+      if (i === this.selectedHotbarIdx) {
+        ctx.strokeStyle = "#e1d8b7";
+        ctx.lineWidth = 4;
+      }
+      ctx.stroke();
+
+      // item icons
+      const item = this.inventory.getItemStack(i, 0);
+      if (item) {
+        const img = item.itemType.img!;
+        if (img) {
+          ctx.drawImage(img, i * (slotSize + 10) + 12, 12, slotSize - 24, slotSize - 24);
+        } else {
+            // draw a rectangle for items without icons
+            ctx.fillStyle = "#d81cd5";
+            ctx.fillRect(i * (slotSize + 10) + 12, 12, slotSize - 24, slotSize - 24);
+        }
+
+        if (item.count > 1) {
+          ctx.fillStyle = "#fff6d7";
+          ctx.fillText(String(item.count), i * (slotSize + 10) + slotSize - 8, slotSize - 6);
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+  public setHotbarSlot(number: number) {
+    this.selectedHotbarIdx = number;
+  }
+
+  public heldItem(): ItemStack | null {
+    return this.inventory.getItemStack(this.selectedHotbarIdx, 0);
   }
 }
 

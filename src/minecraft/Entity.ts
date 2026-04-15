@@ -96,7 +96,6 @@ export class Enemy {
   }
 
   private setState(state: EnemyState) {
-    console.log("Setting state ", state);
     this.state = state;
     this.animationTime = 0;
   }
