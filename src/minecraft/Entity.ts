@@ -27,7 +27,12 @@ class Entity {
   public health: number;
   public maxHealth: number;
 
-  constructor(position: Vec3, hitboxRadius: number, hitboxHeight: number, health: number = 100) {
+  constructor(
+    position: Vec3,
+    hitboxRadius: number,
+    hitboxHeight: number,
+    health: number = 100,
+  ) {
     this.position = position;
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.hitboxRadius = hitboxRadius;

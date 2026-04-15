@@ -400,9 +400,16 @@ export class Chunk {
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
         for (let y = 0; y < colMaxY; y++) {
-          if (this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir && this.isExposed(i, j, y)) this.cubes++;
+          if (
+            this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
+            this.isExposed(i, j, y)
+          )
+            this.cubes++;
         }
       }
     }
@@ -410,7 +417,10 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
       if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
     }
 
@@ -420,16 +430,20 @@ export class Chunk {
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
         for (let y = 0; y < colMaxY; y++) {
           const blockType = this.getLocalCubeType(i, j, y);
-          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y)) continue;
+          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
+            continue;
 
           this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
           this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-          
+
           this.cubeTypesF32[cubeIdx] = blockType;
           cubeIdx++;
         }
@@ -439,7 +453,10 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
       this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
