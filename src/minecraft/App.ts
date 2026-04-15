@@ -585,6 +585,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
+  private chunkAt(worldX: number, worldZ: number): Chunk {
+    const chunkX = this.worldToChunkCoord(Math.round(worldX));
+    const chunkZ = this.worldToChunkCoord(Math.round(worldZ));
+    return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+  }
+
   // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
   //
   // FIXME: Maybe this should be in `Chunk`, but only allowed a single constructor.
@@ -693,6 +699,29 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.enemies.forEach((enemy) => {
       enemy.update(dt, playerChunk, this.player);
     });
+
+    // Update falling blocks
+    let newFallingBlocks: Block[] = [];
+    this.fallingBlocks.forEach((fallingBlock) => {
+      let blockChunk = this.chunkAt(
+        fallingBlock.position.x,
+        fallingBlock.position.z,
+      );
+
+      if (fallingBlock.update(dt, blockChunk)) {
+        newFallingBlocks.push(fallingBlock);
+      }
+      // Change back to static block once it lands on another block
+      else {
+        blockChunk.changeCubeType(
+          fallingBlock.position.x,
+          fallingBlock.position.z,
+          fallingBlock.position.y,
+          fallingBlock.type,
+        );
+      }
+    });
+    this.fallingBlocks = newFallingBlocks;
 
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
@@ -972,6 +1001,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
 
+    // Test falling blocks
     if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
       const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY);
       this.fallingBlocks.push(

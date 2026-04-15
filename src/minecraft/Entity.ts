@@ -9,7 +9,7 @@ import {
 
 export type Collision = {
   blockCenter: Vec3;
-  belowPlayer: boolean;
+  belowEntity: boolean;
 };
 
 export class Player {
@@ -183,10 +183,41 @@ export class Block {
     this.type = type;
   }
 
+  public update(dt: number, chunk: Chunk): boolean {
+    this.position.add(this.velocity.scale(dt, new Vec3()));
+
+    // Undo update if overlaps with another block (can change to entity later)
+    if (this.collidesWithChunk(chunk).length > 0) {
+      this.position.subtract(this.velocity.scale(dt, new Vec3()));
+      return false;
+    }
+
+    // Apply gravity acceleration.
+    const gDelta = -9.8 * dt;
+    const gDv = new Vec3([0.0, gDelta, 0.0]);
+    this.velocity.add(gDv);
+    return true;
+  }
+
   // Detects if the block collides with any blocks in the given chunk.
   // Returns the cubes for which there is a collision.
+  // FIXME: Check bottom face for now.
   public collidesWithChunk(c: Chunk): Collision[] {
-    // TODO
+    if (
+      c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
+      Chunk.blockTypeAir
+    ) {
+      return [
+        {
+          blockCenter: new Vec3([
+            Math.round(this.position.x),
+            Math.round(this.position.y),
+            Math.round(this.position.z),
+          ]),
+          belowEntity: true,
+        },
+      ];
+    }
     return [];
   }
 }
