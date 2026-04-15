@@ -73,7 +73,7 @@ export class Bone {
         if (this.parent < 0) { return; }
 
         this.parentBone = this.mesh.bones[this.parent];
-        this.relativePos = Vec3.difference(this.position, this.parentBone.position);
+        this.relativePos = Vec3.difference(this.position, this.parentBone!.position);
         this.relativeRot = new Quat().setIdentity();
     }
 
@@ -86,8 +86,8 @@ export class Bone {
     }
 
     public updateRecursively(): void {
-        const parentRotation = this.parentBone ? this.parentBone.rotation : new Quat().setIdentity();
-        const parentPosition = this.parentBone ? this.parentBone.position : new Vec3([0,0,0]);
+        const parentRotation = this.parentBone ? this.parentBone!.rotation : new Quat().setIdentity();
+        const parentPosition = this.parentBone ? this.parentBone!.position : new Vec3([0,0,0]);
 
         this.rotation = parentRotation.copy().multiply(this.relativeRot);
         this.position = parentRotation.multiplyVec3(this.relativePos).add(parentPosition);
