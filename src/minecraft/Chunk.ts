@@ -336,7 +336,10 @@ export class Chunk {
       BIOME_BLEND_TUNING.defaultShapeHigh,
       normalized,
     );
-    return Math.floor(biome.baseHeight + shaped * biome.reliefScale);
+    return Math.min(
+      100,
+      Math.max(0, Math.floor(biome.baseHeight + shaped * biome.reliefScale)),
+    );
   }
 
   private generateCubes() {
