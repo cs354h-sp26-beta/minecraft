@@ -6,7 +6,6 @@ import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
 import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
-import { Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
 import { enemyIdlePose } from "./Animations.js";
