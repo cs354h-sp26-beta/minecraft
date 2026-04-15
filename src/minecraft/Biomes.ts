@@ -10,6 +10,12 @@ export interface BiomeProfile {
   highFreqBoost: number;
   // octaveGain: Overall amplitude multiplier for all octaves (affects roughness)
   octaveGain: number;
+  // surfaceBlock: Block type ID for the top 1 block
+  surfaceBlock: number;
+  // subsurfaceBlock: Block type ID for blocks 2-3 below surface
+  subsurfaceBlock: number;
+  // snowlineOffset: Blocks below peak where snow replaces surface block (-1 = no snow)
+  snowlineOffset: number;
 }
 
 // Octave configuration for multi-octave fBm terrain generation
@@ -45,6 +51,9 @@ export const PLAINS_BIOME: BiomeProfile = {
   frequencyScale: 0.52,
   highFreqBoost: 0.3,
   octaveGain: 0.56,
+  surfaceBlock: 7, // Grass
+  subsurfaceBlock: 0, // Dirt
+  snowlineOffset: -1,
 };
 
 // Rolling hills with moderate elevation and relief
@@ -55,6 +64,9 @@ export const HILLS_BIOME: BiomeProfile = {
   frequencyScale: 0.6,
   highFreqBoost: 0.52,
   octaveGain: 0.72,
+  surfaceBlock: 7, // Grass
+  subsurfaceBlock: 0, // Dirt
+  snowlineOffset: -1,
 };
 
 // High elevation plateau with significant relief and jagged features
@@ -65,6 +77,9 @@ export const HIGHLANDS_BIOME: BiomeProfile = {
   frequencyScale: 0.62,
   highFreqBoost: 0.62,
   octaveGain: 0.78,
+  surfaceBlock: 7, // Grass
+  subsurfaceBlock: 0, // Dirt
+  snowlineOffset: -1,
 };
 
 // Tall peaks with high base elevation and large relief variation
@@ -75,6 +90,9 @@ export const MOUNTAINS_BIOME: BiomeProfile = {
   frequencyScale: 0.62,
   highFreqBoost: 0.48,
   octaveGain: 0.64,
+  surfaceBlock: 1, // Cobble
+  subsurfaceBlock: 1, // Cobble
+  snowlineOffset: 8,
 };
 
 // Jagged rock formations with high frequency detail and extreme elevation swings
@@ -85,13 +103,55 @@ export const CRAG_BIOME: BiomeProfile = {
   frequencyScale: 0.95,
   highFreqBoost: 1.2,
   octaveGain: 1.02,
+  surfaceBlock: 1, // Cobble
+  subsurfaceBlock: 1, // Cobble
+  snowlineOffset: 6,
+};
+
+// Frozen wasteland with flat terrain and snow cover
+export const TUNDRA_BIOME: BiomeProfile = {
+  name: "tundra",
+  baseHeight: 3,
+  reliefScale: 6,
+  frequencyScale: 0.4,
+  highFreqBoost: 0.2,
+  octaveGain: 0.4,
+  surfaceBlock: 10, // Snow
+  subsurfaceBlock: 0, // Dirt
+  snowlineOffset: -1,
+};
+
+// Arid landscape with smooth dunes and sandy surface
+export const DESERT_BIOME: BiomeProfile = {
+  name: "desert",
+  baseHeight: 6,
+  reliefScale: 10,
+  frequencyScale: 0.35,
+  highFreqBoost: 0.15,
+  octaveGain: 0.45,
+  surfaceBlock: 8, // Sand
+  subsurfaceBlock: 9, // Sandstone
+  snowlineOffset: -1,
+};
+
+// Dense woodland with moderate elevation and varied terrain
+export const FOREST_BIOME: BiomeProfile = {
+  name: "forest",
+  baseHeight: 10,
+  reliefScale: 20,
+  frequencyScale: 0.55,
+  highFreqBoost: 0.4,
+  octaveGain: 0.6,
+  surfaceBlock: 7, // Grass
+  subsurfaceBlock: 0, // Dirt
+  snowlineOffset: -1,
 };
 
 // Runtime selection order maps to selector buckets from low to high.
 export const ACTIVE_BIOME_PROFILES: BiomeProfile[] = [
+  TUNDRA_BIOME,
   PLAINS_BIOME,
-  //   HILLS_BIOME,
-  //   HIGHLANDS_BIOME,
+  FOREST_BIOME,
+  DESERT_BIOME,
   MOUNTAINS_BIOME,
-  //   CRAG_BIOME,
 ];

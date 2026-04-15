@@ -18,6 +18,11 @@ export class Chunk {
   public static readonly blockTypeIronOre: number = 4;
   public static readonly blockTypeGoldOre: number = 5;
   public static readonly blockTypeDiamondOre: number = 6;
+  public static readonly blockTypeGrass: number = 7;
+  public static readonly blockTypeSand: number = 8;
+  public static readonly blockTypeSandstone: number = 9;
+  public static readonly blockTypeSnow: number = 10;
+  public static readonly blockTypeNetherite: number = 11;
   public static readonly SEA_LEVEL: number = 8;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
@@ -131,13 +136,17 @@ export class Chunk {
     b: BiomeProfile,
     t: number,
   ): BiomeProfile {
+    const nearest = t < 0.5 ? a : b;
     return {
-      name: t < 0.5 ? a.name : b.name,
+      name: nearest.name,
       baseHeight: this.lerp(a.baseHeight, b.baseHeight, t),
       reliefScale: this.lerp(a.reliefScale, b.reliefScale, t),
       frequencyScale: this.lerp(a.frequencyScale, b.frequencyScale, t),
       highFreqBoost: this.lerp(a.highFreqBoost, b.highFreqBoost, t),
       octaveGain: this.lerp(a.octaveGain, b.octaveGain, t),
+      surfaceBlock: nearest.surfaceBlock,
+      subsurfaceBlock: nearest.subsurfaceBlock,
+      snowlineOffset: nearest.snowlineOffset,
     };
   }
 
@@ -388,10 +397,13 @@ export class Chunk {
     this.blockTypeData = new Int8Array(this.size * this.size * maxH);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
+        const worldX = topLeftX + j;
+        const worldZ = topLeftZ + i;
         const h = this.heightMapData[this.size * i + j];
+        const biome = this.sampleBiomeProfileAt(worldX, worldZ);
         for (let y = 0; y < h; y++) {
           this.blockTypeData[y * this.size * this.size + i * this.size + j] =
-            this.blockTypeAt(topLeftX + j, y, topLeftZ + i, h);
+            this.blockTypeAt(worldX, y, worldZ, h, biome);
         }
       }
     }
@@ -400,9 +412,16 @@ export class Chunk {
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
         for (let y = 0; y < colMaxY; y++) {
-          if (this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir && this.isExposed(i, j, y)) this.cubes++;
+          if (
+            this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
+            this.isExposed(i, j, y)
+          )
+            this.cubes++;
         }
       }
     }
@@ -410,7 +429,10 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
       if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
     }
 
@@ -420,16 +442,20 @@ export class Chunk {
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
         for (let y = 0; y < colMaxY; y++) {
           const blockType = this.getLocalCubeType(i, j, y);
-          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y)) continue;
+          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
+            continue;
 
           this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
           this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-          
+
           this.cubeTypesF32[cubeIdx] = blockType;
           cubeIdx++;
         }
@@ -439,7 +465,10 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
       this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
@@ -457,10 +486,21 @@ export class Chunk {
     y: number,
     worldZ: number,
     columnHeight: number,
+    biome: BiomeProfile,
   ): number {
-    // Surface layers are always dirt (no caves near surface)
+    // Top block: snow if above snowline, otherwise biome surface block
+    if (y >= columnHeight - 1) {
+      if (
+        biome.snowlineOffset >= 0 &&
+        columnHeight >= biome.baseHeight + biome.reliefScale * 0.5
+      ) {
+        return Chunk.blockTypeSnow;
+      }
+      return biome.surfaceBlock;
+    }
+    // Subsurface layers use biome subsurface block (no caves near surface)
     if (y >= columnHeight - 3) {
-      return Chunk.blockTypeDirt;
+      return biome.subsurfaceBlock;
     }
 
     // Cave carving
