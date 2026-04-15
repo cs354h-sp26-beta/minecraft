@@ -6,6 +6,7 @@ import {
   enemyWalkAnimation,
   enemyWalkPose1,
 } from "./Animations.js";
+import { findPath } from "./Pathfinding.js";
 
 export type Collision = {
   blockCenter: Vec3;
@@ -267,6 +268,11 @@ export class Enemy extends Entity {
   private state: EnemyState;
   private animationTime: number;
 
+  // Pathfinding states
+  private path: Vec3[] | null = null; // the current A* path to follow (list of waypoints)
+  private pathIndex: number; // which waypoint we're walking towards
+  private pathTimer: number; // time since last path refresh
+
   constructor(mesh: Mesh, position: Vec3) {
     // HACK: Enemy centered at CoM rather than head.
     super(position, 0.4, 1.0, 20, 20);
@@ -274,6 +280,9 @@ export class Enemy extends Entity {
     this.mesh = new Mesh(mesh);
     this.mesh.setPose(enemyIdlePose);
     this.setState(EnemyState.Idle);
+    this.path = [];
+    this.pathIndex = 0;
+    this.pathTimer = 0;
   }
 
   private setState(state: EnemyState) {
@@ -315,21 +324,65 @@ export class Enemy extends Entity {
     player: Player,
     dt: number,
   ) {
-    this.faceTowards(player.position);
-
-    // HACK: `stepPhysics` moves entities some base amount in their `lookDir`.
-    // Since we don't want enemies to update based on that, we just pass in an
-    // empty vec.
-    super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), chunkProvider, dt);
-
     this.animationTime += dt;
+    this.pathTimer += dt;
 
-    if (this.animationTime >= 8) {
-      if (this.state === EnemyState.Idle) {
-        this.setState(EnemyState.Walking);
-      } else if (this.state === EnemyState.Walking) {
-        this.setState(EnemyState.Idle);
+    if (this.pathTimer > 1.0 || this.path === null || this.path.length === 0) {
+      this.pathTimer = 0;
+      const enemyFeet = new Vec3([this.position.x, this.position.y - 0.5, this.position.z]);
+
+      // compute the y below the player for the enemies to target
+      let yBelowPlayer = player.position.y - player.hitboxHeight;
+      const playerX = Math.round(player.position.x);
+      const playerZ = Math.round(player.position.z);
+      for (let dy = 0; dy >= -10; dy--) {
+          if (Chunk.isSolidBlockWorldWide(chunkProvider, playerX, Math.round(yBelowPlayer) + dy, playerZ)) {
+              yBelowPlayer = Math.round(yBelowPlayer) + dy + 1;
+              break;
+          }
       }
+      // add some level of randomness so they dont overlap perfectly and look weird
+      const jitterX = (Math.random() - 0.5) * 2;
+      const jitterZ = (Math.random() - 0.5) * 2;
+      const playerFeet = new Vec3([
+          player.position.x + jitterX,
+          yBelowPlayer,
+          player.position.z + jitterZ
+      ]);
+      this.path = findPath(
+        enemyFeet,
+        playerFeet,
+        chunkProvider
+      );
+      this.pathIndex = this.path.length > 1 ? 1 : 0; // try to skip 0 since that's the enemy's current position
+    }
+
+    if (this.path && this.pathIndex < this.path.length) {
+      const target = this.path[this.pathIndex];
+      const distance = Math.sqrt(
+        (target.x - this.position.x) ** 2 + (target.z - this.position.z) ** 2
+      );
+      if (distance < 0.5) {
+        // we can advance to the next waypoint
+        this.pathIndex++;
+      }
+
+      this.faceTowards(target);
+
+      if (target.y > this.position.y) {
+        this.jump(chunkProvider);
+      }
+
+      super.stepPhysics(this.lookDir(), chunkProvider, dt);
+    } else {
+      // no path or reached the end of path...stand still
+      super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), chunkProvider, dt);
+    }
+
+    if (this.path && this.pathIndex < this.path.length) {
+      this.setState(EnemyState.Walking);
+    } else {
+      this.setState(EnemyState.Idle);
     }
 
     this.mesh.setPose(this.targetPose(), Math.pow(0.01, dt));
