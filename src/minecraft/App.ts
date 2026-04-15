@@ -64,6 +64,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private canvas2d: HTMLCanvasElement;
   private overlayCtx: CanvasRenderingContext2D;
+  private heartBitmap: ImageBitmap | null = null;
 
   private player: Player;
   private spawnPosition: Vec3;
@@ -170,6 +171,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
+
+    // Load heart icon for health bar
+    const heartImg = new Image();
+    heartImg.src = "./static/assets/heart.png";
+    heartImg.onload = () => {
+      createImageBitmap(heartImg).then((bmp) => {
+        this.heartBitmap = bmp;
+      });
+    };
   }
 
   private createAchievements(): Achievement[] {
@@ -1199,6 +1209,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
     this.drawMinimap();
+    this.drawHealthBar();
     this.drawAchievementToast();
 
     ctx.restore();
@@ -1386,6 +1397,52 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, size, size);
 
+    ctx.restore();
+  }
+
+  private drawHealthBar(): void {
+    if (!this.heartBitmap) return;
+
+    const ctx = this.overlayCtx;
+    const health = this.player.health;
+    const maxHealth = this.player.maxHealth;
+    const totalHearts = maxHealth / 2;
+    const fullHearts = Math.floor(health / 2);
+    const halfHeart = health % 2 >= 0.5;
+
+    const heartSize = 24;
+    const spacing = 4;
+    const startX = 18;
+    const startY = this.canvas2d.height - heartSize - 18;
+
+    ctx.save();
+    for (let i = 0; i < totalHearts; i++) {
+      const x = startX + i * (heartSize + spacing);
+      if (i < fullHearts) {
+        // Full heart
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(this.heartBitmap, x, startY, heartSize, heartSize);
+      } else if (i === fullHearts && halfHeart) {
+        // Half heart: draw left half full, right half dimmed
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(
+          this.heartBitmap,
+          0, 0, this.heartBitmap.width / 2, this.heartBitmap.height,
+          x, startY, heartSize / 2, heartSize,
+        );
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(
+          this.heartBitmap,
+          this.heartBitmap.width / 2, 0, this.heartBitmap.width / 2, this.heartBitmap.height,
+          x + heartSize / 2, startY, heartSize / 2, heartSize,
+        );
+      } else {
+        // Empty heart
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(this.heartBitmap, x, startY, heartSize, heartSize);
+      }
+    }
+    ctx.globalAlpha = 1.0;
     ctx.restore();
   }
 }

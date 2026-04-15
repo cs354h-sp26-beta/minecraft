@@ -188,7 +188,7 @@ class Entity {
     this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
   }
 
-  public takeDamage(amount: number = 0.5) {
+  public takeDamage(amount: number = 1) {
     if (this.isDead()) return;
     this.health -= amount;
   }
