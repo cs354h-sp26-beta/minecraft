@@ -97,6 +97,12 @@ export class ItemStack {
             case Chunk.blockTypeIronOre: return new ItemStack(itemTypes.get("iron")!, 1);
             case Chunk.blockTypeGoldOre: return new ItemStack(itemTypes.get("gold")!, 1);
             case Chunk.blockTypeDiamondOre: return new ItemStack(itemTypes.get("diamond")!, 1);
+            case Chunk.blockTypeGrass: return new ItemStack(itemTypes.get("dirt")!, 1);
+            case Chunk.blockTypeBedrock: return new ItemStack(itemTypes.get("bedrock")!, 1);
+            case Chunk.blockTypeSand: return new ItemStack(itemTypes.get("sand")!, 1);
+            case Chunk.blockTypeSandstone: return new ItemStack(itemTypes.get("sandstone")!, 1);
+            case Chunk.blockTypeSnow: return new ItemStack(itemTypes.get("snow")!, 1);
+            case Chunk.blockTypeNetherite: return new ItemStack(itemTypes.get("netherite")!, 1);
             default: return null;
         }
     }
