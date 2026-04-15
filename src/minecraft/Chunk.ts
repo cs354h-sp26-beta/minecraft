@@ -384,14 +384,45 @@ export class Chunk {
         const rdZ = worldZ - nearZ;
         const hbr = Player.hitboxRadius;
         if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
-          const cubeWorldY =
-            this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
-          floorY = Math.max(floorY, cubeWorldY - 0.5);
+          const cubeWorldY = this.topBlockAt(cubeWorldX, cubeWorldZ);
+          if (cubeWorldY !== -Infinity) {
+            floorY = Math.max(floorY, cubeWorldY - 0.5);
+          }
         }
       }
     }
 
     return floorY;
+  }
+
+  /**
+   * Highest occupied block center Y in the world column at (worldX, worldZ).
+   * Uses current voxel occupancy (positionMap/cubeType), so mined/built edits
+   * are reflected immediately.
+   */
+  public topBlockAt(
+    worldX: number,
+    worldZ: number,
+    yMaxInclusive: number = 100,
+  ): number {
+    const [topLeftX, topLeftZ] = this.origin();
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    if (
+      cubeChunkX < 0 ||
+      cubeChunkX >= this.size ||
+      cubeChunkZ < 0 ||
+      cubeChunkZ >= this.size
+    ) {
+      return -Infinity;
+    }
+
+    for (let y = yMaxInclusive; y >= 0; y--) {
+      if (this.cubeType(worldX, worldZ, y) !== undefined) {
+        return y;
+      }
+    }
+    return -Infinity;
   }
 
   ///// Cylinder-voxel collision
