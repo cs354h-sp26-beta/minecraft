@@ -658,40 +658,18 @@ export class MinecraftAnimation extends CanvasAnimation {
   public draw(): void {
     // Load chunks.
     this.loadChunksAroundPlayer();
+    const playerChunk = this.currentChunk();
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    this.enemies.forEach((enemy) => {
-      enemy.update(dt, this.currentChunk(), this.player);
-    });
-
-    const walkDx = this.gui.walkDir().scale(0.1);
-    const momentumDx = this.player.velocity.scale(dt, new Vec3());
-    const totalDx = walkDx.add(momentumDx, new Vec3());
-    this.player.position.add(totalDx);
-
+    this.player.update(this.gui.walkDir(), dt, playerChunk);
     this.gui.getCamera().setPos(this.player.position);
 
-    // Check for collisions.
-    //
-    // FIXME: Ew. This system sucks. It's what the hint says to do but...
-    const floorY = this.currentChunk().floorHeight(
-      this.player.position.x,
-      this.player.position.z,
-    );
-    // Apply gravity acceleration.
-    if (this.player.position.y > floorY + Player.hitboxHeight) {
-      const gDelta = -9.8 * dt;
-      const gDv = new Vec3([0.0, gDelta, 0.0]);
-      this.player.velocity.add(gDv);
-    } else {
-      // Stop all movement in vertical direction.
-      const v = this.player.velocity.copy();
-      v.y = 0.0;
-      this.player.velocity = v;
-      this.player.position.y = floorY + Player.hitboxHeight;
-    }
+    this.enemies.forEach((enemy) => {
+      enemy.update(dt, playerChunk, this.player);
+    });
+
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
     const bg: Vec4 = this.backgroundColor;

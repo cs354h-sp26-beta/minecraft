@@ -30,6 +30,29 @@ export class Player {
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
   }
 
+  public update(lookDir: Vec3, dt: number, chunk: Chunk) {
+    // Apply base movement.
+    const walkDx = lookDir.scale(0.1);
+    const momentumDx = this.velocity.scale(dt, new Vec3());
+    const totalDx = walkDx.add(momentumDx, new Vec3());
+    this.position.add(totalDx);
+
+    // Check for collisions.
+    //
+    // FIXME: Ew. This system sucks. It's what the hint says to do but...
+    const floorY = chunk.floorHeight(this.position.x, this.position.z);
+    // Apply gravity acceleration.
+    if (this.position.y > floorY + Player.hitboxHeight) {
+      const gDelta = -9.8 * dt;
+      const gDv = new Vec3([0.0, gDelta, 0.0]);
+      this.velocity.add(gDv);
+    } else {
+      // Stop all movement in vertical direction.
+      this.velocity.y = 0;
+      this.position.y = floorY + Player.hitboxHeight;
+    }
+  }
+
   // Detects if the player collides with any blocks in the given chunk.
   // Returns the cubes for which there is a collision.
   public collidesWithChunk(c: Chunk): Collision[] {
@@ -111,9 +134,6 @@ export class Enemy {
     // Could just use `player.position` here, I guess. Lol.
     const lookDir = this.lookDir();
     const momentumDx = this.velocity.scale(dt, new Vec3());
-    console.log(
-      `Enemy momentum: ${momentumDx.x} ${momentumDx.y} ${momentumDx.z}`,
-    );
     this.position.add(momentumDx);
 
     // Apply gravity.
