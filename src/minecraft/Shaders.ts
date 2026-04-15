@@ -115,14 +115,14 @@ const noiseUtils = `
 `;
 
 const dirtTexture = `
-    vec3 makeDirt(vec2 uv) {
+    vec3 makeDirt(vec2 uv, vec3 local, vec3 world) {
         // dirt block: add some noise to brown
-        // TODO: make it tile better with world coordinates
 
         vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
+        vec2 worldSeed = hash2(floor(world.xz)); // add world-based seed to make different blocks look different
 
         vec3 baseColor = vec3(0.845, 0.471, 0.18);
-        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) + hash(pixelUV) * 0.3;
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5) + worldSeed * 5.0, 1) + hash(pixelUV + worldSeed) * 0.3;
         vec3 textureColor = baseColor * noise; // add subtle noise
         if (noise < 0.2) textureColor -= vec3(0.14, 0.08, 0.04); // add some darker spots
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
@@ -188,9 +188,9 @@ const grassTexture = `
 
     nearTop = pow(nearTop, 10.0);   
 
-    vec3 dirtColor = makeDirt(uv);
+    vec3 dirtColor = makeDirt(uv, local, world);
 
-    vec3 grassColor = makeDirt(uv) * vec3(0.3, 0.8, 0.3) + vec3(0.02, 0.1, 0.02); // base dirt color tinted green
+    vec3 grassColor = makeDirt(uv, local, world) * vec3(0.3, 0.8, 0.3) + vec3(0.02, 0.1, 0.02); // base dirt color tinted green
 
     return mix(dirtColor, grassColor, nearTop);
 }
@@ -305,7 +305,7 @@ export const blankCubeFSText = `
         vec3 textureColor = vec3(1.0, 0.5, 1.0);
 
         if (vBlockType == 0.0) {
-            textureColor = makeDirt(uv);
+            textureColor = makeDirt(uv, vLocalPos, wsPos.xyz);
         } else if (vBlockType == 1.0) {
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
@@ -335,7 +335,7 @@ export const blankCubeFSText = `
             textureColor = makeSand(uv, vLocalPos, wsPos.xyz) * 1.2 * makeCobble(uv, wsPos.xyz, 5.0);
         } else if (vBlockType == 10.0) {
             // TODO: make real snow texture
-            textureColor = makeDirt(uv) * 0.5 + vec3(0.8, 0.8, 0.9); 
+            textureColor = makeDirt(uv, vLocalPos, wsPos.xyz) * 0.5 + vec3(0.8, 0.8, 0.9); 
         }
 
         gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
