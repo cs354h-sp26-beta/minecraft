@@ -60,15 +60,44 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /* Overlay information */
   private minimapPixelSize = 135;
-  private minimapColors = [ // index corresponds to block type, value is [r, g, b] color for minimap
-    [Number.parseInt("8b", 16), Number.parseInt("45", 16), Number.parseInt("13", 16)], // dirt
-    [Number.parseInt("a6", 16), Number.parseInt("a1", 16), Number.parseInt("99", 16)], // cobble
-    [Number.parseInt("2b", 16), Number.parseInt("4d", 16), Number.parseInt("8c", 16)], // water
-    [Number.parseInt("3f", 16), Number.parseInt("3f", 16), Number.parseInt("3f", 16)], // coal ore
-    [Number.parseInt("af", 16), Number.parseInt("af", 16), Number.parseInt("af", 16)], // iron ore
-    [Number.parseInt("ff", 16), Number.parseInt("d7", 16), Number.parseInt("00", 16)], // gold ore
-    [Number.parseInt("00", 16), Number.parseInt("ff", 16), Number.parseInt("ff", 16)], // diamond ore
-  ]
+  private minimapColors = [
+    // index corresponds to block type, value is [r, g, b] color for minimap
+    [
+      Number.parseInt("8b", 16),
+      Number.parseInt("45", 16),
+      Number.parseInt("13", 16),
+    ], // dirt
+    [
+      Number.parseInt("a6", 16),
+      Number.parseInt("a1", 16),
+      Number.parseInt("99", 16),
+    ], // cobble
+    [
+      Number.parseInt("2b", 16),
+      Number.parseInt("4d", 16),
+      Number.parseInt("8c", 16),
+    ], // water
+    [
+      Number.parseInt("3f", 16),
+      Number.parseInt("3f", 16),
+      Number.parseInt("3f", 16),
+    ], // coal ore
+    [
+      Number.parseInt("af", 16),
+      Number.parseInt("af", 16),
+      Number.parseInt("af", 16),
+    ], // iron ore
+    [
+      Number.parseInt("ff", 16),
+      Number.parseInt("d7", 16),
+      Number.parseInt("00", 16),
+    ], // gold ore
+    [
+      Number.parseInt("00", 16),
+      Number.parseInt("ff", 16),
+      Number.parseInt("ff", 16),
+    ], // diamond ore
+  ];
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -587,8 +616,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private worldToChunkCoord(worldVal: number): number {
-    const s = MinecraftAnimation.chunkSize;
-    return Math.floor((worldVal + s / 2) / s) * s;
+    return Chunk.worldToChunkAxis(worldVal, MinecraftAnimation.chunkSize);
   }
 
   private currentChunk(): Chunk {
@@ -597,17 +625,28 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
-  // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
-  //
-  // FIXME: Maybe this should be in `Chunk`, but only allowed a single constructor.
-  // Oh well. This can be refactored.
-  private loadChunkFromSeed(
-    centerX: number,
-    centerZ: number,
-    seed: string,
-  ): Chunk {
-    // TODO: Actually do it. For now, just create a new chunk alltogther.
-    return new Chunk(centerX, centerZ, 64);
+  private chunkAt(worldX: number, worldZ: number): Chunk {
+    const chunkX = this.worldToChunkCoord(Math.round(worldX));
+    const chunkZ = this.worldToChunkCoord(Math.round(worldZ));
+    return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+  }
+
+  /**
+   * Resolves the chunk that owns the block column at (wx, wz).
+   * Snaps to integer block centers first so values like 31.999999 at a seam still map to the
+   * same chunk as column 32 (avoids phantom air / wrong chunk).
+   */
+  private getChunkAtWorld(wx: number, wz: number): Chunk | undefined {
+    const ix = Math.round(wx);
+    const iz = Math.round(wz);
+    const cx = this.worldToChunkCoord(ix);
+    const cz = this.worldToChunkCoord(iz);
+    const key = `${cx},${cz}`;
+    const live = this.renderedChunks.get(key);
+    if (live !== undefined) {
+      return live;
+    }
+    return this.chunkCache.get(key);
   }
 
   private loadChunksAroundPlayer(): void {
@@ -647,12 +686,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(4 * totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const positions = chunk.cubePositions();
       combined.set(positions, offset);
       offset += positions.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set(
+        [block.position.x, block.position.y, block.position.z, 0],
+        offset,
+      );
+      offset += 4;
     }
     return combined;
   }
@@ -662,12 +710,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const types = chunk.cubeTypes();
       combined.set(types, offset);
       offset += types.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set([block.type], offset);
+      offset += 1;
     }
     return combined;
   }
@@ -679,17 +733,40 @@ export class MinecraftAnimation extends CanvasAnimation {
   public draw(): void {
     // Load chunks.
     this.loadChunksAroundPlayer();
-    const playerChunk = this.currentChunk();
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    this.player.update(this.gui.walkDir(), dt, playerChunk);
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    this.player.update(this.gui.walkDir(), prov, dt);
     this.gui.getCamera().setPos(this.player.position);
 
     this.enemies.forEach((enemy) => {
-      enemy.update(dt, playerChunk, this.player);
+      enemy.update(prov, this.player, dt);
     });
+
+    // Update falling blocks
+    let newFallingBlocks: Block[] = [];
+    this.fallingBlocks.forEach((fallingBlock) => {
+      let blockChunk = this.chunkAt(
+        fallingBlock.position.x,
+        fallingBlock.position.z,
+      );
+
+      if (fallingBlock.update(dt, blockChunk)) {
+        newFallingBlocks.push(fallingBlock);
+      }
+      // Change back to static block once it lands on another block
+      else {
+        blockChunk.changeCubeType(
+          fallingBlock.position.x,
+          fallingBlock.position.z,
+          fallingBlock.position.y,
+          fallingBlock.type,
+        );
+      }
+    });
+    this.fallingBlocks = newFallingBlocks;
 
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
@@ -808,8 +885,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     let centerX = Math.round(worldX);
     let centerY = Math.round(worldY);
     let centerZ = Math.round(worldZ);
-    let minCube = new Vec3([centerX - 0.5, centerY - 0.5, centerZ - 0.5]);
-    let maxCube = new Vec3([centerX + 0.5, centerY + 0.5, centerZ + 0.5]);
+    const h = 0.5;
+    let minCube = new Vec3([centerX - h, centerY - h, centerZ - h]);
+    let maxCube = new Vec3([centerX + h, centerY + h, centerZ + h]);
 
     // Calculate inverse directions to avoid division by zero
     const invDirX = 1.0 / rayDir.x;
@@ -877,18 +955,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public jump() {
-    // If player is not already in the air, launch them up at 10 units/sec.
-    //
-    // FIXME: Same problem as in draw loop.
-    const floorY = this.currentChunk().floorHeight(
-      this.player.position.x,
-      this.player.position.z,
-    );
-    // FIXME: Wtf. Does this even work?
-    if (this.player.position.y <= floorY + Player.hitboxHeight) {
-      const dv = new Vec3([0.0, 10.0, 0.0]);
-      this.player.velocity.add(dv);
-    }
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    this.player.jump(prov);
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -897,10 +965,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     let bestN = new Vec3();
     let hit = false;
 
-    // Have player's reach extend 5 cubes
-    for (let dx = -5; dx <= 5; dx++) {
-      for (let dz = -5; dz <= 5; dz++) {
-        for (let dy = -5; dy <= 5; dy++) {
+    const rPick = 5;
+    for (let dx = -rPick; dx <= rPick; dx++) {
+      for (let dz = -rPick; dz <= rPick; dz++) {
+        for (let dy = -rPick; dy <= rPick; dy++) {
           let x = this.player.position.x + dx;
           let z = this.player.position.z + dz;
           let y = this.player.position.y + dy;
@@ -910,7 +978,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
           let cubeType = currentChunk.cubeType(x, z, y);
 
-          if (cubeType !== undefined) {
+          if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
             if (t !== undefined && t < bestT) {
@@ -969,10 +1037,13 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
 
-    // TODO: Test falling blocks by checking if block below is empty
-    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
-      this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
-      // TODO: Remove block from chunk's map so that its static version is not rendered
+    // Test falling blocks
+    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
+      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
+      this.fallingBlocks.push(
+        new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
+      );
+      chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);
@@ -1038,60 +1109,74 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // terrain
     for (let i = 0; i < size; i++) {
-        for (let j = 0; j < size; j++) {
-            const worldX = Math.floor(playerPos.x - size / 2 + i);
-            const worldZ = Math.floor(playerPos.z - size / 2 + j);
+      for (let j = 0; j < size; j++) {
+        const worldX = Math.floor(playerPos.x - size / 2 + i);
+        const worldZ = Math.floor(playerPos.z - size / 2 + j);
 
-            const chunkX = this.worldToChunkCoord(worldX);
-            const chunkZ = this.worldToChunkCoord(worldZ);
-            const chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`);
+        const chunkX = this.worldToChunkCoord(worldX);
+        const chunkZ = this.worldToChunkCoord(worldZ);
+        const chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`);
 
-            if (!chunk) {
-              continue;
-            }
-
-            const topBlock = chunk.topBlockAt(worldX, worldZ);
-            if (!topBlock || topBlock.type < 0 || topBlock.type >= this.minimapColors.length) {
-              ctx.fillStyle = "#C7C0B7";
-              ctx.fillRect(i, j, 1, 1);
-              continue;
-            }
-
-            // height-based tinting: darken below sea level, brighten above. tune t to adjust strength of effect
-            const height = topBlock.height;
-            const r = this.minimapColors[topBlock.type][0];
-            const g = this.minimapColors[topBlock.type][1];
-            const b = this.minimapColors[topBlock.type][2];
-            let lr: number, lg: number, lb: number;
-
-            if (height < Chunk.SEA_LEVEL) {
-              // Below sea level: dark bands
-              // Depths: 0-2 = very dark (0.45), 3-4 = dark (0.30), 5-6 = dim (0.15), 7 = slight (0.05)
-              const depth = Chunk.SEA_LEVEL - height;
-              const t = depth >= 6 ? 0.45 : depth >= 4 ? 0.30 : depth >= 2 ? 0.15 : 0.05;
-              lr = Math.round(r * (1 - t));
-              lg = Math.round(g * (1 - t));
-              lb = Math.round(b * (1 - t));
-            } else {
-              // Above sea level: bright bands
-              // Heights above sea: 0-4 = base, 5-9 = +10%, 10-16 = +20%, 17-24 = +30%, 25+ = +40%
-              const elev = height - Chunk.SEA_LEVEL;
-              const t = elev >= 25 ? 0.40 : elev >= 17 ? 0.30 : elev >= 10 ? 0.20 : elev >= 5 ? 0.10 : 0;
-              lr = Math.round(r + (255 - r) * t);
-              lg = Math.round(g + (255 - g) * t);
-              lb = Math.round(b + (255 - b) * t);
-            }
-
-            ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
-            ctx.fillRect(i, j, 1, 1);
+        if (!chunk) {
+          continue;
         }
+
+        const topBlock = chunk.topBlockAt(worldX, worldZ);
+        if (
+          !topBlock ||
+          topBlock.type < 0 ||
+          topBlock.type >= this.minimapColors.length
+        ) {
+          ctx.fillStyle = "#C7C0B7";
+          ctx.fillRect(i, j, 1, 1);
+          continue;
+        }
+
+        // height-based tinting: darken below sea level, brighten above. tune t to adjust strength of effect
+        const height = topBlock.height;
+        const r = this.minimapColors[topBlock.type][0];
+        const g = this.minimapColors[topBlock.type][1];
+        const b = this.minimapColors[topBlock.type][2];
+        let lr: number, lg: number, lb: number;
+
+        if (height < Chunk.SEA_LEVEL) {
+          // Below sea level: dark bands
+          // Depths: 0-2 = very dark (0.45), 3-4 = dark (0.30), 5-6 = dim (0.15), 7 = slight (0.05)
+          const depth = Chunk.SEA_LEVEL - height;
+          const t =
+            depth >= 6 ? 0.45 : depth >= 4 ? 0.3 : depth >= 2 ? 0.15 : 0.05;
+          lr = Math.round(r * (1 - t));
+          lg = Math.round(g * (1 - t));
+          lb = Math.round(b * (1 - t));
+        } else {
+          // Above sea level: bright bands
+          // Heights above sea: 0-4 = base, 5-9 = +10%, 10-16 = +20%, 17-24 = +30%, 25+ = +40%
+          const elev = height - Chunk.SEA_LEVEL;
+          const t =
+            elev >= 25
+              ? 0.4
+              : elev >= 17
+                ? 0.3
+                : elev >= 10
+                  ? 0.2
+                  : elev >= 5
+                    ? 0.1
+                    : 0;
+          lr = Math.round(r + (255 - r) * t);
+          lg = Math.round(g + (255 - g) * t);
+          lb = Math.round(b + (255 - b) * t);
+        }
+
+        ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
+        ctx.fillRect(i, j, 1, 1);
+      }
     }
 
     // player icon
     const camera = this.gui.getCamera();
     const look = camera.forward().negate();
     const angle = Math.atan2(-look.x, look.z);
-    
+
     ctx.save();
     ctx.translate(size / 2, size / 2);
     ctx.rotate(angle);

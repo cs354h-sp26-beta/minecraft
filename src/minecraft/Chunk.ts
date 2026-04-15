@@ -30,7 +30,7 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
-  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type
+  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type. Empty -> Chunk.blockTypeAir
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
   private numBlocksAdded: number;
 
@@ -614,57 +614,375 @@ export class Chunk {
   // FIXME: Using this for collisions is not going to work with overhangs.
   // We will likely need to adapt to an API similar to `Player::collidesWithChunk`.
   // I also just don't like the coupling here, but oh well it is a prototype.
-  public floorHeight(worldX: number, worldZ: number): number {
-    const [topLeftX, topLeftZ] = this.origin();
+  // public floorHeight(worldX: number, worldZ: number): number {
+  //   const [topLeftX, topLeftZ] = this.origin();
+  //
+  //   const centerX = Math.round(worldX - topLeftX);
+  //   const centerZ = Math.round(worldZ - topLeftZ);
+  //
+  //   let floorY = -Infinity;
+  //   for (let dx = -1; dx <= 1; dx += 1) {
+  //     const cubeChunkX = centerX + dx;
+  //     if (cubeChunkX < 0 || cubeChunkX >= this.size) {
+  //       continue;
+  //     }
+  //
+  //     for (let dz = -1; dz <= 1; dz += 1) {
+  //       const cubeChunkZ = centerZ + dz;
+  //       if (cubeChunkZ < 0 || cubeChunkZ >= this.size) {
+  //         continue;
+  //       }
+  //
+  //       const cubeWorldX = topLeftX + cubeChunkX;
+  //       const cubeWorldZ = topLeftZ + cubeChunkZ;
+  //
+  //       // Clamp.
+  //       // https://stackoverflow.com/questions/11409895/whats-the-most-elegant-way-to-cap-a-number-to-a-segment
+  //       const nearX = Math.max(
+  //         cubeWorldX - 0.5,
+  //         Math.min(cubeWorldX + 0.5, worldX),
+  //       );
+  //       const nearZ = Math.max(
+  //         cubeWorldZ - 0.5,
+  //         Math.min(cubeWorldZ + 0.5, worldZ),
+  //       );
+  //
+  //       // Radial distance.
+  //       const rdX = worldX - nearX;
+  //       const rdZ = worldZ - nearZ;
+  //       const hbr = 0.4;
+  //       if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
+  //         const cubeWorldY =
+  //           this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
+  //         floorY = Math.max(floorY, cubeWorldY - 0.5);
+  //       }
+  //     }
+  //   }
+  //
+  //   return floorY;
+  // }
 
-    const centerX = Math.round(worldX - topLeftX);
-    const centerZ = Math.round(worldZ - topLeftZ);
+  ///// Cylinder-voxel collision
 
-    let floorY = -Infinity;
-    for (let dx = -1; dx <= 1; dx += 1) {
-      const cubeChunkX = centerX + dx;
-      if (cubeChunkX < 0 || cubeChunkX >= this.size) {
-        continue;
-      }
+  /**
+   *  True if the horizontal circle (radius r) at (px,pz) overlaps the block
+   *  column centered at integer (ix, iz).
+   */
+  public static circleOverlapsBlockColumn(
+    px: number,
+    pz: number,
+    r: number,
+    ix: number,
+    iz: number,
+  ): boolean {
+    const nx = Math.max(ix - 0.5, Math.min(ix + 0.5, px));
+    const nz = Math.max(iz - 0.5, Math.min(iz + 0.5, pz));
+    const dx = px - nx;
+    const dz = pz - nz;
+    return dx * dx + dz * dz < r * r + 1e-10;
+  }
 
-      for (let dz = -1; dz <= 1; dz += 1) {
-        const cubeChunkZ = centerZ + dz;
-        if (cubeChunkZ < 0 || cubeChunkZ >= this.size) {
+  /**
+   * Vertical capsule: y in [headY - height, headY], circular footprint of
+   * radius `radius`.
+   *
+   * Calls solidAt(ix, iy, iz) for integer block centers in the swept bounds.
+   */
+  public static verticalCapsuleIntersectsSolids(
+    solidAt: (ix: number, iy: number, iz: number) => boolean,
+    px: number,
+    headY: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): boolean {
+    const yLow = headY - capsuleHeight;
+    const yHigh = headY;
+    const iMin = Math.floor(px - radius - 0.5);
+    const iMax = Math.ceil(px + radius + 0.5);
+    const kMin = Math.floor(pz - radius - 0.5);
+    const kMax = Math.ceil(pz + radius + 0.5);
+    const iyMin = Math.floor(yLow - 0.5);
+    const iyMax = Math.ceil(yHigh + 0.5);
+
+    for (let ix = iMin; ix <= iMax; ix++) {
+      for (let iz = kMin; iz <= kMax; iz++) {
+        if (!Chunk.circleOverlapsBlockColumn(px, pz, radius, ix, iz)) {
           continue;
         }
-
-        const cubeWorldX = topLeftX + cubeChunkX;
-        const cubeWorldZ = topLeftZ + cubeChunkZ;
-
-        // Clamp.
-        // https://stackoverflow.com/questions/11409895/whats-the-most-elegant-way-to-cap-a-number-to-a-segment
-        const nearX = Math.max(
-          cubeWorldX - 0.5,
-          Math.min(cubeWorldX + 0.5, worldX),
-        );
-        const nearZ = Math.max(
-          cubeWorldZ - 0.5,
-          Math.min(cubeWorldZ + 0.5, worldZ),
-        );
-
-        // Radial distance.
-        const rdX = worldX - nearX;
-        const rdZ = worldZ - nearZ;
-        const hbr = Player.hitboxRadius;
-        if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
-          const cubeWorldY =
-            this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
-          floorY = Math.max(floorY, cubeWorldY - 0.5);
+        for (let iy = iyMin; iy <= iyMax; iy++) {
+          if (!solidAt(ix, iy, iz)) continue;
+          const bLow = iy - 0.5;
+          const bHigh = iy + 0.5;
+          if (yLow < bHigh && yHigh > bLow) return true;
         }
       }
     }
+    return false;
+  }
 
-    return floorY;
+  public static worldToChunkAxis(worldVal: number, chunkSize: number): number {
+    return Math.floor((worldVal + chunkSize / 2) / chunkSize) * chunkSize;
+  }
+
+  public static isSolidBlockWorldWide(
+    getChunk: Chunk.ColumnProvider,
+    wx: number,
+    wy: number,
+    wz: number,
+  ): boolean {
+    const ix = Math.round(wx);
+    const iy = Math.round(wy);
+    const iz = Math.round(wz);
+    const chunk = getChunk(ix, iz);
+    if (!chunk) return false;
+    return chunk.isSolidBlockAtWorld(ix, iy, iz);
+  }
+
+  public static cylinderIntersectsSolidWorld(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    headY: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): boolean {
+    return Chunk.verticalCapsuleIntersectsSolids(
+      (ix, iy, iz) => Chunk.isSolidBlockWorldWide(getChunk, ix, iy, iz),
+      px,
+      headY,
+      pz,
+      radius,
+      capsuleHeight,
+    );
+  }
+
+  public static supportedHeadYWorld(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    pz: number,
+    feetY: number,
+    radius: number,
+    capsuleHeight: number,
+    footSlack: number,
+  ): number {
+    let supportTop = -Infinity;
+    const iMin = Math.floor(px - radius - 0.5);
+    const iMax = Math.ceil(px + radius + 0.5);
+    const kMin = Math.floor(pz - radius - 0.5);
+    const kMax = Math.ceil(pz + radius + 0.5);
+
+    for (let ix = iMin; ix <= iMax; ix++) {
+      for (let iz = kMin; iz <= kMax; iz++) {
+        if (!Chunk.circleOverlapsBlockColumn(px, pz, radius, ix, iz)) {
+          continue;
+        }
+        const chunk = getChunk(ix, iz);
+        const colMax = chunk
+          ? chunk.supportTopUnderFeet(ix, iz, feetY, footSlack)
+          : -Infinity;
+        if (colMax === -Infinity) continue;
+        supportTop = Math.max(supportTop, colMax);
+      }
+    }
+    if (supportTop === -Infinity) return -Infinity;
+    return supportTop + capsuleHeight;
+  }
+
+  public static separateVerticalCapsuleFromSolids(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    py: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+    vy: number,
+  ): number {
+    const solid = (hx: number, hy: number, hz: number) =>
+      Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        hx,
+        hy,
+        hz,
+        radius,
+        capsuleHeight,
+      );
+
+    if (!solid(px, py, pz)) return py;
+    const step = 0.025;
+    const maxSteps = 400;
+
+    let downY = py;
+    let s = 0;
+    while (solid(px, downY, pz) && s < maxSteps) {
+      downY -= step;
+      s++;
+    }
+    const downClear = !solid(px, downY, pz);
+
+    let upY = py;
+    s = 0;
+    while (solid(px, upY, pz) && s < maxSteps) {
+      upY += step;
+      s++;
+    }
+    const upClear = !solid(px, upY, pz);
+
+    if (!downClear && !upClear) return py;
+    if (!downClear) return upY;
+    if (!upClear) return downY;
+
+    const downDist = py - downY;
+    const upDist = upY - py;
+
+    if (vy > 1e-4) {
+      return downY;
+    }
+    if (vy < -1e-4) {
+      return upY;
+    }
+    if (downDist < upDist) return downY;
+    if (upDist < downDist) return upY;
+    return downY;
+  }
+
+  /**
+   * Step down until the vertical capsule is clear (ceiling / upward
+   * penetration).
+   */
+  public static resolveUpwardPenetration(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    py: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): number {
+    if (
+      !Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        px,
+        py,
+        pz,
+        radius,
+        capsuleHeight,
+      )
+    ) {
+      return py;
+    }
+    const sepStep = 0.025;
+    let y = py;
+    let guard = 0;
+    while (
+      Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        px,
+        y,
+        pz,
+        radius,
+        capsuleHeight,
+      ) &&
+      guard < 400
+    ) {
+      y -= sepStep;
+      guard++;
+    }
+    return y;
+  }
+
+  public static tryHorizontalCylinderMove(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    py: number,
+    pz: number,
+    dx: number,
+    dz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): { ax: number; az: number } {
+    const solid = (x: number, z: number) =>
+      Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        x,
+        py,
+        z,
+        radius,
+        capsuleHeight,
+      );
+
+    if (!solid(px + dx, pz + dz)) return { ax: dx, az: dz };
+    if (dx !== 0 && !solid(px + dx, pz)) return { ax: dx, az: 0 };
+    if (dz !== 0 && !solid(px, pz + dz)) return { ax: 0, az: dz };
+    return { ax: 0, az: 0 };
+  }
+
+  /**
+   * Samples head positions along a short jump arc; false if any sample
+   * intersects solid.
+   */
+  public static verticalCapsuleHasHeadroomForJump(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    headY: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): boolean {
+    for (let dh = 0; dh <= 1; dh += 0.35) {
+      if (
+        Chunk.cylinderIntersectsSolidWorld(
+          getChunk,
+          px,
+          headY + dh,
+          pz,
+          radius,
+          capsuleHeight,
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Solid voxel at integer block center (world coords); false if empty or out
+   * of this chunk.
+   */
+  public isSolidBlockAtWorld(wx: number, wy: number, wz: number): boolean {
+    const type = this.cubeType(wx, wz, wy);
+    return type !== undefined && type !== Chunk.blockTypeAir;
+  }
+
+  /**
+   * Highest block top (iy + 0.5) in this column at/below feetY + footSlack, or
+   * -Infinity if none. Only columns owned by this chunk contribute; others
+   * should query the owning chunk.
+   */
+  public supportTopUnderFeet(
+    columnWorldX: number,
+    columnWorldZ: number,
+    feetY: number,
+    footSlack: number,
+    yMaxInclusive: number = 100,
+  ): number {
+    let colMax = -Infinity;
+    for (let iy = 0; iy <= yMaxInclusive; iy++) {
+      const type = this.cubeType(columnWorldX, columnWorldZ, iy);
+      if (type === undefined || type === Chunk.blockTypeAir) {
+        continue;
+      }
+      const top = iy + 0.5;
+      if (top <= feetY + footSlack) {
+        colMax = Math.max(colMax, top);
+      }
+    }
+    return colMax;
   }
 
   /**
    * Gets the type of the cube located at a given position in world coordinates.
-   * Returns undefined for an empty cube.
+   * Returns undefined for a cube not in this chunk.
    */
   public cubeType(
     worldX: number,
@@ -676,8 +994,17 @@ export class Chunk {
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
     const cubeChunkY = Math.round(worldY);
 
+    if (
+      cubeChunkX < 0 ||
+      cubeChunkX >= this.size ||
+      cubeChunkZ < 0 ||
+      cubeChunkZ >= this.size
+    ) {
+      return undefined;
+    }
+
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-    return this.positionMap.get(key);
+    return this.positionMap.get(key) ?? Chunk.blockTypeAir;
   }
 
   /**
@@ -710,14 +1037,22 @@ export class Chunk {
 
   /**
    * Returns the cube type for the top cube at a given xz world coordinate.
-   * Used for minimap coloring. 
+   * Used for minimap coloring.
    */
-  public topBlockAt(worldX: number, worldZ: number): { type: number, height: number } | undefined {
+  public topBlockAt(
+    worldX: number,
+    worldZ: number,
+  ): { type: number; height: number } | undefined {
     const [topLeftX, topLeftZ] = this.origin();
     const localX = Math.round(worldX - topLeftX);
     const localZ = Math.round(worldZ - topLeftZ);
 
-    if (localX < 0 || localX >= this.size || localZ < 0 || localZ >= this.size) {
+    if (
+      localX < 0 ||
+      localX >= this.size ||
+      localZ < 0 ||
+      localZ >= this.size
+    ) {
       return undefined;
     }
 
@@ -733,4 +1068,9 @@ export class Chunk {
     }
     return { type, height };
   }
+}
+
+// Check if the chunk is defined
+export namespace Chunk {
+  export type ColumnProvider = (ix: number, iz: number) => Chunk | undefined;
 }

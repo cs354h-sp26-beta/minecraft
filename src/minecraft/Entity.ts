@@ -9,48 +9,190 @@ import {
 
 export type Collision = {
   blockCenter: Vec3;
-  belowPlayer: boolean;
+  belowEntity: boolean;
 };
 
-export class Player {
-  // The player's head position in world coordinates.
-  //
-  // Player should extend two units down from this location and 0.4 units radially.
+class Entity {
+  // The entity's head position in world coordinates.
   public position: Vec3;
 
-  // The velocity of the player in units/sec.
+  // The velocity of the entity in units/sec.
   public velocity: Vec3;
 
-  // Radial dimensions of hitbox.
-  public static readonly hitboxRadius: number = 0.4;
-  public static readonly hitboxHeight: number = 2.0;
+  // Radial dimensions of entity's hitbox.
+  public readonly hitboxRadius: number;
+  public readonly hitboxHeight: number;
 
-  constructor(position: Vec3) {
+  constructor(position: Vec3, hitboxRadius: number, hitboxHeight: number) {
     this.position = position;
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
+    this.hitboxRadius = hitboxRadius;
+    this.hitboxHeight = hitboxHeight;
   }
 
-  public update(lookDir: Vec3, dt: number, chunk: Chunk) {
-    // Apply base movement.
-    const walkDx = lookDir.scale(0.1);
-    const momentumDx = this.velocity.scale(dt, new Vec3());
-    const totalDx = walkDx.add(momentumDx, new Vec3());
-    this.position.add(totalDx);
+  private applyVerticalSeparationAndZeroVelocity(
+    newY: number,
+    prevY: number,
+  ): void {
+    this.position.y = newY;
+    if (newY === prevY) return;
+    const vy = this.velocity.y;
+    if (newY < prevY && vy > 0) this.velocity.y = 0;
+    if (newY > prevY && vy < 0) this.velocity.y = 0;
+  }
 
-    // Check for collisions.
-    //
-    // FIXME: Ew. This system sucks. It's what the hint says to do but...
-    const floorY = chunk.floorHeight(this.position.x, this.position.z);
-    // Apply gravity acceleration.
-    if (this.position.y > floorY + Player.hitboxHeight) {
-      const gDelta = -9.8 * dt;
-      const gDv = new Vec3([0.0, gDelta, 0.0]);
-      this.velocity.add(gDv);
+  // Does base physics updates for entities.
+  public stepPhysics(
+    lookDir: Vec3,
+    chunkProvider: Chunk.ColumnProvider,
+    dt: number,
+  ) {
+    const r = this.hitboxRadius;
+    const h = this.hitboxHeight;
+    const footSlack = 0.55;
+
+    const momentumH = this.velocity.scale(dt, new Vec3());
+    momentumH.y = 0;
+    const totalH = lookDir.add(momentumH, new Vec3());
+
+    let px = this.position.x;
+    let py = this.position.y;
+    let pz = this.position.z;
+
+    const { ax, az } = Chunk.tryHorizontalCylinderMove(
+      chunkProvider,
+      px,
+      py,
+      pz,
+      totalH.x,
+      totalH.z,
+      r,
+      h,
+    );
+    if (ax === 0) this.velocity.x = 0;
+    if (az === 0) this.velocity.z = 0;
+    this.position.x += ax;
+    this.position.z += az;
+    px = this.position.x;
+    py = this.position.y;
+    pz = this.position.z;
+
+    let floorHead = Chunk.supportedHeadYWorld(
+      chunkProvider,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    const grounded = floorHead !== -Infinity && py <= floorHead + 0.02;
+
+    if (!grounded) {
+      this.velocity.add(new Vec3([0.0, -9.8 * dt, 0.0]));
     } else {
-      // Stop all movement in vertical direction.
-      this.velocity.y = 0;
-      this.position.y = floorY + Player.hitboxHeight;
+      const v = this.velocity.copy();
+      if (v.y < 0) v.y = 0;
+      this.velocity = v;
     }
+
+    this.position.y += this.velocity.y * dt;
+    py = this.position.y;
+
+    floorHead = Chunk.supportedHeadYWorld(
+      chunkProvider,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    if (floorHead !== -Infinity && py < floorHead) {
+      this.position.y = floorHead;
+      if (this.velocity.y < 0) this.velocity.y = 0;
+      py = this.position.y;
+    }
+
+    const yBeforeSep = py;
+    const ySep = Chunk.separateVerticalCapsuleFromSolids(
+      chunkProvider,
+      px,
+      py,
+      pz,
+      r,
+      h,
+      this.velocity.y,
+    );
+    this.applyVerticalSeparationAndZeroVelocity(ySep, yBeforeSep);
+    py = this.position.y;
+
+    if (
+      this.velocity.y > 0 &&
+      Chunk.cylinderIntersectsSolidWorld(chunkProvider, px, py, pz, r, h)
+    ) {
+      py = Chunk.resolveUpwardPenetration(chunkProvider, px, py, pz, r, h);
+      this.position.y = py;
+      this.velocity.y = 0;
+    }
+
+    floorHead = Chunk.supportedHeadYWorld(
+      chunkProvider,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    if (floorHead !== -Infinity && py < floorHead) {
+      this.position.y = floorHead;
+      if (this.velocity.y < 0) this.velocity.y = 0;
+    }
+  }
+
+  public jump(chunkProvider: Chunk.ColumnProvider) {
+    const r = this.hitboxRadius;
+    const h = this.hitboxHeight;
+    const footSlack = 0.55;
+    const px = this.position.x;
+    const py = this.position.y;
+    const pz = this.position.z;
+    const floorHead = Chunk.supportedHeadYWorld(
+      chunkProvider,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    if (
+      floorHead === -Infinity ||
+      py > floorHead + 0.02 ||
+      !Chunk.verticalCapsuleHasHeadroomForJump(chunkProvider, px, py, pz, r, h)
+    ) {
+      return;
+    }
+    this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
+  }
+}
+
+export class Player extends Entity {
+  constructor(position: Vec3) {
+    super(position, 0.4, 2.0);
+  }
+
+  public update(
+    lookDir: Vec3,
+    chunkProvider: Chunk.ColumnProvider,
+    dt: number,
+  ) {
+    super.stepPhysics(lookDir, chunkProvider, dt);
+  }
+
+  public jump(chunkProvider: Chunk.ColumnProvider) {
+    super.jump(chunkProvider);
   }
 
   // Detects if the player collides with any blocks in the given chunk.
@@ -67,13 +209,7 @@ enum EnemyState {
   Attacking,
 }
 
-export class Enemy {
-  // The enemy's position in world coordinates.
-  public position: Vec3;
-
-  // The velocity of the enemy in units/sec.
-  public velocity: Vec3;
-
+export class Enemy extends Entity {
   public yaw: number;
 
   public mesh: Mesh;
@@ -81,14 +217,9 @@ export class Enemy {
   private state: EnemyState;
   private animationTime: number;
 
-  // Radial dimensions of hitbox.
-  public static readonly hitboxRadius: number = 0.4;
-  // HACK: Enemy centered at CoM rather than head.
-  public static readonly hitboxHeight: number = 1.0;
-
   constructor(mesh: Mesh, position: Vec3) {
-    this.position = position;
-    this.velocity = new Vec3([0.0, 0.0, 0.0]);
+    // HACK: Enemy centered at CoM rather than head.
+    super(position, 0.4, 1.0);
     this.yaw = 0.0;
     this.mesh = new Mesh(mesh);
     this.mesh.setPose(enemyIdlePose);
@@ -126,31 +257,21 @@ export class Enemy {
     return Quat.fromAxisAngle(Vec3.up, this.yaw - Math.PI / 2);
   }
 
-  public update(dt: number, chunk: Chunk, player: Player) {
+  public jump(chunkProvider: Chunk.ColumnProvider) {
+    super.jump(chunkProvider);
+  }
+
+  public update(
+    chunkProvider: Chunk.ColumnProvider,
+    player: Player,
+    dt: number,
+  ) {
     this.faceTowards(player.position);
 
-    // Update position based on velocity.
-    //
-    // Could just use `player.position` here, I guess. Lol.
-    const lookDir = this.lookDir();
-    const momentumDx = this.velocity.scale(dt, new Vec3());
-    this.position.add(momentumDx);
-
-    // Apply gravity.
-    //
-    // FIXME: This uses the shitty current collision system.
-    // I will overhaul this in the future to make more sense.
-    const floorY = chunk.floorHeight(this.position.x, this.position.z);
-    // Apply gravity acceleration.
-    if (this.position.y > floorY + Enemy.hitboxHeight) {
-      const gDelta = -9.8 * dt;
-      const gDv = new Vec3([0.0, gDelta, 0.0]);
-      this.velocity.add(gDv);
-    } else {
-      // Stop all movement in vertical direction.
-      this.velocity.y = 0.0;
-      this.position.y = floorY + Enemy.hitboxHeight;
-    }
+    // HACK: `stepPhysics` moves entities some base amount in their `lookDir`.
+    // Since we don't want enemies to update based on that, we just pass in an
+    // empty vec.
+    super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), chunkProvider, dt);
 
     this.animationTime += dt;
 
@@ -166,6 +287,7 @@ export class Enemy {
   }
 }
 
+// Specifically the Block ENTITY (falling blocks!)
 export class Block {
   // The position of the block's center in world coordinates.
   public position: Vec3;
@@ -173,15 +295,50 @@ export class Block {
   // The velocity of the block in units/sec.
   public velocity: Vec3;
 
-  constructor(position: Vec3) {
+  // The type of the block, as specified in Chunk.ts
+  public type: number;
+
+  constructor(position: Vec3, type: number) {
     this.position = position;
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
+    this.type = type;
+  }
+
+  public update(dt: number, chunk: Chunk): boolean {
+    this.position.add(this.velocity.scale(dt, new Vec3()));
+
+    // Undo update if overlaps with another block (can change to entity later)
+    if (this.collidesWithChunk(chunk).length > 0) {
+      this.position.subtract(this.velocity.scale(dt, new Vec3()));
+      return false;
+    }
+
+    // Apply gravity acceleration.
+    const gDelta = -9.8 * dt;
+    const gDv = new Vec3([0.0, gDelta, 0.0]);
+    this.velocity.add(gDv);
+    return true;
   }
 
   // Detects if the block collides with any blocks in the given chunk.
   // Returns the cubes for which there is a collision.
+  // FIXME: Check bottom face for now.
   public collidesWithChunk(c: Chunk): Collision[] {
-    // TODO
+    if (
+      c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
+      Chunk.blockTypeAir
+    ) {
+      return [
+        {
+          blockCenter: new Vec3([
+            Math.round(this.position.x),
+            Math.round(this.position.y),
+            Math.round(this.position.z),
+          ]),
+          belowEntity: true,
+        },
+      ];
+    }
     return [];
   }
 }
