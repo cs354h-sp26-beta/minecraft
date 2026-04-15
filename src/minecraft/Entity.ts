@@ -286,8 +286,10 @@ export class Enemy extends Entity {
   }
 
   private setState(state: EnemyState) {
-    this.state = state;
-    this.animationTime = 0;
+    if (this.state !== state) {
+      this.state = state;
+      this.animationTime = 0;
+    }
   }
 
   private targetPose(): Quat[] {
