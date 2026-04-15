@@ -23,7 +23,7 @@ import {
   ItemAction,
   ItemStack,
   itemTypes,
-  registerItemTypes,
+  registerItemTypes, registerRecipes,
 } from "./Inventory.js";
 
 type Achievement = {
@@ -123,6 +123,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     registerItemTypes();
+    registerRecipes();
 
     this.loadMinimapColors();
 
@@ -420,6 +421,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     const randomItemType =
       allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
     this.inventory.insertStack(new ItemStack(randomItemType, 1));
+  }
+
+  public giveAllItems(): void {
+    for (const type of itemTypes.values()) {
+      this.inventory.insertStack(new ItemStack(type, type.maxStackSize));
+    }
   }
 
   /**
@@ -1162,7 +1169,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(instanceCount);
 
     // Enemies
-    if (this.enemyMesh !== null) {
+    if (this.enemyMesh !== null && this.enemies.length > 0) {
       const enemyInstanceCount = this.enemies.length;
       const enemyPositions = new Float32Array(enemyInstanceCount * 4);
       const enemyRotations = new Float32Array(enemyInstanceCount * 4);
@@ -1324,14 +1331,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.isInInventory;
   }
 
-  public toggleInventory(): void {
-    this.isInInventory = !this.isInInventory;
+  public toggleInventory(open?: boolean): void {
+    this.isInInventory = open ?? !this.isInInventory;
     if (this.isInInventory) {
       document.exitPointerLock();
     } else {
       this.canvas2d.requestPointerLock();
-      this.inventory.insertStack(this.inventory.mouseItem);
-      this.inventory.mouseItem = null;
+      this.inventory.closeInventory();
     }
   }
 
@@ -1501,7 +1507,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
     this.drawHealthBar();
     this.drawMinimap();
-    this.drawHotbar();
     this.drawAchievementToast();
     this.drawCrosshair();
     if (this.player.isDead()) {
@@ -1509,7 +1514,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     if (this.isInInventory) {
-      this.drawInventory();
+      this.inventory.drawInventoryScreen(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx, this.gui.mouseX, this.gui.mouseY);
+    } else {
+      this.inventory.drawHotbar(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx);
     }
 
     ctx.restore();
@@ -1724,189 +1731,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
-  private static readonly SLOT_SIZE = 60;
-  private static readonly SLOT_GAP = 10;
-  private static readonly INV_PADDING = 15;
-  private static readonly HOTBAR_GAP = 30;
-
-  /** Iterates over all inventory slots, calling cb with (col, invRow, x, y) relative to grid origin. */
-  private forEachInventorySlot(cb: (col: number, invRow: number, x: number, y: number) => void): void {
-    const { SLOT_SIZE, SLOT_GAP, HOTBAR_GAP } = MinecraftAnimation;
-    const cols = Inventory.width;
-    const rows = Inventory.height;
-
-    for (let row = 0; row < rows; row++) {
-      const invRow = row < rows - 1 ? row + 1 : 0;
-      const y = row < rows - 1
-        ? row * (SLOT_SIZE + SLOT_GAP)
-        : row * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
-
-      for (let col = 0; col < cols; col++) {
-        cb(col, invRow, col * (SLOT_SIZE + SLOT_GAP), y);
-      }
-    }
-  }
-
-  private inventoryGridOrigin(): [number, number] {
-    const { SLOT_SIZE, SLOT_GAP, HOTBAR_GAP } = MinecraftAnimation;
-    const cols = Inventory.width;
-    const rows = Inventory.height;
-    const gridWidth = cols * SLOT_SIZE + (cols - 1) * SLOT_GAP;
-    const gridHeight = rows * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
-    return [
-      (this.canvas2d.width - gridWidth) / 2,
-      (this.canvas2d.height - gridHeight) / 2,
-    ];
-  }
-
-  /** Draws a single inventory slot. */
-  private drawSlot(ctx: CanvasRenderingContext2D, x: number, y: number, col: number, invRow: number, highlight: boolean): void {
-    const { SLOT_SIZE } = MinecraftAnimation;
-
-    ctx.beginPath();
-    ctx.roundRect(x, y, SLOT_SIZE, SLOT_SIZE, 4);
-    ctx.fillStyle = "rgba(15,15,25,0.6)";
-    ctx.fill();
-    ctx.strokeStyle = highlight ? "#e1d8b7" : "#1b1717";
-    ctx.lineWidth = highlight ? 4 : 2;
-    ctx.stroke();
-
-    const item = this.inventory.getItemStack(Inventory.slotIndex(col, invRow));
-    if (item) {
-      const img = item.itemType!.img;
-      if (img) {
-        ctx.drawImage(img!, x + 9, y + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
-      } else {
-        ctx.fillStyle = "#d81cd5";
-        ctx.fillRect(x + 9, y + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
-      }
-
-      if (item.count > 1) {
-        ctx.fillStyle = "#fff6d7";
-        ctx.font = "16px monospace";
-        ctx.textBaseline = "bottom";
-        ctx.textAlign = "right";
-        ctx.fillText(String(item.count), x + SLOT_SIZE - 8, y + SLOT_SIZE - 6);
-      }
-    }
-  }
-
-  private drawHotbar(): void {
-    if (this.isInInventory) { return; }
-
-    const { SLOT_SIZE, SLOT_GAP } = MinecraftAnimation;
-    const ctx = this.overlayCtx;
-    const cols = Inventory.width;
-    const hotbarWidth = cols * SLOT_SIZE + (cols - 1) * SLOT_GAP;
-    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - SLOT_SIZE - 35;
-
-    const selectedItem = this.inventory.getItemStack(Inventory.slotIndex(this.selectedHotbarIdx, 0));
-    ctx.font = "16px monospace";
-    const titleHeight = selectedItem ? 18 : 0;
-
-    ctx.save();
-    ctx.translate(hotbarX, hotbarY);
-
-    // background (extended upward for title)
-    ctx.beginPath();
-    ctx.roundRect(-15, -15 - titleHeight, hotbarWidth + 30, SLOT_SIZE + 30 + titleHeight, 6);
-    ctx.strokeStyle = "#737981";
-    ctx.lineWidth = 4;
-    ctx.fillStyle = "rgba(21,27,41,0.6)";
-    ctx.fill();
-    ctx.stroke();
-
-    // item title
-    if (selectedItem) {
-      ctx.fillStyle = "#e1d8b7";
-      ctx.textBaseline = "bottom";
-      ctx.textAlign = "center";
-      ctx.fillText(selectedItem!.itemType.name, hotbarWidth / 2, -8);
-    }
-
-    for (let i = 0; i < cols; i++) {
-      this.drawSlot(ctx, i * (SLOT_SIZE + SLOT_GAP), 0, i, 0, i === this.selectedHotbarIdx);
-    }
-
-    ctx.restore();
-  }
-
-  private drawInventory(): void {
-    const { SLOT_SIZE, SLOT_GAP, INV_PADDING, HOTBAR_GAP } = MinecraftAnimation;
-    const ctx = this.overlayCtx;
-    const cols = Inventory.width;
-    const rows = Inventory.height;
-    const gridWidth = cols * SLOT_SIZE + (cols - 1) * SLOT_GAP;
-    const gridHeight = rows * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
-
-    const [originX, originY] = this.inventoryGridOrigin();
-
-    ctx.save();
-    ctx.translate(originX, originY);
-
-    // background
-    ctx.beginPath();
-    ctx.roundRect(-INV_PADDING, -INV_PADDING, gridWidth + INV_PADDING * 2, gridHeight + INV_PADDING * 2, 6);
-    ctx.strokeStyle = "#737981";
-    ctx.lineWidth = 4;
-    ctx.fillStyle = "rgba(21,27,41,0.85)";
-    ctx.fill();
-    ctx.stroke();
-
-    // label
-    ctx.font = "18px monospace";
-    ctx.fillStyle = "#e1d8b7";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "left";
-    ctx.fillText("Inventory", 0, -INV_PADDING - 4);
-
-    this.forEachInventorySlot((col, invRow, x, y) => {
-      this.drawSlot(ctx, x, y, col, invRow, invRow === 0 && col === this.selectedHotbarIdx);
-    });
-
-    // Draw item held by mouse
-    const mouseItem = this.inventory.mouseItem;
-    if (mouseItem) {
-      const { SLOT_SIZE } = MinecraftAnimation;
-      const mx = this.gui.mouseX - originX - SLOT_SIZE / 2;
-      const my = this.gui.mouseY - originY - SLOT_SIZE / 2;
-      const img = mouseItem.itemType.img;
-      if (img) {
-        ctx.drawImage(img, mx + 9, my + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
-      } else {
-        ctx.fillStyle = "#d81cd5";
-        ctx.fillRect(mx + 9, my + 9, SLOT_SIZE - 18, SLOT_SIZE - 18);
-      }
-
-      if (mouseItem.count > 1) {
-        ctx.fillStyle = "#fff6d7";
-        ctx.font = "16px monospace";
-        ctx.textBaseline = "bottom";
-        ctx.textAlign = "right";
-        ctx.fillText(String(mouseItem.count), mx + SLOT_SIZE - 8, my + SLOT_SIZE - 6);
-      }
-    }
-
-    ctx.restore();
-  }
-
   public inventoryClick(mouseX: number, mouseY: number, button: number): void {
-    const { SLOT_SIZE } = MinecraftAnimation;
-    const [originX, originY] = this.inventoryGridOrigin();
-    const relX = mouseX - originX;
-    const relY = mouseY - originY;
-
-    this.forEachInventorySlot((col, invRow, x, y) => {
-      if (relX >= x && relX < x + SLOT_SIZE &&
-          relY >= y && relY < y + SLOT_SIZE) {
-        this.onInventorySlotClick(col, invRow, button);
-      }
-    });
-  }
-
-  private onInventorySlotClick(col: number, row: number, button: number): void {
-    this.inventory.clickSlot(Inventory.slotIndex(col, row), button);
+    this.inventory.handleClick(mouseX, mouseY, this.canvas2d.width, this.canvas2d.height, button);
   }
 
   public setHotbarSlot(number: number) {
@@ -1915,6 +1741,14 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public heldItem(): ItemStack | null {
     return this.inventory.getItemStack(Inventory.slotIndex(this.selectedHotbarIdx, 0));
+  }
+
+  public dropHeldItem(): void {
+    const index = Inventory.slotIndex(this.selectedHotbarIdx, 0);
+    const item = this.inventory.getItemStack(index);
+    if (item) {
+      this.inventory.editSlotCount(index, item.count - 1);
+    }
   }
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;

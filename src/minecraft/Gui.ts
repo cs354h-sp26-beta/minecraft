@@ -314,8 +314,20 @@ export class GUI implements IGUI {
         this.animation.toggleInventory();
         break;
       }
+      case "KeyQ": {
+        this.animation.dropHeldItem();
+        break;
+      }
+      case "KeyP": {
+        this.animation.giveAllItems();
+        break;
+      }
       case "KeyG": {
         this.animation.toggleAchievements();
+        break;
+      }
+      case "Escape": {
+        this.animation.toggleInventory(false);
         break;
       }
       case "Space": {
