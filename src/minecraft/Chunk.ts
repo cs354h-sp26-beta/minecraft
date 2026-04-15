@@ -9,6 +9,13 @@ import {
   type BiomeProfile,
 } from "./Biomes.js";
 
+export interface BlockData {
+  x: number;
+  y: number;
+  z: number;
+  type: number;
+}
+
 export class Chunk {
   public static readonly blockTypeAir: number = -1;
   public static readonly blockTypeDirt: number = 0;
@@ -593,6 +600,82 @@ export class Chunk {
     return false;
   }
 
+  private updateCubePositionsAndTypes() {
+    const [topLeftX, topLeftZ] = this.origin();
+
+    // Count all visible cubes up to generated column height (including water)
+    this.cubes = 0;
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
+        for (let y = 0; y < colMaxY; y++) {
+          if (
+            this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
+            this.isExposed(i, j, y)
+          )
+            this.cubes++;
+        }
+      }
+    }
+    // Count player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
+      if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
+    }
+
+    this.cubePositionsF32 = new Float32Array(4 * this.cubes);
+    this.cubeTypesF32 = new Float32Array(this.cubes);
+
+    let cubeIdx = 0;
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
+        for (let y = 0; y < colMaxY; y++) {
+          const blockType = this.getLocalCubeType(i, j, y);
+          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
+            continue;
+
+          this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+          this.cubePositionsF32[4 * cubeIdx + 1] = y;
+          this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+          this.cubeTypesF32[cubeIdx] = blockType;
+          cubeIdx++;
+        }
+      }
+    }
+    // Fill player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
+      if (y < colMaxY || !this.isExposed(i, j, y)) continue;
+
+      this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+      this.cubePositionsF32[4 * cubeIdx + 1] = y;
+      this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+      this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+      this.cubeTypesF32[cubeIdx] = blockType;
+      cubeIdx++;
+    }
+  }
+
   public cubePositions(): Float32Array {
     return this.cubePositionsF32;
   }
@@ -1026,7 +1109,7 @@ export class Chunk {
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
 
     this.deltaMap.set(key, newType);
-    this.generateCubes(); // re-generate cubes with the modification
+    this.updateCubePositionsAndTypes();
     return this.deltaMap;
   }
 
