@@ -65,14 +65,10 @@ export class Chunk {
 
   private hashInts(a: number, b: number, c: number, d: number): number {
     let h = Chunk.seedHash;
-    h ^= a;
-    h = Math.imul(h, 0x9e3779b9) >>> 0;
-    h ^= b;
-    h = Math.imul(h, 0x9e3779b9) >>> 0;
-    h ^= c;
-    h = Math.imul(h, 0x9e3779b9) >>> 0;
-    h ^= d;
-    h = Math.imul(h, 0x9e3779b9) >>> 0;
+    h = (h ^ ((a + 0x9e3779b9 + (h << 6) + (h >>> 2)) >>> 0)) >>> 0;
+    h = (h ^ ((b + 0x9e3779b9 + (h << 6) + (h >>> 2)) >>> 0)) >>> 0;
+    h = (h ^ ((c + 0x9e3779b9 + (h << 6) + (h >>> 2)) >>> 0)) >>> 0;
+    h = (h ^ ((d + 0x9e3779b9 + (h << 6) + (h >>> 2)) >>> 0)) >>> 0;
 
     h = (h ^ (h >>> 16)) >>> 0;
     h = Math.imul(h, 0x85ebca6b) >>> 0;
@@ -84,7 +80,7 @@ export class Chunk {
 
   // deterministic float in [0, 1) by lattice coord and octave
   private rand01AtLattice(ix: number, iz: number, octave: number): number {
-    return this.hashInts(octave, ix, 0, iz) / 4294967295;
+    return this.hashInts(ix, iz, octave, ix ^ iz) / 4294967295;
   }
 
   // gradient directions for 3D Perlin noise
