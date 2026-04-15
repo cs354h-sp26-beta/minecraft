@@ -133,7 +133,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
-        (Date.now() >>> 0),
+        Date.now() >>> 0,
     );
 
     this.loadMinimapColors();
@@ -189,7 +189,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
-    
+
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
     heartImg.src = "./static/assets/heart.png";
@@ -199,12 +199,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       });
     };
 
-    const foodImg = new Image(); 
+    const foodImg = new Image();
     foodImg.src = "./static/assets/food.png";
     foodImg.onload = () => {
       createImageBitmap(foodImg).then((bmp) => {
         this.foodBitmap = bmp;
-      })
+      });
     };
 
     const crosshairImg = new Image();
@@ -343,6 +343,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.position = this.spawnPosition.copy();
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
+    this.player.food = this.player.maxFood;
+    this.resetInventoryState();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
@@ -370,10 +372,16 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
     this.player.food = this.player.maxFood;
+    this.resetInventoryState();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
     this.gui.getCamera().setPos(this.player.position);
+  }
+
+  private resetInventoryState(): void {
+    this.inventory = new Inventory();
+    this.selectedHotbarIdx = 0;
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -1118,10 +1126,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Update hunger
     this.hungerTimer += dt;
     if (this.hungerTimer >= this.hungerInterval) {
-      this.hungerTimer = 0; 
+      this.hungerTimer = 0;
       this.player.experienceHunger(1);
     }
-    
+
     if (this.player.food <= 0) {
       this.starvationTimer += dt;
       if (this.starvationTimer >= this.starvationInterval) {
@@ -1423,7 +1431,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.selectedCubePosition.y,
     );
 
-    if (brokenCubeType === Chunk.blockTypeWater || brokenCubeType === Chunk.blockTypePortal) {
+    if (
+      brokenCubeType === Chunk.blockTypeWater ||
+      brokenCubeType === Chunk.blockTypePortal
+    ) {
       return;
     }
 
@@ -1906,7 +1917,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (!this.crosshairBitmap) return;
 
     const ctx = this.overlayCtx;
-    const centerX = this.canvas2d.width / 2; 
+    const centerX = this.canvas2d.width / 2;
     const centerY = this.canvas2d.height / 2;
     const size = 30;
 
@@ -1982,7 +1993,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           foodSize,
         );
       } else {
-        // Empty food 
+        // Empty food
         ctx.globalAlpha = 0.25;
         ctx.drawImage(this.foodBitmap, x, startY, foodSize, foodSize);
       }
