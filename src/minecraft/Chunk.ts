@@ -38,13 +38,18 @@ export class Chunk {
     Chunk.worldSeed = seed;
   }
 
-  constructor(centerX: number, centerZ: number, size: number) {
+  constructor(
+    centerX: number,
+    centerZ: number,
+    size: number,
+    deltaMap = new Map(),
+  ) {
     this.x = centerX;
     this.z = centerZ;
     this.size = size;
     this.cubes = size * size;
     this.positionMap = new Map();
-    this.deltaMap = new Map();
+    this.deltaMap = deltaMap;
     this.numCubesAdded = 0;
     this.generateCubes();
   }

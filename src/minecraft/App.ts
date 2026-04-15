@@ -294,7 +294,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         if (!this.chunkCache.has(key)) {
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step));
+          let deltaMap = this.deltaMaps.has(key)
+            ? this.deltaMaps.get(key)
+            : new Map();
+          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
@@ -571,7 +574,6 @@ export class MinecraftAnimation extends CanvasAnimation {
           if (cubeType !== undefined) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
-            // TODO: Save the cube face that was hit for placing blocks
             if (t !== undefined && t < bestT) {
               bestT = t;
               bestPos = [x, y, z];
@@ -615,22 +617,17 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public placeBlock(cubeType: number) {
-    const cubeX = this.selectedCubePosition.x;
-    const cubeY = this.selectedCubePosition.y;
-    const cubeZ = this.selectedCubePosition.z;
+    // Place new cube based on side of cube that mouse is pointing at
+    const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
+    const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
+    const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
 
     const chunkX = this.worldToChunkCoord(cubeX);
     const chunkZ = this.worldToChunkCoord(cubeZ);
     let key = `${chunkX},${chunkZ}`;
     let chunk = this.renderedChunks.get(key)!;
 
-    // Place new cube based on side of cube that mouse is pointing at
-    let chunkDeltaMap = chunk.changeCubeType(
-      cubeX + this.isectNormal.x,
-      cubeZ + this.isectNormal.z,
-      cubeY + this.isectNormal.y,
-      cubeType,
-    );
+    let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
 
     // TODO: Test falling blocks by checking if block below is empty
     if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
