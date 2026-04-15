@@ -205,9 +205,14 @@ export class Mesh {
     });
   }
 
-  public setPose(pose: [number, number, number, number][]) {
+  public setPose(pose: Quat[], blendAmount: number = 0) {
     for (let i = 0; i < this.bones.length; i++) {
-      this.bones[i].relativeRot = new Quat(pose[i]);
+      Quat.slerpShort(
+        pose[i],
+        this.bones[i].relativeRot,
+        blendAmount,
+        this.bones[i].relativeRot,
+      );
     }
 
     // Recursively update rots starting with roots

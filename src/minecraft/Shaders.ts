@@ -784,3 +784,48 @@ export const enemyFSText = `
         //gl_FragColor = vec4((normal.x + 1.0)/2.0, (normal.y + 1.0)/2.0, (normal.z + 1.0)/2.0,1.0);
     }
 `;
+
+export const portalVSText = `
+    precision mediump float;
+
+    uniform mat4 uView;
+    uniform mat4 uProj;
+
+    attribute vec4 aVertPos;
+    attribute vec4 aOffset;
+    attribute vec2 aUV;
+
+    varying vec2 vUV;
+
+    void main () {
+        gl_Position = uProj * uView * (aVertPos + aOffset);
+        vUV = aUV;
+    }
+`;
+
+export const portalFSText = `
+    precision mediump float;
+
+    uniform sampler2D uPortalTex; // FBO for destination scene
+    uniform vec2 uResolution;
+    // uniform float uTime; Could use in animated portal effect
+
+    varying vec2 vUV;
+
+    void main() {
+        // Sample the portal FBO using screen-space UVs
+        vec2 screenUV = gl_FragCoord.xy / uResolution; // [0, 1]
+        vec4 color = texture2D(uPortalTex, screenUV);
+
+        // Nether portal tint, light purple rn
+        color.rgb *= vec3(0.85, 0.65, 0.8);
+
+        // Vignette using block-local UVs (edges darken)
+        vec2 centered = vUV - 0.5;
+        float vignette = 1.0 - dot(centered, centered) * 2.0; // distance^2 from center
+        vignette = clamp(vignette, 0.3, 1.0);
+        color.rgb *= vignette;
+
+        gl_FragColor = color;
+    }
+`;
