@@ -140,13 +140,33 @@ const treeTextures = `
         return mix(vec3(0.28, 0.15, 0.07), vec3(0.47, 0.28, 0.12), stripe);
     }
 
+    vec3 makeBirchWood(vec2 uv, vec3 world) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float spot = step(0.76, hash(floor(pixelUV * 10.0) + vec2(world.y, world.x)));
+        vec3 bark = mix(vec3(0.72, 0.66, 0.52), vec3(0.92, 0.86, 0.68), pixelUV.y);
+        return mix(bark, vec3(0.08, 0.07, 0.06), spot);
+    }
+
     vec3 makeLeaves(vec2 uv, vec3 world) {
         vec3 pixelWorld = floor(world * 8.0) / 8.0;
         float noise = fbm(pixelWorld.xz * 3.0 + vec2(pixelWorld.y), 2);
         float speckle = hash(floor(uv * 8.0) + vec2(world.x, world.z));
-        vec3 darkLeaf = vec3(0.05, 0.27, 0.07);
-        vec3 lightLeaf = vec3(0.18, 0.48, 0.13);
+        vec3 darkLeaf = vec3(0.08, 0.34, 0.09);
+        vec3 lightLeaf = vec3(0.25, 0.58, 0.17);
         return mix(darkLeaf, lightLeaf, noise * 0.7 + speckle * 0.25);
+    }
+
+    vec3 makeSpruceLeaves(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 8.0) / 8.0;
+        float noise = fbm(pixelWorld.xz * 3.0 + vec2(pixelWorld.y), 2);
+        return mix(vec3(0.04, 0.22, 0.13), vec3(0.11, 0.40, 0.22), noise);
+    }
+
+    vec3 makeDecorRock(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 10.0) / 10.0;
+        float chips = hash(floor(uv * 8.0) + vec2(world.x, world.z));
+        float grain = fbm(pixelWorld.xz * 4.0 + vec2(pixelWorld.y), 2);
+        return mix(vec3(0.36, 0.35, 0.33), vec3(0.62, 0.60, 0.56), grain * 0.7 + chips * 0.25);
     }
 `;
 
@@ -299,6 +319,12 @@ export const blankCubeFSText = `
             textureColor = makeWood(uv, wsPos.xyz);
         } else if (vBlockType == 21.0) {
             textureColor = makeLeaves(uv, wsPos.xyz);
+        } else if (vBlockType == 22.0) {
+            textureColor = makeBirchWood(uv, wsPos.xyz);
+        } else if (vBlockType == 23.0) {
+            textureColor = makeSpruceLeaves(uv, wsPos.xyz);
+        } else if (vBlockType == 24.0) {
+            textureColor = makeDecorRock(uv, wsPos.xyz);
         } else {
             vec3 oreColor = vec3(0.9, 0.1, 0.2);
             textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
@@ -358,9 +384,15 @@ export const decorBillboardVSText = `
         } else if (aType < 2.5) {
             widthScale = 0.9;
             heightScale = 0.42;
-        } else {
+        } else if (aType < 3.5) {
             widthScale = 0.82;
             heightScale = 1.35;
+        } else if (aType < 4.5) {
+            widthScale = 0.45;
+            heightScale = 0.78;
+        } else {
+            widthScale = 0.58;
+            heightScale = 0.55;
         }
 
         vec3 billboardOffset = rotatedRight * (aQuadPos.x * aScale * widthScale) + leanedUp * (aQuadPos.y * aScale * heightScale);
@@ -438,6 +470,30 @@ export const decorBillboardFSText = `
         return clamp(trunk + leavesBottom + leavesMid + leavesTop - notch, 0.0, 1.0);
     }
 
+    float flowerMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stem = step(7.0, x) * step(x, 8.0) * step(y, 9.0);
+        float center = step(7.0, x) * step(x, 8.0) * step(10.0, y) * step(y, 11.0);
+        float petalTop = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 13.0);
+        float petalBottom = step(7.0, x) * step(x, 8.0) * step(8.0, y) * step(y, 9.0);
+        float petalLeft = step(5.0, x) * step(x, 6.0) * step(10.0, y) * step(y, 11.0);
+        float petalRight = step(9.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
+        return clamp(stem + center + petalTop + petalBottom + petalLeft + petalRight, 0.0, 1.0);
+    }
+
+    float mushroomMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stem = step(7.0, x) * step(x, 8.0) * step(y, 7.0);
+        float capBase = step(4.0, x) * step(x, 11.0) * step(7.0, y) * step(y, 9.0);
+        float capTop = step(5.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
+        float capPeak = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 12.0);
+        return clamp(stem + capBase + capTop + capPeak, 0.0, 1.0);
+    }
+
     vec3 shadeGrass(vec2 uv) {
         float blade = pixelNoise(uv + vec2(vVariant * 5.7), 8.0);
         vec3 base = vec3(0.08, 0.42, 0.10);
@@ -470,6 +526,31 @@ export const decorBillboardFSText = `
         return mix(vec3(0.05, 0.24, 0.07), vec3(0.16, 0.46, 0.14), foliage);
     }
 
+    vec3 shadeFlower(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 9.0);
+        if (stem > 0.5) {
+            return vec3(0.10, 0.58, 0.12);
+        }
+        float choice = fract(vVariant * 5.0);
+        vec3 yellow = vec3(0.95, 0.82, 0.18);
+        vec3 red = vec3(0.86, 0.14, 0.12);
+        vec3 white = vec3(0.92, 0.90, 0.82);
+        vec3 petal = choice < 0.33 ? yellow : choice < 0.66 ? red : white;
+        return mix(vec3(0.48, 0.28, 0.06), petal, step(0.35, uv.y));
+    }
+
+    vec3 shadeMushroom(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 7.0);
+        if (stem > 0.5) {
+            return vec3(0.78, 0.68, 0.52);
+        }
+        float spot = step(0.78, pixelNoise(uv + vec2(4.0, 2.0), 9.0));
+        vec3 cap = mix(vec3(0.48, 0.12, 0.08), vec3(0.76, 0.18, 0.12), uv.y);
+        return mix(cap, vec3(0.92, 0.82, 0.64), spot);
+    }
+
     void main() {
         vec3 color = vec3(0.5);
         float mask = 0.0;
@@ -482,9 +563,15 @@ export const decorBillboardFSText = `
         } else if (vType < 2.5) {
             mask = rockMask(vUV);
             color = shadeRock(vUV);
-        } else {
+        } else if (vType < 3.5) {
             mask = treeMask(vUV);
             color = shadeTree(vUV);
+        } else if (vType < 4.5) {
+            mask = flowerMask(vUV);
+            color = shadeFlower(vUV);
+        } else {
+            mask = mushroomMask(vUV);
+            color = shadeMushroom(vUV);
         }
 
         if (mask < 0.5) {
