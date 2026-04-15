@@ -31,7 +31,7 @@ export class Chunk {
 
   private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
-  private numCubesAdded: number;
+  private numBlocksAdded: number;
 
   // world seed
   public static setWorldSeed(seed: string): void {
@@ -43,6 +43,7 @@ export class Chunk {
     centerZ: number,
     size: number,
     deltaMap = new Map(),
+    numBlocksAdded = 0,
   ) {
     this.x = centerX;
     this.z = centerZ;
@@ -50,7 +51,7 @@ export class Chunk {
     this.cubes = size * size;
     this.positionMap = new Map();
     this.deltaMap = deltaMap;
-    this.numCubesAdded = 0;
+    this.numBlocksAdded = numBlocksAdded;
     this.generateCubes();
   }
 
@@ -399,7 +400,7 @@ export class Chunk {
         }
       }
     }
-    this.cubes += this.numCubesAdded;
+    this.cubes += this.numBlocksAdded;
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
 
@@ -681,9 +682,9 @@ export class Chunk {
 
     if (newType == Chunk.blockTypeAir) {
       this.positionMap.delete(key);
-      this.numCubesAdded--;
+      this.numBlocksAdded--;
     } else {
-      this.numCubesAdded++;
+      this.numBlocksAdded++;
     }
     this.deltaMap.set(key, newType);
     this.generateCubes(); // re-generate cubes with the modification
