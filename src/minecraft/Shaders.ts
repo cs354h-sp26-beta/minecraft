@@ -126,6 +126,75 @@ const dirtTexture = `
     }
 `;
 
+const terrainDetailTextures = `
+    vec3 makeGrassBlock(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float noise = fbm(pixelUV * 6.0 + vec2(1.7), 2) + hash(pixelUV + vec2(3.0)) * 0.2;
+        return mix(vec3(0.12, 0.46, 0.12), vec3(0.28, 0.68, 0.20), noise);
+    }
+
+    vec3 makeSand(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float noise = fbm(pixelUV * 7.0 + vec2(9.2), 2);
+        return mix(vec3(0.77, 0.70, 0.48), vec3(0.93, 0.86, 0.62), noise);
+    }
+
+    vec3 makeSandstone(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float band = step(0.5, fract(pixelUV.y * 8.0 + fbm(pixelUV * 4.0, 2) * 0.5));
+        return mix(vec3(0.64, 0.56, 0.39), vec3(0.80, 0.71, 0.52), band);
+    }
+
+    vec3 makeSnow(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float sparkle = hash(pixelUV * 17.0);
+        return mix(vec3(0.82, 0.88, 0.94), vec3(0.98, 0.99, 1.0), sparkle * 0.35);
+    }
+
+    vec3 makePortal(vec3 world) {
+        float swirl = sin(world.y * 0.55 + uTime * 1.6) * 0.5 + 0.5;
+        return mix(vec3(0.25, 0.02, 0.36), vec3(0.64, 0.18, 0.82), swirl);
+    }
+`;
+
+const treeTextures = `
+    vec3 makeWood(vec2 uv, vec3 world) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float grain = valueNoise(vec2(pixelUV.x * 3.0, world.y * 0.35));
+        float stripe = step(0.55, fract(pixelUV.x * 5.0 + grain * 0.45));
+        return mix(vec3(0.28, 0.15, 0.07), vec3(0.47, 0.28, 0.12), stripe);
+    }
+
+    vec3 makeBirchWood(vec2 uv, vec3 world) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float spot = step(0.76, hash(floor(pixelUV * 10.0) + vec2(world.y, world.x)));
+        vec3 bark = mix(vec3(0.72, 0.66, 0.52), vec3(0.92, 0.86, 0.68), pixelUV.y);
+        return mix(bark, vec3(0.08, 0.07, 0.06), spot);
+    }
+
+    vec3 makeLeaves(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 8.0) / 8.0;
+        float noise = fbm(pixelWorld.xz * 3.0 + vec2(pixelWorld.y), 2);
+        float speckle = hash(floor(uv * 8.0) + vec2(world.x, world.z));
+        vec3 darkLeaf = vec3(0.08, 0.34, 0.09);
+        vec3 lightLeaf = vec3(0.25, 0.58, 0.17);
+        return mix(darkLeaf, lightLeaf, noise * 0.7 + speckle * 0.25);
+    }
+
+    vec3 makeSpruceLeaves(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 8.0) / 8.0;
+        float noise = fbm(pixelWorld.xz * 3.0 + vec2(pixelWorld.y), 2);
+        return mix(vec3(0.04, 0.22, 0.13), vec3(0.11, 0.40, 0.22), noise);
+    }
+
+    vec3 makeDecorRock(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 10.0) / 10.0;
+        float chips = hash(floor(uv * 8.0) + vec2(world.x, world.z));
+        float grain = fbm(pixelWorld.xz * 4.0 + vec2(pixelWorld.y), 2);
+        return mix(vec3(0.36, 0.35, 0.33), vec3(0.62, 0.60, 0.56), grain * 0.7 + chips * 0.25);
+    }
+`;
+
 const waterTexture = `
     vec3 makeWater(vec2 uv, vec3 world, float scale) {
 
@@ -241,6 +310,10 @@ export const blankCubeFSText = `
 
     ${dirtTexture}
 
+    ${terrainDetailTextures}
+
+    ${treeTextures}
+
     ${cobbleTexture}
 
     ${waterTexture}
@@ -265,6 +338,42 @@ export const blankCubeFSText = `
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
+        } else if (vBlockType == 3.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.12, 0.12, 0.12));
+        } else if (vBlockType == 4.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.70, 0.70, 0.70));
+        } else if (vBlockType == 5.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.93, 0.77, 0.18));
+        } else if (vBlockType == 6.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.18, 0.86, 0.92));
+        } else if (vBlockType == 7.0) {
+            if (normal.y > 0.5) {
+                textureColor = makeGrassBlock(uv);
+            } else {
+                textureColor = makeDirt(uv);
+            }
+        } else if (vBlockType == 8.0) {
+            textureColor = makeSand(uv);
+        } else if (vBlockType == 9.0) {
+            textureColor = makeSandstone(uv);
+        } else if (vBlockType == 10.0) {
+            textureColor = makeSnow(uv);
+        } else if (vBlockType == 11.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.24, 0.20, 0.20));
+        } else if (vBlockType == 12.0) {
+            textureColor = makeCobble(uv, wsPos.xyz, 6.0) * vec3(0.55, 0.55, 0.55);
+        } else if (vBlockType == 13.0) {
+            textureColor = makePortal(wsPos.xyz);
+        } else if (vBlockType == 20.0) {
+            textureColor = makeWood(uv, wsPos.xyz);
+        } else if (vBlockType == 21.0) {
+            textureColor = makeLeaves(uv, wsPos.xyz);
+        } else if (vBlockType == 22.0) {
+            textureColor = makeBirchWood(uv, wsPos.xyz);
+        } else if (vBlockType == 23.0) {
+            textureColor = makeSpruceLeaves(uv, wsPos.xyz);
+        } else if (vBlockType == 24.0) {
+            textureColor = makeDecorRock(uv, wsPos.xyz);
         } else {
             vec3 oreColor = vec3(0.9, 0.1, 0.2);
             textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
@@ -274,6 +383,312 @@ export const blankCubeFSText = `
     }
 `;
 
+export const decorBillboardVSText = `
+    precision mediump float;
+
+    uniform mat4 uView;
+    uniform mat4 uProj;
+    uniform vec3 uCameraRight;
+    uniform vec3 uCameraUp;
+    uniform vec3 uCameraPos;
+    uniform float uTime;
+
+    attribute vec4 aQuadPos;
+    attribute vec2 aQuadUV;
+    attribute vec4 aInstancePos;
+    attribute float aScale;
+    attribute float aVariant;
+    attribute float aType;
+    attribute float aAngle;
+    attribute float aTilt;
+
+    varying vec2 vUV;
+    varying float vType;
+    varying float vVariant;
+    varying vec3 vWorldPos;
+
+    void main() {
+        vec3 right = normalize(uCameraRight);
+        vec3 up = normalize(uCameraUp);
+        vec3 forward = normalize(cross(up, right));
+        float globalScale = 1.12;
+
+        float c = cos(aAngle);
+        float s = sin(aAngle);
+        vec3 rotatedRight = normalize(right * c + forward * s);
+        vec3 rotatedForward = normalize(-right * s + forward * c);
+        vec3 leanedUp = normalize(up + rotatedForward * aTilt);
+
+        float sway = sin(uTime * 0.8 + aVariant * 12.3);
+        float swayRange = mix(0.015, 0.07, clamp(aType * 0.25, 0.0, 1.0));
+        vec3 swayOffset = rotatedRight * sway * swayRange * aQuadPos.y;
+
+        float widthScale = 1.0;
+        float heightScale = 1.0;
+        if (aType < 0.5) {
+            widthScale = 0.62;
+            heightScale = 0.9;
+        } else if (aType < 1.5) {
+            widthScale = 0.95;
+            heightScale = 0.72;
+        } else if (aType < 2.5) {
+            widthScale = 0.9;
+            heightScale = 0.42;
+        } else if (aType < 3.5) {
+            widthScale = 0.82;
+            heightScale = 1.35;
+        } else if (aType < 4.5) {
+            widthScale = 0.45;
+            heightScale = 0.78;
+        } else if (aType < 5.5) {
+            widthScale = 0.58;
+            heightScale = 0.55;
+        } else if (aType < 6.5) {
+            widthScale = 0.34;
+            heightScale = 1.28;
+        } else {
+            widthScale = 0.78;
+            heightScale = 0.86;
+        }
+
+        widthScale *= globalScale;
+        heightScale *= globalScale;
+
+        vec3 billboardOffset = rotatedRight * (aQuadPos.x * aScale * widthScale) + leanedUp * (aQuadPos.y * aScale * heightScale);
+        vec3 world = aInstancePos.xyz + billboardOffset + swayOffset;
+        vWorldPos = world;
+        gl_Position = uProj * uView * vec4(world, 1.0);
+
+        vUV = aQuadUV;
+        vType = aType;
+        vVariant = aVariant;
+    }
+`;
+
+export const decorBillboardFSText = `
+    precision mediump float;
+
+    uniform float uTime;
+    uniform vec3 uCameraPos;
+
+    varying vec2 vUV;
+    varying float vType;
+    varying float vVariant;
+    varying vec3 vWorldPos;
+
+    ${noiseUtils}
+
+    float pixelNoise(vec2 uv, float scale) {
+        vec2 cell = floor(uv * scale);
+        return hash(cell + vec2(vVariant * 31.7, vVariant * 11.3));
+    }
+
+    float grassMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float bladeA = step(5.0, x) * step(x, 6.0) * step(y, 11.0);
+        float bladeB = step(8.0, x) * step(x, 9.0) * step(y, 14.0);
+        float bladeC = step(11.0, x) * step(x, 12.0) * step(y, 9.0);
+        float bladeD = step(2.0, x) * step(x, 3.0) * step(y, 7.0);
+        float base = step(y, 2.0) * step(2.0, x) * step(x, 13.0);
+        return clamp(bladeA + bladeB + bladeC + bladeD + base, 0.0, 1.0);
+    }
+
+    float shrubMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(12.0, 12.0));
+        float x = p.x;
+        float y = p.y;
+        float lower = step(2.0, x) * step(x, 9.0) * step(1.0, y) * step(y, 6.0);
+        float upper = step(3.0, x) * step(x, 8.0) * step(6.0, y) * step(y, 9.0);
+        float sideL = step(1.0, x) * step(x, 2.0) * step(3.0, y) * step(y, 5.0);
+        float sideR = step(9.0, x) * step(x, 10.0) * step(3.0, y) * step(y, 5.0);
+        float hole = step(0.92, pixelNoise(uv + vec2(3.0, 1.0), 8.0));
+        return clamp(lower + upper + sideL + sideR - hole, 0.0, 1.0);
+    }
+
+    float rockMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(12.0, 12.0));
+        float x = p.x;
+        float y = p.y;
+        float base = step(2.0, x) * step(x, 9.0) * step(y, 3.0);
+        float mid = step(3.0, x) * step(x, 8.0) * step(3.0, y) * step(y, 5.0);
+        float top = step(5.0, x) * step(x, 7.0) * step(6.0, y) * step(y, 6.0);
+        return clamp(base + mid + top, 0.0, 1.0);
+    }
+
+    float treeMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float trunk = step(7.0, x) * step(x, 8.0) * step(y, 8.0);
+        float leavesBottom = step(3.0, x) * step(x, 12.0) * step(6.0, y) * step(y, 10.0);
+        float leavesMid = step(4.0, x) * step(x, 11.0) * step(10.0, y) * step(y, 13.0);
+        float leavesTop = step(6.0, x) * step(x, 9.0) * step(14.0, y) * step(y, 15.0);
+        float notch = step(0.95, pixelNoise(uv + vec2(12.0, 6.0), 7.0));
+        return clamp(trunk + leavesBottom + leavesMid + leavesTop - notch, 0.0, 1.0);
+    }
+
+    float flowerMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stem = step(7.0, x) * step(x, 8.0) * step(y, 9.0);
+        float center = step(7.0, x) * step(x, 8.0) * step(10.0, y) * step(y, 11.0);
+        float petalTop = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 13.0);
+        float petalBottom = step(7.0, x) * step(x, 8.0) * step(8.0, y) * step(y, 9.0);
+        float petalLeft = step(5.0, x) * step(x, 6.0) * step(10.0, y) * step(y, 11.0);
+        float petalRight = step(9.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
+        return clamp(stem + center + petalTop + petalBottom + petalLeft + petalRight, 0.0, 1.0);
+    }
+
+    float mushroomMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stem = step(7.0, x) * step(x, 8.0) * step(y, 7.0);
+        float capBase = step(4.0, x) * step(x, 11.0) * step(7.0, y) * step(y, 9.0);
+        float capTop = step(5.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
+        float capPeak = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 12.0);
+        return clamp(stem + capBase + capTop + capPeak, 0.0, 1.0);
+    }
+
+    float reedMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stemA = step(4.0, x) * step(x, 5.0) * step(2.0, y) * step(y, 15.0);
+        float stemB = step(7.0, x) * step(x, 8.0) * step(1.0, y) * step(y, 15.0);
+        float stemC = step(10.0, x) * step(x, 11.0) * step(3.0, y) * step(y, 15.0);
+        float tuftA = step(3.0, x) * step(x, 6.0) * step(12.0, y) * step(y, 14.0);
+        float tuftB = step(6.0, x) * step(x, 9.0) * step(13.0, y) * step(y, 15.0);
+        float tuftC = step(9.0, x) * step(x, 12.0) * step(11.0, y) * step(y, 13.0);
+        return clamp(stemA + stemB + stemC + tuftA + tuftB + tuftC, 0.0, 1.0);
+    }
+
+    float deadBushMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stem = step(7.0, x) * step(x, 8.0) * step(2.0, y) * step(y, 11.0);
+        float branchL1 = step(4.0, x) * step(x, 6.0) * step(7.0, y) * step(y, 8.0);
+        float branchR1 = step(9.0, x) * step(x, 11.0) * step(8.0, y) * step(y, 9.0);
+        float branchL2 = step(3.0, x) * step(x, 5.0) * step(10.0, y) * step(y, 11.0);
+        float branchR2 = step(10.0, x) * step(x, 12.0) * step(10.0, y) * step(y, 11.0);
+        float topTwig = step(6.0, x) * step(x, 9.0) * step(12.0, y) * step(y, 13.0);
+        return clamp(stem + branchL1 + branchR1 + branchL2 + branchR2 + topTwig, 0.0, 1.0);
+    }
+
+    vec3 shadeGrass(vec2 uv) {
+        float blade = pixelNoise(uv + vec2(vVariant * 5.7), 8.0);
+        vec3 base = vec3(0.08, 0.42, 0.10);
+        vec3 tip = vec3(0.22, 0.78, 0.22);
+        return mix(base, tip, blade + uv.y * 0.35);
+    }
+
+    vec3 shadeShrub(vec2 uv) {
+        float detail = pixelNoise(uv + vVariant * 3.0, 10.0);
+        vec3 shadow = vec3(0.06, 0.24, 0.08);
+        vec3 highlight = vec3(0.22, 0.52, 0.18);
+        return mix(shadow, highlight, detail);
+    }
+
+    vec3 shadeRock(vec2 uv) {
+        float detail = pixelNoise(uv + vVariant * 4.0, 9.0);
+        vec3 base = vec3(0.42, 0.41, 0.39);
+        vec3 highlight = vec3(0.72, 0.7, 0.66);
+        return mix(base, highlight, detail);
+    }
+
+    vec3 shadeTree(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float trunkMask = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 8.0);
+        if (trunkMask > 0.5) {
+            float bark = pixelNoise(vec2(uv.x * 0.3, uv.y), 10.0);
+            return mix(vec3(0.24, 0.14, 0.07), vec3(0.42, 0.26, 0.12), bark);
+        }
+        float foliage = pixelNoise(uv + vVariant * 5.0, 9.0);
+        return mix(vec3(0.05, 0.24, 0.07), vec3(0.16, 0.46, 0.14), foliage);
+    }
+
+    vec3 shadeFlower(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 9.0);
+        if (stem > 0.5) {
+            return vec3(0.10, 0.58, 0.12);
+        }
+        float choice = fract(vVariant * 5.0);
+        vec3 yellow = vec3(0.95, 0.82, 0.18);
+        vec3 red = vec3(0.86, 0.14, 0.12);
+        vec3 white = vec3(0.92, 0.90, 0.82);
+        vec3 petal = choice < 0.33 ? yellow : choice < 0.66 ? red : white;
+        return mix(vec3(0.48, 0.28, 0.06), petal, step(0.35, uv.y));
+    }
+
+    vec3 shadeMushroom(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 7.0);
+        if (stem > 0.5) {
+            return vec3(0.78, 0.68, 0.52);
+        }
+        float spot = step(0.78, pixelNoise(uv + vec2(4.0, 2.0), 9.0));
+        vec3 cap = mix(vec3(0.48, 0.12, 0.08), vec3(0.76, 0.18, 0.12), uv.y);
+        return mix(cap, vec3(0.92, 0.82, 0.64), spot);
+    }
+
+    vec3 shadeReed(vec2 uv) {
+        float detail = pixelNoise(uv + vec2(vVariant * 3.1, 5.2), 9.0);
+        vec3 dark = vec3(0.18, 0.42, 0.16);
+        vec3 light = vec3(0.44, 0.68, 0.24);
+        vec3 stemColor = mix(dark, light, detail * 0.6 + uv.y * 0.35);
+        float tuft = step(0.72, uv.y);
+        vec3 tuftColor = mix(vec3(0.52, 0.46, 0.22), vec3(0.68, 0.58, 0.26), detail);
+        return mix(stemColor, tuftColor, tuft);
+    }
+
+    vec3 shadeDeadBush(vec2 uv) {
+        float detail = pixelNoise(uv + vec2(vVariant * 2.7, 1.9), 10.0);
+        vec3 dark = vec3(0.36, 0.24, 0.10);
+        vec3 light = vec3(0.58, 0.42, 0.18);
+        return mix(dark, light, detail * 0.7 + uv.y * 0.2);
+    }
+
+    void main() {
+        vec3 color = vec3(0.5);
+        float mask = 0.0;
+        if (vType < 0.5) {
+            mask = grassMask(vUV);
+            color = shadeGrass(vUV);
+        } else if (vType < 1.5) {
+            mask = shrubMask(vUV);
+            color = shadeShrub(vUV);
+        } else if (vType < 2.5) {
+            mask = rockMask(vUV);
+            color = shadeRock(vUV);
+        } else if (vType < 3.5) {
+            mask = treeMask(vUV);
+            color = shadeTree(vUV);
+        } else if (vType < 4.5) {
+            mask = flowerMask(vUV);
+            color = shadeFlower(vUV);
+        } else if (vType < 5.5) {
+            mask = mushroomMask(vUV);
+            color = shadeMushroom(vUV);
+        } else if (vType < 6.5) {
+            mask = reedMask(vUV);
+            color = shadeReed(vUV);
+        } else {
+            mask = deadBushMask(vUV);
+            color = shadeDeadBush(vUV);
+        }
+
+        if (mask < 0.5) {
+            discard;
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+    }
+`;
 export const skyboxVSText = `
     precision highp float;
 

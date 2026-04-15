@@ -4,13 +4,17 @@ import { Debugger } from "../lib/webglutils/Debugging.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
+import { Billboard } from "./Billboard.js";
 import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
+import { DecorationGenerator, type DecorBuffer } from "./Decorations.js";
 import {
   blankCubeFSText,
   blankCubeVSText,
+  decorBillboardFSText,
+  decorBillboardVSText,
   skyboxFSText,
   skyboxVSText,
   enemyFSText,
@@ -40,6 +44,16 @@ type AchievementToast = {
   timeLeft: number;
 };
 
+type DecorBatch = {
+  offsets: Float32Array;
+  scales: Float32Array;
+  variants: Float32Array;
+  types: Float32Array;
+  angles: Float32Array;
+  tilts: Float32Array;
+  count: number;
+};
+
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
   private static readonly safeFallDistance = 3;
@@ -57,6 +71,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   private cubeGeometry: Cube;
   private blankCubeRenderPass: RenderPass;
   private skyboxRenderPass: RenderPass;
+  private billboardGeometry: Billboard;
+  private decorationRenderPass: RenderPass;
 
   /*  Enemy Rendering */
   private enemyRenderPass: RenderPass;
@@ -78,6 +94,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private player: Player;
   private spawnPosition: Vec3;
+  private decorationGenerator: DecorationGenerator;
+  private decorationCache: Map<string, DecorBuffer>;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
   private wasPlayerGrounded: boolean;
@@ -133,7 +151,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
-        (Date.now() >>> 0),
+        Date.now() >>> 0,
     );
 
     this.loadMinimapColors();
@@ -142,6 +160,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+    this.decorationGenerator = new DecorationGenerator();
+    this.decorationCache = new Map();
 
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
@@ -161,10 +181,17 @@ export class MinecraftAnimation extends CanvasAnimation {
       blankCubeFSText,
     );
     this.skyboxRenderPass = new RenderPass(gl, skyboxVSText, skyboxFSText);
+    this.decorationRenderPass = new RenderPass(
+      gl,
+      decorBillboardVSText,
+      decorBillboardFSText,
+    );
     this.cubeGeometry = new Cube();
+    this.billboardGeometry = new Billboard();
     this.enemyRenderPass = new RenderPass(gl, enemyVSText, enemyFSText);
     this.initSkybox();
     this.initBlankCube();
+    this.initDecorBillboards();
 
     this.enemies = [];
     this.achievements = this.createAchievements();
@@ -189,7 +216,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
-    
+
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
     heartImg.src = "./static/assets/heart.png";
@@ -199,12 +226,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       });
     };
 
-    const foodImg = new Image(); 
+    const foodImg = new Image();
     foodImg.src = "./static/assets/food.png";
     foodImg.onload = () => {
       createImageBitmap(foodImg).then((bmp) => {
         this.foodBitmap = bmp;
-      })
+      });
     };
 
     const crosshairImg = new Image();
@@ -607,6 +634,146 @@ export class MinecraftAnimation extends CanvasAnimation {
       0,
     );
     this.blankCubeRenderPass.setup();
+  }
+
+  private initDecorBillboards(): void {
+    this.decorationRenderPass.setIndexBufferData(
+      this.billboardGeometry.indicesFlat(),
+    );
+    this.decorationRenderPass.addAttribute(
+      "aQuadPos",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.billboardGeometry.positionsFlat(),
+    );
+    this.decorationRenderPass.addAttribute(
+      "aQuadUV",
+      2,
+      this.ctx.FLOAT,
+      false,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.billboardGeometry.uvFlat(),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aInstancePos",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aScale",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aVariant",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aType",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aAngle",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aTilt",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addUniform(
+      "uProj",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.projMatrix().all()),
+        );
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uView",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.viewMatrix().all()),
+        );
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uCameraRight",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const right = this.gui.getCamera().right();
+        gl.uniform3fv(loc, new Float32Array(right.xyz));
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uCameraUp",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const up = this.gui.getCamera().up();
+        gl.uniform3fv(loc, new Float32Array(up.xyz));
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uCameraPos",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const pos = this.gui.getCamera().pos();
+        gl.uniform3fv(loc, new Float32Array(pos.xyz));
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uTime",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, this.getTimeValue());
+      },
+    );
+    this.decorationRenderPass.setDrawData(
+      this.ctx.TRIANGLES,
+      this.billboardGeometry.indicesFlat().length,
+      this.ctx.UNSIGNED_INT,
+      0,
+    );
+    this.decorationRenderPass.setup();
   }
 
   /**
@@ -1028,9 +1195,16 @@ export class MinecraftAnimation extends CanvasAnimation {
             ? this.deltaMaps.get(key)
             : new Map();
           this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
+          this.decorationCache.delete(key);
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
+        if (!this.decorationCache.has(key)) {
+          this.decorationCache.set(
+            key,
+            this.decorationGenerator.generateForChunk(key, cachedChunk),
+          );
+        }
       }
     }
 
@@ -1091,6 +1265,76 @@ export class MinecraftAnimation extends CanvasAnimation {
     return combined;
   }
 
+  private getDecorBatch(): DecorBatch {
+    let totalInstances = 0;
+    for (const key of this.renderedChunks.keys()) {
+      const buffer = this.decorationCache.get(key);
+      if (buffer) {
+        totalInstances += buffer.count;
+      }
+    }
+    if (totalInstances === 0) {
+      return {
+        offsets: new Float32Array(0),
+        scales: new Float32Array(0),
+        variants: new Float32Array(0),
+        types: new Float32Array(0),
+        angles: new Float32Array(0),
+        tilts: new Float32Array(0),
+        count: 0,
+      };
+    }
+
+    const offsets = new Float32Array(totalInstances * 4);
+    const scales = new Float32Array(totalInstances);
+    const variants = new Float32Array(totalInstances);
+    const types = new Float32Array(totalInstances);
+    const angles = new Float32Array(totalInstances);
+    const tilts = new Float32Array(totalInstances);
+
+    let cursor = 0;
+    for (const key of this.renderedChunks.keys()) {
+      const buffer = this.decorationCache.get(key);
+      if (!buffer || buffer.count === 0) {
+        continue;
+      }
+      offsets.set(buffer.offsets, cursor * 4);
+      scales.set(buffer.scales, cursor);
+      variants.set(buffer.variants, cursor);
+      types.set(buffer.types, cursor);
+      angles.set(buffer.angles, cursor);
+      tilts.set(buffer.tilts, cursor);
+      cursor += buffer.count;
+    }
+
+    return {
+      offsets,
+      scales,
+      variants,
+      types,
+      angles,
+      tilts,
+      count: totalInstances,
+    };
+  }
+
+  private drawDecorations(): void {
+    const batch = this.getDecorBatch();
+    if (batch.count === 0) {
+      return;
+    }
+    this.decorationRenderPass.updateAttributeBuffer(
+      "aInstancePos",
+      batch.offsets,
+    );
+    this.decorationRenderPass.updateAttributeBuffer("aScale", batch.scales);
+    this.decorationRenderPass.updateAttributeBuffer("aVariant", batch.variants);
+    this.decorationRenderPass.updateAttributeBuffer("aType", batch.types);
+    this.decorationRenderPass.updateAttributeBuffer("aAngle", batch.angles);
+    this.decorationRenderPass.updateAttributeBuffer("aTilt", batch.tilts);
+    this.decorationRenderPass.drawInstanced(batch.count);
+  }
+
   /**
    * Draws a single frame
    *
@@ -1118,10 +1362,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Update hunger
     this.hungerTimer += dt;
     if (this.hungerTimer >= this.hungerInterval) {
-      this.hungerTimer = 0; 
+      this.hungerTimer = 0;
       this.player.experienceHunger(1);
     }
-    
+
     if (this.player.food <= 0) {
       this.starvationTimer += dt;
       if (this.starvationTimer >= this.starvationInterval) {
@@ -1187,6 +1431,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.depthFunc(gl.LESS);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.disable(gl.CULL_FACE);
+    this.drawDecorations();
+    gl.disable(gl.BLEND);
+    gl.enable(gl.CULL_FACE);
 
     const allPositions = this.getAllCubePositions();
     const allTypes = this.getAllCubeTypes();
@@ -1423,7 +1674,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.selectedCubePosition.y,
     );
 
-    if (brokenCubeType === Chunk.blockTypeWater || brokenCubeType === Chunk.blockTypePortal) {
+    if (
+      brokenCubeType === Chunk.blockTypeWater ||
+      brokenCubeType === Chunk.blockTypePortal
+    ) {
       return;
     }
 
@@ -1906,7 +2160,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (!this.crosshairBitmap) return;
 
     const ctx = this.overlayCtx;
-    const centerX = this.canvas2d.width / 2; 
+    const centerX = this.canvas2d.width / 2;
     const centerY = this.canvas2d.height / 2;
     const size = 30;
 
@@ -1982,7 +2236,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           foodSize,
         );
       } else {
-        // Empty food 
+        // Empty food
         ctx.globalAlpha = 0.25;
         ctx.drawImage(this.foodBitmap, x, startY, foodSize, foodSize);
       }
