@@ -130,8 +130,8 @@ export class Mesh {
             let res = bone.position.xyz;
             res.push(0);
             for (let i = 0; i < res.length; i++) {
-                // res[i] should be in [-4,4]
-                trans[4 * index + i] = MathUtils.clamp(Math.round(255 * (res[i] + 4) / 8), 0, 255);
+                // res[i] should be in [-1,1]
+                trans[4 * index + i] = MathUtils.clamp(Math.round(255 * (res[i] + 1) / 2), 0, 255);
             }
         });
         return trans;

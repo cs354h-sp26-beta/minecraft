@@ -280,6 +280,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.enemyRenderPass.addInstancedAttribute("aOffset", 4, this.ctx.FLOAT, false,
         4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
+    this.enemyRenderPass.addInstancedAttribute("aRot", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
     this.enemyRenderPass.addInstancedAttribute("aIdx", 1, this.ctx.FLOAT, false,
         1 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
 
@@ -484,7 +486,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    const walkDx = this.gui.walkDir();
+    const walkDx = this.gui.walkDir().scale(0.1);
     const momentumDx = this.player.velocity.scale(dt, new Vec3());
     const totalDx = walkDx.add(momentumDx, new Vec3());
     this.player.position.add(totalDx);
@@ -555,16 +557,24 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Enemies
     if (this.enemyMesh !== null) {
+      for (const e of this.enemies) {
+        e.faceTowards(this.player.position);
+      }
+
       const enemyInstanceCount = this.enemies.length;
       const enemyPositions = new Float32Array(enemyInstanceCount * 4);
+      const enemyRotations = new Float32Array(enemyInstanceCount * 4);
       const enemyIdxs = new Float32Array(enemyInstanceCount);
       for (let i = 0; i < this.enemies.length; i++) {
         enemyIdxs[i] = i;
         const pos = this.enemies[i].position;
         enemyPositions.set([pos.x, pos.y, pos.z, 0], i * 4);
+        const rot = this.enemies[i].getRotation();
+        enemyRotations.set([rot.x, rot.y, rot.z, rot.w], i * 4);
       }
 
       this.enemyRenderPass.updateAttributeBuffer("aOffset", enemyPositions);
+      this.enemyRenderPass.updateAttributeBuffer("aRot", enemyRotations);
       this.enemyRenderPass.updateAttributeBuffer("aIdx", enemyIdxs);
       this.enemyRenderPass.drawInstanced(enemyInstanceCount);
     }

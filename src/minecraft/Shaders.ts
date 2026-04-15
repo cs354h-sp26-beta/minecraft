@@ -608,7 +608,7 @@ export const enemyVSText = `
     
     attribute float aIdx;
     attribute vec4 aOffset;
-    // attribute vec4 aRot;
+    attribute vec4 aRot;
     
     varying vec4 normal;
     varying vec4 wsPos;
@@ -644,16 +644,16 @@ export const enemyVSText = `
                 else if (i == 3) { v = v3.xyz; }
                 
                 vec2 uv = vec2(float(boneIdx) + 0.5, aIdx + 0.5) / uTexDim;
-                vec3 trans = texture2D(uJTrans, uv).xyz * 8.0 - 4.0;
+                vec3 trans = texture2D(uJTrans, uv).xyz * 2.0 - 1.0;
                 vec4 rot = normalize(texture2D(uJRots, uv) * 2.0 - 1.0);
                 
                 weightedPos += weight * (trans + qtrans(rot, v));
                 weightedNormal += weight * qtrans(rot, aNorm);
             }
         }
-        	
-        wsPos = aOffset + vec4(weightedPos, 1.0);
-        normal = normalize(vec4(weightedNormal, 0.0));	
+
+        wsPos = aOffset + vec4(qtrans(aRot, weightedPos), 1.0);
+        normal = normalize(vec4(qtrans(aRot, weightedNormal), 0.0));	
 
         gl_Position = uProj * uView * wsPos;
     }
