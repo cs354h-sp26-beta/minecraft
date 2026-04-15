@@ -635,12 +635,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(4 * totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const positions = chunk.cubePositions();
       combined.set(positions, offset);
       offset += positions.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set(
+        [block.position.x, block.position.y, block.position.z, 0],
+        offset,
+      );
+      offset += 4;
     }
     return combined;
   }
@@ -650,12 +659,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const types = chunk.cubeTypes();
       combined.set(types, offset);
       offset += types.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set([block.type], offset);
+      offset += 1;
     }
     return combined;
   }
@@ -898,7 +913,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
           let cubeType = currentChunk.cubeType(x, z, y);
 
-          if (cubeType !== undefined) {
+          if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
             if (t !== undefined && t < bestT) {
@@ -957,10 +972,12 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
 
-    // TODO: Test falling blocks by checking if block below is empty
-    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
-      this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
-      // TODO: Remove block from chunk's map so that its static version is not rendered
+    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
+      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY);
+      this.fallingBlocks.push(
+        new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
+      );
+      chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);

@@ -166,6 +166,7 @@ export class Enemy {
   }
 }
 
+// Specifically the Block ENTITY (falling blocks!)
 export class Block {
   // The position of the block's center in world coordinates.
   public position: Vec3;
@@ -173,9 +174,13 @@ export class Block {
   // The velocity of the block in units/sec.
   public velocity: Vec3;
 
-  constructor(position: Vec3) {
+  // The type of the block, as specified in Chunk.ts
+  public type: number;
+
+  constructor(position: Vec3, type: number) {
     this.position = position;
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
+    this.type = type;
   }
 
   // Detects if the block collides with any blocks in the given chunk.
