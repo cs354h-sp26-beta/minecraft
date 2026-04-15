@@ -327,29 +327,53 @@ export class Chunk {
     multCoeffs: number[],
   ): number {
     const octaves = Math.min(gridSizes.length, multCoeffs.length);
-    const biome = this.sampleBiomeProfileAt(worldX, worldZ);
 
-    let sum = 0;
-    let maxPossibleHeight = 0;
-    for (let octave = 0; octave < octaves; octave++) {
-      const octaveT = octaves <= 1 ? 0 : octave / (octaves - 1);
-      const frequency = (gridSizes[octave] / this.size) * biome.frequencyScale;
-      const detailWeight = this.lerp(1.0, biome.highFreqBoost, octaveT);
-      const coeff = multCoeffs[octave] * detailWeight * biome.octaveGain;
-      const noiseVal = this.sampleValueNoise(worldX, worldZ, octave, frequency);
-      sum += noiseVal * coeff;
-      maxPossibleHeight += coeff;
+    const sampleHeightAtPoint = (sampleX: number, sampleZ: number): number => {
+      const biome = this.sampleBiomeProfileAt(sampleX, sampleZ);
+
+      let sum = 0;
+      let maxPossibleHeight = 0;
+      for (let octave = 0; octave < octaves; octave++) {
+        const octaveT = octaves <= 1 ? 0 : octave / (octaves - 1);
+        const frequency =
+          (gridSizes[octave] / this.size) * biome.frequencyScale;
+        const detailWeight = this.lerp(1.0, biome.highFreqBoost, octaveT);
+        const coeff = multCoeffs[octave] * detailWeight * biome.octaveGain;
+        const noiseVal = this.sampleValueNoise(
+          sampleX,
+          sampleZ,
+          octave,
+          frequency,
+        );
+        sum += noiseVal * coeff;
+        maxPossibleHeight += coeff;
+      }
+      const normalized = sum / maxPossibleHeight;
+      const shaped = this.smoothstep(
+        BIOME_BLEND_TUNING.defaultShapeLow,
+        BIOME_BLEND_TUNING.defaultShapeHigh,
+        normalized,
+      );
+      return Math.min(100, Math.max(0, biome.baseHeight + shaped * biome.reliefScale));
+    };
+
+    // Blend nearby samples to soften sharp per-block transitions at biome borders.
+    const blendRadius = 1;
+    let weightedHeightSum = 0;
+    let weightSum = 0;
+    for (let dz = -blendRadius; dz <= blendRadius; dz++) {
+      for (let dx = -blendRadius; dx <= blendRadius; dx++) {
+        const adx = Math.abs(dx);
+        const adz = Math.abs(dz);
+        const weight = (blendRadius + 1 - adx) * (blendRadius + 1 - adz);
+        const sampleHeight = sampleHeightAtPoint(worldX + dx, worldZ + dz);
+
+        weightedHeightSum += sampleHeight * weight;
+        weightSum += weight;
+      }
     }
-    const normalized = sum / maxPossibleHeight;
-    const shaped = this.smoothstep(
-      BIOME_BLEND_TUNING.defaultShapeLow,
-      BIOME_BLEND_TUNING.defaultShapeHigh,
-      normalized,
-    );
-    return Math.min(
-      100,
-      Math.max(0, Math.floor(biome.baseHeight + shaped * biome.reliefScale)),
-    );
+
+    return Math.min(100, Math.max(0, Math.floor(weightedHeightSum / weightSum)));
   }
 
   private generateCubes() {
