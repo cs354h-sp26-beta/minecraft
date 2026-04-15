@@ -25,6 +25,12 @@ export class Chunk {
   public static readonly blockTypeIronOre: number = 4;
   public static readonly blockTypeGoldOre: number = 5;
   public static readonly blockTypeDiamondOre: number = 6;
+  public static readonly blockTypeGrass: number = 7;
+  public static readonly blockTypeSand: number = 8;
+  public static readonly blockTypeSandstone: number = 9;
+  public static readonly blockTypeSnow: number = 10;
+  public static readonly blockTypeNetherite: number = 11;
+  public static readonly blockTypeBedrock: number = 12;
   public static readonly SEA_LEVEL: number = 8;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
@@ -35,14 +41,9 @@ export class Chunk {
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
-  private static worldSeed: string = "default";
+  private static seedHash: number = 2166136261 >>> 0;
 
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
-
-  // world seed
-  public static setWorldSeed(seed: string): void {
-    Chunk.worldSeed = seed;
-  }
 
   constructor(
     centerX: number,
@@ -62,20 +63,28 @@ export class Chunk {
     return [this.x - this.size / 2, this.z - this.size / 2];
   }
 
-  // 32-bit hash so world sampling is deterministic by hash
-  private hash32(input: string): number {
-    let h = 2166136261 >>> 0;
-    for (let i = 0; i < input.length; i++) {
-      h ^= input.charCodeAt(i);
-      h = Math.imul(h, 16777619) >>> 0;
-    }
+  private hashInts(a: number, b: number, c: number, d: number): number {
+    let h = Chunk.seedHash;
+    h ^= a;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+    h ^= b;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+    h ^= c;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+    h ^= d;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+
+    h = (h ^ (h >>> 16)) >>> 0;
+    h = Math.imul(h, 0x85ebca6b) >>> 0;
+    h = (h ^ (h >>> 13)) >>> 0;
+    h = Math.imul(h, 0xc2b2ae35) >>> 0;
+    h = (h ^ (h >>> 16)) >>> 0;
     return h;
   }
 
   // deterministic float in [0, 1) by lattice coord and octave
   private rand01AtLattice(ix: number, iz: number, octave: number): number {
-    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iz}`);
-    return h / 4294967295;
+    return this.hashInts(octave, ix, 0, iz) / 4294967295;
   }
 
   // gradient directions for 3D Perlin noise
@@ -97,8 +106,7 @@ export class Chunk {
 
   // deterministic gradient index at a 3D lattice point
   private grad3At(ix: number, iy: number, iz: number, octave: number): number {
-    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iy}|${iz}`);
-    return h % 12;
+    return this.hashInts(octave, ix, iy, iz) % 12;
   }
 
   // dot product of gradient vector and offset vector at a 3D lattice corner
@@ -138,13 +146,17 @@ export class Chunk {
     b: BiomeProfile,
     t: number,
   ): BiomeProfile {
+    const nearest = t < 0.5 ? a : b;
     return {
-      name: t < 0.5 ? a.name : b.name,
+      name: nearest.name,
       baseHeight: this.lerp(a.baseHeight, b.baseHeight, t),
       reliefScale: this.lerp(a.reliefScale, b.reliefScale, t),
       frequencyScale: this.lerp(a.frequencyScale, b.frequencyScale, t),
       highFreqBoost: this.lerp(a.highFreqBoost, b.highFreqBoost, t),
       octaveGain: this.lerp(a.octaveGain, b.octaveGain, t),
+      surfaceBlock: nearest.surfaceBlock,
+      subsurfaceBlock: nearest.subsurfaceBlock,
+      snowlineOffset: nearest.snowlineOffset,
     };
   }
 
@@ -267,22 +279,22 @@ export class Chunk {
 
   // Discrete biome regions in world space with a narrow smooth transition band.
   private sampleBiomeProfileAt(worldX: number, worldZ: number): BiomeProfile {
-    const selector = Math.min(
-      0.999999,
-      this.sampleValueNoise(
-        worldX,
-        worldZ,
-        BIOME_SELECTION_TUNING.selectorOctave,
-        BIOME_SELECTION_TUNING.selectorFrequency,
-      ),
-    );
+    const selector =
+      this.clamp01(
+        this.sampleValueNoise(
+          worldX,
+          worldZ,
+          BIOME_SELECTION_TUNING.selectorOctave,
+          BIOME_SELECTION_TUNING.selectorFrequency,
+        ),
+      ) * 0.999999;
 
     const biomeCount = ACTIVE_BIOME_PROFILES.length;
     const scaled = selector * biomeCount;
 
     // Find which two biomes we're between
     const lowerIdx = Math.floor(scaled);
-    const upperIdx = Math.min(biomeCount - 1, lowerIdx + 1);
+    const upperIdx = (lowerIdx + 1) % biomeCount;
     const frac = scaled - lowerIdx; // Position between lower and upper biome (0 to 1)
     const transitionWidth = BIOME_SELECTION_TUNING.transitionWidth;
 
@@ -334,7 +346,10 @@ export class Chunk {
       BIOME_BLEND_TUNING.defaultShapeHigh,
       normalized,
     );
-    return Math.floor(biome.baseHeight + shaped * biome.reliefScale);
+    return Math.min(
+      100,
+      Math.max(0, Math.floor(biome.baseHeight + shaped * biome.reliefScale)),
+    );
   }
 
   private generateCubes() {
@@ -395,10 +410,13 @@ export class Chunk {
     this.blockTypeData = new Int8Array(this.size * this.size * maxH);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
+        const worldX = topLeftX + j;
+        const worldZ = topLeftZ + i;
         const h = this.heightMapData[this.size * i + j];
+        const biome = this.sampleBiomeProfileAt(worldX, worldZ);
         for (let y = 0; y < h; y++) {
           this.blockTypeData[y * this.size * this.size + i * this.size + j] =
-            this.blockTypeAt(topLeftX + j, y, topLeftZ + i, h);
+            this.blockTypeAt(worldX, y, worldZ, h, biome);
         }
       }
     }
@@ -481,10 +499,26 @@ export class Chunk {
     y: number,
     worldZ: number,
     columnHeight: number,
+    biome: BiomeProfile,
   ): number {
-    // Surface layers are always dirt (no caves near surface)
+    // Height = 0: bedrock
+    if (y == 0) {
+      return Chunk.blockTypeBedrock;
+    }
+
+    // Top block: snow if above snowline, otherwise biome surface block
+    if (y >= columnHeight - 1) {
+      if (
+        biome.snowlineOffset >= 0 &&
+        columnHeight >= biome.baseHeight + biome.reliefScale * 0.5
+      ) {
+        return Chunk.blockTypeSnow;
+      }
+      return biome.surfaceBlock;
+    }
+    // Subsurface layers use biome subsurface block (no caves near surface)
     if (y >= columnHeight - 3) {
-      return Chunk.blockTypeDirt;
+      return biome.subsurfaceBlock;
     }
 
     // Cave carving

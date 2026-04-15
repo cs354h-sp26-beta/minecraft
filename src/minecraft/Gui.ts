@@ -80,6 +80,12 @@ export class GUI implements IGUI {
       0.1,
       1000.0,
     );
+    this.Adown = false;
+    this.Wdown = false;
+    this.Sdown = false;
+    this.Ddown = false;
+    this.dragging = false;
+    this.cubeSelected = false;
   }
 
   /**
@@ -117,14 +123,17 @@ export class GUI implements IGUI {
   }
 
   public dragStart(mouse: MouseEvent): void {
+    if (this.animation.isPlayerDead()) {
+      return;
+    }
     this.prevX = mouse.screenX;
     this.prevY = mouse.screenY;
     this.dragging = true;
 
-    if (this.cubeSelected && mouse.buttons == 1) {
-      this.animation.breakSelectedBlock();
-    } else if (this.cubeSelected && mouse.buttons == 2) {
-      this.animation.placeBlock(0.0); // filler cube type
+    if (mouse.buttons == 1) {
+      this.animation.leftClick(this.cubeSelected);
+    } else if (mouse.buttons == 2) {
+      this.animation.rightClick(this.cubeSelected); // filler cube type
     }
   }
   public dragEnd(mouse: MouseEvent): void {
@@ -138,6 +147,9 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
+    if (this.animation.isPlayerDead()) {
+      return;
+    }
     let x = mouse.offsetX;
     let y = mouse.offsetY;
     const dx = mouse.screenX - this.prevX;
@@ -190,6 +202,9 @@ export class GUI implements IGUI {
    * @param key
    */
   public onKeydown(key: KeyboardEvent): void {
+    if (this.animation.isPlayerDead() && key.code !== "KeyR") {
+      return;
+    }
     switch (key.code) {
       case "KeyW": {
         this.Wdown = true;
@@ -207,8 +222,52 @@ export class GUI implements IGUI {
         this.Ddown = true;
         break;
       }
+      case "Digit1": {
+        this.animation.setHotbarSlot(0);
+        break;
+      }
+      case "Digit2": {
+        this.animation.setHotbarSlot(1);
+        break;
+      }
+      case "Digit3": {
+        this.animation.setHotbarSlot(2);
+        break;
+      }
+      case "Digit4": {
+        this.animation.setHotbarSlot(3);
+        break;
+      }
+      case "Digit5": {
+        this.animation.setHotbarSlot(4);
+        break;
+      }
+      case "Digit6": {
+        this.animation.setHotbarSlot(5);
+        break;
+      }
+      case "Digit7": {
+        this.animation.setHotbarSlot(6);
+        break;
+      }
+      case "Digit8": {
+        this.animation.setHotbarSlot(7);
+        break;
+      }
+      case "Digit9": {
+        this.animation.setHotbarSlot(8);
+        break;
+      }
       case "KeyR": {
         this.animation.reset();
+        break;
+      }
+      case "Semicolon": {
+        this.animation.giveRandomItem();
+        break;
+      }
+      case "KeyG": {
+        this.animation.toggleAchievements();
         break;
       }
       case "Space": {

@@ -18,9 +18,31 @@ import {
 } from "./Shaders.js";
 import { Mesh } from "./Mesh.js";
 import { CLoader } from "./AnimationFileLoader.js";
+import {
+  Inventory,
+  ItemAction,
+  ItemStack,
+  itemTypes,
+  registerItemTypes,
+} from "./Inventory.js";
+
+type Achievement = {
+  id: string;
+  title: string;
+  description: string;
+  completed: boolean;
+  completedAt: number | null;
+};
+
+type AchievementToast = {
+  title: string;
+  description: string;
+  timeLeft: number;
+};
 
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
+  private static readonly safeFallDistance = 3;
 
   private gui: GUI;
 
@@ -50,12 +72,28 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private canvas2d: HTMLCanvasElement;
   private overlayCtx: CanvasRenderingContext2D;
+  private heartBitmap: ImageBitmap | null = null;
 
   private player: Player;
+  private spawnPosition: Vec3;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
+  private wasPlayerGrounded: boolean;
+  private airborneStartY: number;
+  private fallDamageArmed: boolean;
 
   private enemies: Enemy[];
+  private achievements: Achievement[];
+  private achievementToast: AchievementToast | null;
+  private showAchievements: boolean;
+  private blocksBroken: number;
+  private blocksPlaced: number;
+  private successfulJumps: number;
+
+  /* Inventory */
+  private inventory: Inventory;
+  private selectedHotbarIdx: number;
+  private isInInventory: boolean;
 
   /**
    * Entities whose chunk is not in `renderedChunks` are parked here by chunk key.
@@ -68,44 +106,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /* Overlay information */
   private minimapPixelSize = 135;
-  private minimapColors = [
-    // index corresponds to block type, value is [r, g, b] color for minimap
-    [
-      Number.parseInt("8b", 16),
-      Number.parseInt("45", 16),
-      Number.parseInt("13", 16),
-    ], // dirt
-    [
-      Number.parseInt("a6", 16),
-      Number.parseInt("a1", 16),
-      Number.parseInt("99", 16),
-    ], // cobble
-    [
-      Number.parseInt("2b", 16),
-      Number.parseInt("4d", 16),
-      Number.parseInt("8c", 16),
-    ], // water
-    [
-      Number.parseInt("3f", 16),
-      Number.parseInt("3f", 16),
-      Number.parseInt("3f", 16),
-    ], // coal ore
-    [
-      Number.parseInt("af", 16),
-      Number.parseInt("af", 16),
-      Number.parseInt("af", 16),
-    ], // iron ore
-    [
-      Number.parseInt("ff", 16),
-      Number.parseInt("d7", 16),
-      Number.parseInt("00", 16),
-    ], // gold ore
-    [
-      Number.parseInt("00", 16),
-      Number.parseInt("ff", 16),
-      Number.parseInt("ff", 16),
-    ], // diamond ore
-  ];
+  private minimapColors: Map<number, [number, number, number]>;
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -120,6 +121,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.ctx = Debugger.makeDebugContext(this.ctx);
     const gl = this.ctx;
 
+    registerItemTypes();
+
+    this.loadMinimapColors();
+
     this.gui = new GUI(this.canvas2d, this);
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
@@ -127,9 +132,13 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
+    this.spawnPosition = playerPosition.copy();
     this.fallingBlocks = [];
     this.isectNormal = new Vec3();
     this.parkedEntitiesByChunk = new Map();
+    this.wasPlayerGrounded = false;
+    this.airborneStartY = this.player.position.y;
+    this.fallDamageArmed = false;
 
     this.loadChunksAroundPlayer();
 
@@ -145,6 +154,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initBlankCube();
 
     this.enemies = [];
+    this.achievements = this.createAchievements();
+    this.achievementToast = null;
+    this.showAchievements = false;
+    this.blocksBroken = 0;
+    this.blocksPlaced = 0;
+    this.successfulJumps = 0;
+
+    this.isInInventory = false;
+
     this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
@@ -152,6 +170,129 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
+
+    this.inventory = new Inventory();
+    this.selectedHotbarIdx = 0;
+
+    // Load heart icon for health bar
+    const heartImg = new Image();
+    heartImg.src = "./static/assets/heart.png";
+    heartImg.onload = () => {
+      createImageBitmap(heartImg).then((bmp) => {
+        this.heartBitmap = bmp;
+      });
+    };
+  }
+
+  private createAchievements(): Achievement[] {
+    return [
+      {
+        id: "jump",
+        title: "First Jump",
+        description: "Jump for the first time.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "mine",
+        title: "Stone Age",
+        description: "Break your first block.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "place",
+        title: "Block by Block",
+        description: "Place a block into the world.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "explore",
+        title: "Adventuring Time",
+        description: "Travel 32 blocks from spawn.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "night",
+        title: "After Dark",
+        description: "Stay out until night falls.",
+        completed: false,
+        completedAt: null,
+      },
+    ];
+  }
+
+  private completeAchievement(id: string): void {
+    const achievement = this.achievements.find((entry) => entry.id === id);
+    if (!achievement || achievement.completed) {
+      return;
+    }
+
+    achievement.completed = true;
+    achievement.completedAt = performance.now() / 1000;
+    this.achievementToast = {
+      title: achievement.title,
+      description: achievement.description,
+      timeLeft: 4.0,
+    };
+  }
+
+  private horizontalDistanceFromSpawn(): number {
+    const dx = this.player.position.x - this.spawnPosition.x;
+    const dz = this.player.position.z - this.spawnPosition.z;
+    return Math.hypot(dx, dz);
+  }
+
+  private isNightTime(): boolean {
+    const current = this.getCurrentDayTime();
+    return current >= 18 * 60 || current < 5 * 60;
+  }
+
+  private updateAchievements(dt: number): void {
+    if (this.successfulJumps > 0) {
+      this.completeAchievement("jump");
+    }
+    if (this.blocksBroken > 0) {
+      this.completeAchievement("mine");
+    }
+    if (this.blocksPlaced > 0) {
+      this.completeAchievement("place");
+    }
+    if (this.horizontalDistanceFromSpawn() >= 32) {
+      this.completeAchievement("explore");
+    }
+    if (this.isNightTime()) {
+      this.completeAchievement("night");
+    }
+
+    if (this.achievementToast !== null) {
+      this.achievementToast.timeLeft -= dt;
+      if (this.achievementToast.timeLeft <= 0) {
+        this.achievementToast = null;
+      }
+    }
+  }
+
+  private loadMinimapColors(): void {
+    this.minimapColors = new Map();
+    // index corresponds to block type, value is [r, g, b] color for minimap
+    const putColor = (blockType: number, hex: string) => {
+      this.minimapColors.set(blockType, [
+        Number.parseInt(hex.slice(0, 2), 16),
+        Number.parseInt(hex.slice(2, 4), 16),
+        Number.parseInt(hex.slice(4, 6), 16),
+      ]);
+    };
+
+    putColor(Chunk.blockTypeDirt, "8b4513");
+    putColor(Chunk.blockTypeCobble, "a6a199");
+    putColor(Chunk.blockTypeWater, "2b4d8c");
+    putColor(Chunk.blockTypeCoalOre, "3f3f3f");
+    putColor(Chunk.blockTypeIronOre, "afafaf");
+    putColor(Chunk.blockTypeGoldOre, "ffd700");
+    putColor(Chunk.blockTypeDiamondOre, "00ffff");
   }
 
   /**
@@ -160,7 +301,109 @@ export class MinecraftAnimation extends CanvasAnimation {
   public reset(): void {
     this.gui.reset();
 
-    this.player.position = this.gui.getCamera().pos();
+    this.player.position = this.spawnPosition.copy();
+    this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
+    this.player.health = this.player.maxHealth;
+    this.wasPlayerGrounded = false;
+    this.airborneStartY = this.player.position.y;
+    this.fallDamageArmed = false;
+    this.gui.getCamera().setPos(this.player.position);
+    this.loadChunksAroundPlayer();
+  }
+
+  private isPlayerGrounded(chunkProvider: Chunk.ColumnProvider): boolean {
+    const floorHead = Chunk.supportedHeadYWorld(
+      chunkProvider,
+      this.player.position.x,
+      this.player.position.z,
+      this.player.position.y - this.player.hitboxHeight,
+      this.player.hitboxRadius,
+      this.player.hitboxHeight,
+      0.55,
+    );
+    return (
+      floorHead !== -Infinity && this.player.position.y <= floorHead + 0.02
+    );
+  }
+
+  private respawnPlayer(): void {
+    this.player.position = this.spawnPosition.copy();
+    this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
+    this.player.health = this.player.maxHealth;
+    this.wasPlayerGrounded = false;
+    this.airborneStartY = this.player.position.y;
+    this.fallDamageArmed = false;
+    this.gui.getCamera().setPos(this.player.position);
+  }
+
+  private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
+    const feetY = this.player.position.y - this.player.hitboxHeight;
+    const sampleHeights = [feetY - 0.6, feetY - 0.1, feetY + 0.4, feetY + 0.9];
+    const offset = this.player.hitboxRadius * 0.7;
+    const sampleOffsets = [
+      [0, 0],
+      [offset, 0],
+      [-offset, 0],
+      [0, offset],
+      [0, -offset],
+    ];
+
+    for (const [dx, dz] of sampleOffsets) {
+      const sampleX = this.player.position.x + dx;
+      const sampleZ = this.player.position.z + dz;
+      const chunk = chunkProvider(Math.round(sampleX), Math.round(sampleZ));
+      if (!chunk) {
+        continue;
+      }
+      for (const sampleY of sampleHeights) {
+        if (
+          chunk.cubeType(sampleX, sampleZ, sampleY) === Chunk.blockTypeWater
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private updatePlayerFallDamage(chunkProvider: Chunk.ColumnProvider): void {
+    const grounded = this.isPlayerGrounded(chunkProvider);
+
+    if (!grounded) {
+      if (this.wasPlayerGrounded) {
+        this.airborneStartY = this.player.position.y;
+      }
+    } else {
+      if (!this.fallDamageArmed) {
+        this.fallDamageArmed = true;
+      } else if (!this.wasPlayerGrounded) {
+        if (this.isPlayerTouchingWater(chunkProvider)) {
+          this.airborneStartY = this.player.position.y;
+          this.wasPlayerGrounded = grounded;
+          return;
+        }
+        const fallDistance = this.airborneStartY - this.player.position.y;
+        const damage = Math.max(
+          0,
+          fallDistance - MinecraftAnimation.safeFallDistance,
+        );
+        if (damage > 0) {
+          this.player.takeDamage(damage);
+        }
+      }
+      this.airborneStartY = this.player.position.y;
+    }
+
+    this.wasPlayerGrounded = grounded;
+  }
+
+  public giveRandomItem(): void {
+    // Give the player a random item from the whole item pool
+    const allItemTypes = Array.from(itemTypes.values());
+    const randomItemType =
+      allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
+    this.inventory.insertStack(new ItemStack(randomItemType, 1));
   }
 
   /**
@@ -820,14 +1063,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     const dt = 1 / 60;
 
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
-    this.player.update(this.gui.walkDir(), prov, dt);
+    if (!this.player.isDead()) {
+      this.player.update(this.gui.walkDir(), prov, dt);
+      this.updatePlayerFallDamage(prov);
+    } else {
+      this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
+    }
     this.gui.getCamera().setPos(this.player.position);
 
     this.enemies.forEach((enemy) => {
       enemy.update(prov, this.player, dt);
     });
 
-    // Update falling block entities (only while their chunk is loaded; otherwise parked)
+    this.updateAchievements(dt);
+
+    // Update falling blocks
     let newFallingBlocks: Block[] = [];
     this.fallingBlocks.forEach((fallingBlock) => {
       const blockChunk = this.getChunkAtWorld(
@@ -1040,7 +1290,22 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    if (this.player.isDead()) {
+      return;
+    }
+    const previousVelocityY = this.player.velocity.y;
     this.player.jump(prov);
+    if (this.player.velocity.y > previousVelocityY) {
+      this.successfulJumps++;
+    }
+  }
+
+  public toggleAchievements(): void {
+    this.showAchievements = !this.showAchievements;
+  }
+
+  public isPlayerDead(): boolean {
+    return this.player.isDead();
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -1085,7 +1350,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     return hit;
   }
 
-  public breakSelectedBlock(): number | undefined {
+  public leftClick(cubeSelected: boolean): void {
+    if (!cubeSelected) {
+      return;
+    }
+
     const chunkX = this.worldToChunkCoord(this.selectedCubePosition.x);
     const chunkZ = this.worldToChunkCoord(this.selectedCubePosition.z);
     let key = `${chunkX},${chunkZ}`;
@@ -1104,32 +1373,74 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     this.deltaMaps.set(key, chunkDeltaMap);
-    return brokenCubeType;
+    if (
+      brokenCubeType !== undefined &&
+      brokenCubeType !== Chunk.blockTypeAir &&
+      brokenCubeType !== Chunk.blockTypeWater
+    ) {
+      this.blocksBroken++;
+    }
+    this.inventory.insertStack(ItemStack.dropsFrom(brokenCubeType ?? -1));
   }
 
-  public placeBlock(cubeType: number) {
-    // Place new cube based on side of cube that mouse is pointing at
-    const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
-    const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
-    const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
-
-    const chunkX = this.worldToChunkCoord(cubeX);
-    const chunkZ = this.worldToChunkCoord(cubeZ);
-    let key = `${chunkX},${chunkZ}`;
-    let chunk = this.renderedChunks.get(key)!;
-
-    let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
-
-    // Test falling blocks
-    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
-      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
-      this.fallingBlocks.push(
-        new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
-      );
-      chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
+  public rightClick(cubeSelected: boolean) {
+    const item = this.heldItem();
+    if (item === null) {
+      return;
     }
 
-    this.deltaMaps.set(key, chunkDeltaMap);
+    const itemType = item.itemType!;
+    switch (itemType.actionType) {
+      case ItemAction.None: {
+        return;
+      }
+      case ItemAction.Use: {
+        itemType.useAction(item!, this.player);
+        return;
+      }
+      case ItemAction.Place: {
+        if (!cubeSelected) {
+          return;
+        }
+
+        const blockType = itemType.getBlockType();
+
+        // Place new cube based on side of cube that mouse is pointing at
+        const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
+        const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
+        const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
+
+        const chunkX = this.worldToChunkCoord(cubeX);
+        const chunkZ = this.worldToChunkCoord(cubeZ);
+        let key = `${chunkX},${chunkZ}`;
+        let chunk = this.renderedChunks.get(key)!;
+
+        let chunkDeltaMap = chunk.changeCubeType(
+          cubeX,
+          cubeZ,
+          cubeY,
+          blockType,
+        );
+
+        // Test falling blocks
+        if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
+          const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
+          this.fallingBlocks.push(
+            new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
+          );
+          chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
+        }
+
+        this.deltaMaps.set(key, chunkDeltaMap);
+        this.blocksPlaced++;
+
+        this.inventory.editSlotCount(
+          this.selectedHotbarIdx,
+          0,
+          item!.count - 1,
+        );
+      }
+    }
   }
 
   private drawOverlay(): void {
@@ -1137,6 +1448,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const x = 18;
     const y = 18;
     const timeLine = `Time ${this.formatDayTime(this.getCurrentDayTime())}`;
+    const achievementPanelY = y + 42;
 
     ctx.clearRect(0, 0, this.canvas2d.width, this.canvas2d.height);
     ctx.save();
@@ -1149,8 +1461,90 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillStyle = "#fff6d7";
     ctx.fillText(timeLine, x, y);
 
+    if (this.showAchievements) {
+      this.drawAchievementsPanel(x, achievementPanelY);
+    }
+    this.drawHealthBar();
     this.drawMinimap();
+    this.drawHotbar();
+    this.drawAchievementToast();
+    if (this.player.isDead()) {
+      this.drawDeathOverlay();
+    }
 
+    if (this.isInInventory) {
+      this.drawInventory();
+    }
+
+    ctx.restore();
+  }
+
+  private drawAchievementsPanel(x: number, y: number): void {
+    const ctx = this.overlayCtx;
+    const rowHeight = 28;
+    const panelWidth = 280;
+    const panelHeight = 30 + this.achievements.length * rowHeight;
+
+    ctx.fillStyle = "rgba(12, 18, 28, 0.58)";
+    ctx.fillRect(x - 10, y - 8, panelWidth, panelHeight);
+    ctx.fillStyle = "#fff6d7";
+    ctx.font = "14px monospace";
+    ctx.fillText("Goals", x, y);
+
+    this.achievements.forEach((achievement, index) => {
+      const rowY = y + 22 + index * rowHeight;
+      const marker = achievement.completed ? "[x]" : "[ ]";
+      ctx.fillStyle = achievement.completed ? "#9be59b" : "#f0eee6";
+      ctx.fillText(`${marker} ${achievement.title}`, x, rowY);
+      ctx.fillStyle = achievement.completed ? "#d6f5d6" : "#c9d1d9";
+      ctx.font = "11px monospace";
+      ctx.fillText(achievement.description, x + 26, rowY + 14);
+      ctx.font = "14px monospace";
+    });
+  }
+
+  private drawAchievementToast(): void {
+    if (this.achievementToast === null) {
+      return;
+    }
+
+    const ctx = this.overlayCtx;
+    const width = 260;
+    const height = 60;
+    const x = this.canvas2d.width - width - 18;
+    const y = this.canvas2d.height - height - 18;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(52, 35, 12, 0.82)";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "#f7d774";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillStyle = "#f7d774";
+    ctx.fillText("Advancement Made!", x + 12, y + 10);
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText(this.achievementToast.title, x + 12, y + 28);
+    ctx.fillStyle = "#ddd3ba";
+    ctx.fillText(this.achievementToast.description, x + 12, y + 44);
+    ctx.restore();
+  }
+
+  private drawDeathOverlay(): void {
+    const ctx = this.overlayCtx;
+    const centerX = this.canvas2d.width / 2;
+    const centerY = this.canvas2d.height / 2;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(20, 0, 0, 0.45)";
+    ctx.fillRect(0, 0, this.canvas2d.width, this.canvas2d.height);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 48px monospace";
+    ctx.fillStyle = "#ff6b6b";
+    ctx.fillText("You Died!", centerX, centerY - 26);
+    ctx.font = "18px monospace";
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText("Press R to Respawn", centerX, centerY + 18);
     ctx.restore();
   }
 
@@ -1183,17 +1577,18 @@ export class MinecraftAnimation extends CanvasAnimation {
   private drawMinimap(): void {
     const ctx = this.overlayCtx;
     const playerPos = this.player.position;
-    const size = this.minimapPixelSize;
+    const scale = 1.5;
+    const size = this.minimapPixelSize * scale;
     const minimapX = this.canvas2d.width - size - 10;
     const minimapY = 10;
     ctx.save();
     ctx.translate(minimapX, minimapY);
 
     // terrain
-    for (let i = 0; i < size; i++) {
-      for (let j = 0; j < size; j++) {
-        const worldX = Math.floor(playerPos.x - size / 2 + i);
-        const worldZ = Math.floor(playerPos.z - size / 2 + j);
+    for (let i = 0; i < this.minimapPixelSize; i++) {
+      for (let j = 0; j < this.minimapPixelSize; j++) {
+        const worldX = Math.floor(playerPos.x - this.minimapPixelSize / 2 + i);
+        const worldZ = Math.floor(playerPos.z - this.minimapPixelSize / 2 + j);
 
         const chunkX = this.worldToChunkCoord(worldX);
         const chunkZ = this.worldToChunkCoord(worldZ);
@@ -1204,21 +1599,25 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
 
         const topBlock = chunk.topBlockAt(worldX, worldZ);
-        if (
-          !topBlock ||
-          topBlock.type < 0 ||
-          topBlock.type >= this.minimapColors.length
-        ) {
+        const color = !topBlock
+          ? undefined
+          : this.minimapColors.get(topBlock.type);
+        if (!topBlock || !color) {
           ctx.fillStyle = "#C7C0B7";
-          ctx.fillRect(i, j, 1, 1);
+          ctx.fillRect(
+            i * scale,
+            j * scale,
+            Math.ceil(scale),
+            Math.ceil(scale),
+          );
           continue;
         }
 
         // height-based tinting: darken below sea level, brighten above. tune t to adjust strength of effect
         const height = topBlock.height;
-        const r = this.minimapColors[topBlock.type][0];
-        const g = this.minimapColors[topBlock.type][1];
-        const b = this.minimapColors[topBlock.type][2];
+        const r = color[0];
+        const g = color[1];
+        const b = color[2];
         let lr: number, lg: number, lb: number;
 
         if (height < Chunk.SEA_LEVEL) {
@@ -1250,7 +1649,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
 
         ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
-        ctx.fillRect(i, j, 1, 1);
+        ctx.fillRect(i * scale, j * scale, Math.ceil(scale), Math.ceil(scale));
       }
     }
 
@@ -1263,9 +1662,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.translate(size / 2, size / 2);
     ctx.rotate(angle);
     ctx.beginPath();
-    ctx.moveTo(0, 6);
-    ctx.lineTo(-4, -4);
-    ctx.lineTo(4, -4);
+    ctx.moveTo(0 * scale, 6 * scale);
+    ctx.lineTo(-4 * scale, -4 * scale);
+    ctx.lineTo(4 * scale, -4 * scale);
     ctx.closePath();
     ctx.fillStyle = "#0a9e2e";
     ctx.fill();
@@ -1277,7 +1676,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       const ez = enemy.position.z - playerPos.z + size / 2;
       if (ex >= 0 && ex < size && ez >= 0 && ez < size) {
         ctx.fillStyle = "#ff0000";
-        ctx.fillRect(ex, ez, 2, 2);
+        ctx.fillRect(ex - scale, ez - scale, 2 * scale, 2 * scale);
       }
     });
 
@@ -1286,6 +1685,148 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, size, size);
 
+    ctx.restore();
+  }
+
+  private drawHotbar(): void {
+    const ctx = this.overlayCtx;
+    const hotbarSize = Inventory.width;
+    const slotSize = 60;
+    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
+    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
+    const hotbarY = this.canvas2d.height - slotSize - 35;
+
+    ctx.save();
+    ctx.translate(hotbarX, hotbarY);
+
+    // background
+    ctx.beginPath();
+    ctx.roundRect(-15, -15, hotbarWidth + 30, slotSize + 30, 6);
+    ctx.strokeStyle = "#737981";
+    ctx.lineWidth = 4;
+    ctx.fillStyle = "rgba(21,27,41,0.6)";
+    ctx.fill();
+    ctx.stroke();
+
+    // slots
+    ctx.font = "16px monospace";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "right";
+
+    for (let i = 0; i < hotbarSize; i++) {
+      ctx.beginPath();
+      ctx.roundRect(i * (slotSize + 10), 0, slotSize, slotSize, 4);
+      ctx.fillStyle = "rgba(15,15,25,0.6)";
+      ctx.fill();
+      ctx.strokeStyle = "#1b1717";
+      ctx.lineWidth = 2;
+      if (i === this.selectedHotbarIdx) {
+        ctx.strokeStyle = "#e1d8b7";
+        ctx.lineWidth = 4;
+      }
+      ctx.stroke();
+
+      // item icons
+      const item = this.inventory.getItemStack(i, 0);
+      if (item) {
+        const img = item.itemType.img!;
+        if (img) {
+          ctx.drawImage(
+            img,
+            i * (slotSize + 10) + 9,
+            9,
+            slotSize - 18,
+            slotSize - 18,
+          );
+        } else {
+          // draw a rectangle for items without icons
+          ctx.fillStyle = "#d81cd5";
+          ctx.fillRect(
+            i * (slotSize + 10) + 9,
+            9,
+            slotSize - 18,
+            slotSize - 18,
+          );
+        }
+
+        if (item.count > 1) {
+          ctx.fillStyle = "#fff6d7";
+          ctx.fillText(
+            String(item.count),
+            i * (slotSize + 10) + slotSize - 8,
+            slotSize - 6,
+          );
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+  private drawInventory(): void {}
+
+  public setHotbarSlot(number: number) {
+    this.selectedHotbarIdx = number;
+  }
+
+  public heldItem(): ItemStack | null {
+    return this.inventory.getItemStack(this.selectedHotbarIdx, 0);
+  }
+  private drawHealthBar(): void {
+    if (!this.heartBitmap) return;
+
+    const ctx = this.overlayCtx;
+    const health = this.player.health;
+    const maxHealth = this.player.maxHealth;
+    const totalHearts = maxHealth / 2;
+    const fullHearts = Math.floor(health / 2);
+    const halfHeart = health % 2 >= 0.5;
+
+    const heartSize = 24;
+    const spacing = 4;
+    const startX = 18;
+    const startY = this.canvas2d.height - heartSize - 18;
+
+    ctx.save();
+    for (let i = 0; i < totalHearts; i++) {
+      const x = startX + i * (heartSize + spacing);
+      if (i < fullHearts) {
+        // Full heart
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(this.heartBitmap, x, startY, heartSize, heartSize);
+      } else if (i === fullHearts && halfHeart) {
+        // Half heart: draw left half full, right half dimmed
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(
+          this.heartBitmap,
+          0,
+          0,
+          this.heartBitmap.width / 2,
+          this.heartBitmap.height,
+          x,
+          startY,
+          heartSize / 2,
+          heartSize,
+        );
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(
+          this.heartBitmap,
+          this.heartBitmap.width / 2,
+          0,
+          this.heartBitmap.width / 2,
+          this.heartBitmap.height,
+          x + heartSize / 2,
+          startY,
+          heartSize / 2,
+          heartSize,
+        );
+      } else {
+        // Empty heart
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(this.heartBitmap, x, startY, heartSize, heartSize);
+      }
+    }
+    ctx.globalAlpha = 1.0;
     ctx.restore();
   }
 }
