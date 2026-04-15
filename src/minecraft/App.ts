@@ -342,7 +342,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const floorY = this.currentChunk().floorHeight(
       this.player.position.x,
       this.player.position.z,
-      this.player.position.y,
     );
     // Apply gravity acceleration.
     if (this.player.position.y > floorY + Player.hitboxHeight) {
@@ -462,7 +461,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const floorY = this.currentChunk().floorHeight(
       this.player.position.x,
       this.player.position.z,
-      this.player.position.y,
     );
     // FIXME: Wtf. Does this even work?
     if (this.player.position.y <= floorY + Player.hitboxHeight) {
