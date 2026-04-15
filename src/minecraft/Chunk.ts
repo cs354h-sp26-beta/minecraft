@@ -31,6 +31,7 @@ export class Chunk {
   public static readonly blockTypeSnow: number = 10;
   public static readonly blockTypeNetherite: number = 11;
   public static readonly blockTypeBedrock: number = 12;
+  public static readonly blockTypePortal: number = 13;
   public static readonly SEA_LEVEL: number = 8;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
