@@ -41,14 +41,9 @@ export class Chunk {
   private x: number; // Center of the chunk
   private z: number;
   private size: number; // Number of cubes along each side of the chunk
-  private static worldSeed: string = "default";
+  private static seedHash: number = 2166136261 >>> 0;
 
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
-
-  // world seed
-  public static setWorldSeed(seed: string): void {
-    Chunk.worldSeed = seed;
-  }
 
   constructor(
     centerX: number,
@@ -68,20 +63,28 @@ export class Chunk {
     return [this.x - this.size / 2, this.z - this.size / 2];
   }
 
-  // 32-bit hash so world sampling is deterministic by hash
-  private hash32(input: string): number {
-    let h = 2166136261 >>> 0;
-    for (let i = 0; i < input.length; i++) {
-      h ^= input.charCodeAt(i);
-      h = Math.imul(h, 16777619) >>> 0;
-    }
+  private hashInts(a: number, b: number, c: number, d: number): number {
+    let h = Chunk.seedHash;
+    h ^= a;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+    h ^= b;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+    h ^= c;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+    h ^= d;
+    h = Math.imul(h, 0x9e3779b9) >>> 0;
+
+    h = (h ^ (h >>> 16)) >>> 0;
+    h = Math.imul(h, 0x85ebca6b) >>> 0;
+    h = (h ^ (h >>> 13)) >>> 0;
+    h = Math.imul(h, 0xc2b2ae35) >>> 0;
+    h = (h ^ (h >>> 16)) >>> 0;
     return h;
   }
 
   // deterministic float in [0, 1) by lattice coord and octave
   private rand01AtLattice(ix: number, iz: number, octave: number): number {
-    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iz}`);
-    return h / 4294967295;
+    return this.hashInts(octave, ix, 0, iz) / 4294967295;
   }
 
   // gradient directions for 3D Perlin noise
@@ -103,8 +106,7 @@ export class Chunk {
 
   // deterministic gradient index at a 3D lattice point
   private grad3At(ix: number, iy: number, iz: number, octave: number): number {
-    const h = this.hash32(`${Chunk.worldSeed}|${octave}|${ix}|${iy}|${iz}`);
-    return h % 12;
+    return this.hashInts(octave, ix, iy, iz) % 12;
   }
 
   // dot product of gradient vector and offset vector at a 3D lattice corner
@@ -277,15 +279,15 @@ export class Chunk {
 
   // Discrete biome regions in world space with a narrow smooth transition band.
   private sampleBiomeProfileAt(worldX: number, worldZ: number): BiomeProfile {
-    const selector = Math.min(
-      0.999999,
-      this.sampleValueNoise(
-        worldX,
-        worldZ,
-        BIOME_SELECTION_TUNING.selectorOctave,
-        BIOME_SELECTION_TUNING.selectorFrequency,
-      ),
-    );
+    const selector =
+      this.clamp01(
+        this.sampleValueNoise(
+          worldX,
+          worldZ,
+          BIOME_SELECTION_TUNING.selectorOctave,
+          BIOME_SELECTION_TUNING.selectorFrequency,
+        ),
+      ) * 0.999999;
 
     const biomeCount = ACTIVE_BIOME_PROFILES.length;
     const scaled = selector * biomeCount;
