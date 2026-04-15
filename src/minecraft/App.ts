@@ -1114,7 +1114,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.lineTo(-4, -4);
     ctx.lineTo(4, -4);
     ctx.closePath();
-    ctx.fillStyle = "#0000ff";
+    ctx.fillStyle = "#0a9e2e";
     ctx.fill();
     ctx.restore();
 
@@ -1132,6 +1132,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 2;
     ctx.strokeRect(0, 0, size, size);
+
+    ctx.restore();
   }
 }
 
