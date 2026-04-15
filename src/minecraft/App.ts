@@ -27,7 +27,6 @@ export class MinecraftAnimation extends CanvasAnimation {
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
   private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
-  private numBlocksAddedMap: Map<string, number>; // if modified chunk has a different number of blocks
 
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
@@ -116,7 +115,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
-    this.numBlocksAddedMap = new Map();
 
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
@@ -667,12 +665,9 @@ export class MinecraftAnimation extends CanvasAnimation {
           let deltaMap = this.deltaMaps.has(key)
             ? this.deltaMaps.get(key)
             : new Map();
-          let numBlocksAdded = this.numBlocksAddedMap.has(key)
-            ? this.numBlocksAddedMap.get(key)
-            : 0;
           this.chunkCache.set(
             key,
-            new Chunk(chunkX, chunkZ, step, deltaMap, numBlocksAdded),
+            new Chunk(chunkX, chunkZ, step, deltaMap),
           );
         }
         const cachedChunk = this.chunkCache.get(key)!;
@@ -1020,7 +1015,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     this.deltaMaps.set(key, chunkDeltaMap);
-    this.numBlocksAddedMap.set(key, this.numBlocksAddedMap.get(key) ?? 0 - 1);
     return brokenCubeType;
   }
 
@@ -1047,7 +1041,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);
-    this.numBlocksAddedMap.set(key, this.numBlocksAddedMap.get(key) ?? 0 + 1);
   }
 
   private drawOverlay(): void {
