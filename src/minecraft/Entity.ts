@@ -42,7 +42,11 @@ class Entity {
   }
 
   // Does base physics updates for entities.
-  stepPhysics(lookDir: Vec3, chunkProvider: Chunk.ColumnProvider, dt: number) {
+  public stepPhysics(
+    lookDir: Vec3,
+    chunkProvider: Chunk.ColumnProvider,
+    dt: number,
+  ) {
     const r = this.hitboxRadius;
     const h = this.hitboxHeight;
     const footSlack = 0.55;
@@ -146,6 +150,32 @@ class Entity {
       if (this.velocity.y < 0) this.velocity.y = 0;
     }
   }
+
+  public jump(chunkProvider: Chunk.ColumnProvider) {
+    const r = this.hitboxRadius;
+    const h = this.hitboxHeight;
+    const footSlack = 0.55;
+    const px = this.position.x;
+    const py = this.position.y;
+    const pz = this.position.z;
+    const floorHead = Chunk.supportedHeadYWorld(
+      chunkProvider,
+      px,
+      pz,
+      py - h,
+      r,
+      h,
+      footSlack,
+    );
+    if (
+      floorHead === -Infinity ||
+      py > floorHead + 0.02 ||
+      !Chunk.verticalCapsuleHasHeadroomForJump(chunkProvider, px, py, pz, r, h)
+    ) {
+      return;
+    }
+    this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
+  }
 }
 
 export class Player extends Entity {
@@ -153,8 +183,16 @@ export class Player extends Entity {
     super(position, 0.4, 2.0);
   }
 
-  update(lookDir: Vec3, chunkProvider: Chunk.ColumnProvider, dt: number) {
+  public update(
+    lookDir: Vec3,
+    chunkProvider: Chunk.ColumnProvider,
+    dt: number,
+  ) {
     super.stepPhysics(lookDir, chunkProvider, dt);
+  }
+
+  public jump(chunkProvider: Chunk.ColumnProvider) {
+    super.jump(chunkProvider);
   }
 
   // Detects if the player collides with any blocks in the given chunk.
@@ -217,6 +255,10 @@ export class Enemy extends Entity {
 
   public getRotation(): Quat {
     return Quat.fromAxisAngle(Vec3.up, this.yaw - Math.PI / 2);
+  }
+
+  public jump(chunkProvider: Chunk.ColumnProvider) {
+    super.jump(chunkProvider);
   }
 
   public update(

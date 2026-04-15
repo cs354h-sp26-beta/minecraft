@@ -956,29 +956,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
-    const r = this.player.hitboxRadius;
-    const h = this.player.hitboxHeight;
-    const footSlack = 0.55;
-    const px = this.player.position.x;
-    const py = this.player.position.y;
-    const pz = this.player.position.z;
-    const floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    if (
-      floorHead === -Infinity ||
-      py > floorHead + 0.02 ||
-      !Chunk.verticalCapsuleHasHeadroomForJump(prov, px, py, pz, r, h)
-    ) {
-      return;
-    }
-    this.player.velocity.add(new Vec3([0.0, 10.0, 0.0]));
+    this.player.jump(prov);
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
