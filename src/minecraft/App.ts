@@ -19,6 +19,20 @@ import {
 import { Mesh } from "./Mesh.js";
 import { CLoader } from "./AnimationFileLoader.js";
 
+type Achievement = {
+  id: string;
+  title: string;
+  description: string;
+  completed: boolean;
+  completedAt: number | null;
+};
+
+type AchievementToast = {
+  title: string;
+  description: string;
+  timeLeft: number;
+};
+
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
 
@@ -52,10 +66,58 @@ export class MinecraftAnimation extends CanvasAnimation {
   private overlayCtx: CanvasRenderingContext2D;
 
   private player: Player;
+  private spawnPosition: Vec3;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
 
   private enemies: Enemy[];
+  private achievements: Achievement[];
+  private achievementToast: AchievementToast | null;
+  private showAchievements: boolean;
+  private blocksBroken: number;
+  private blocksPlaced: number;
+  private successfulJumps: number;
+
+  /* Overlay information */
+  private minimapPixelSize = 135;
+  private minimapColors = [
+    // index corresponds to block type, value is [r, g, b] color for minimap
+    [
+      Number.parseInt("8b", 16),
+      Number.parseInt("45", 16),
+      Number.parseInt("13", 16),
+    ], // dirt
+    [
+      Number.parseInt("a6", 16),
+      Number.parseInt("a1", 16),
+      Number.parseInt("99", 16),
+    ], // cobble
+    [
+      Number.parseInt("2b", 16),
+      Number.parseInt("4d", 16),
+      Number.parseInt("8c", 16),
+    ], // water
+    [
+      Number.parseInt("3f", 16),
+      Number.parseInt("3f", 16),
+      Number.parseInt("3f", 16),
+    ], // coal ore
+    [
+      Number.parseInt("af", 16),
+      Number.parseInt("af", 16),
+      Number.parseInt("af", 16),
+    ], // iron ore
+    [
+      Number.parseInt("ff", 16),
+      Number.parseInt("d7", 16),
+      Number.parseInt("00", 16),
+    ], // gold ore
+    [
+      Number.parseInt("00", 16),
+      Number.parseInt("ff", 16),
+      Number.parseInt("ff", 16),
+    ], // diamond ore
+  ];
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -74,8 +136,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
+    this.spawnPosition = playerPosition.copy();
     this.fallingBlocks = [];
     this.isectNormal = new Vec3();
 
@@ -93,6 +157,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initBlankCube();
 
     this.enemies = [];
+    this.achievements = this.createAchievements();
+    this.achievementToast = null;
+    this.showAchievements = false;
+    this.blocksBroken = 0;
+    this.blocksPlaced = 0;
+    this.successfulJumps = 0;
     this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
@@ -100,6 +170,97 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
+  }
+
+  private createAchievements(): Achievement[] {
+    return [
+      {
+        id: "jump",
+        title: "First Jump",
+        description: "Jump for the first time.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "mine",
+        title: "Stone Age",
+        description: "Break your first block.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "place",
+        title: "Block by Block",
+        description: "Place a block into the world.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "explore",
+        title: "Adventuring Time",
+        description: "Travel 32 blocks from spawn.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "night",
+        title: "After Dark",
+        description: "Stay out until night falls.",
+        completed: false,
+        completedAt: null,
+      },
+    ];
+  }
+
+  private completeAchievement(id: string): void {
+    const achievement = this.achievements.find((entry) => entry.id === id);
+    if (!achievement || achievement.completed) {
+      return;
+    }
+
+    achievement.completed = true;
+    achievement.completedAt = performance.now() / 1000;
+    this.achievementToast = {
+      title: achievement.title,
+      description: achievement.description,
+      timeLeft: 4.0,
+    };
+  }
+
+  private horizontalDistanceFromSpawn(): number {
+    const dx = this.player.position.x - this.spawnPosition.x;
+    const dz = this.player.position.z - this.spawnPosition.z;
+    return Math.hypot(dx, dz);
+  }
+
+  private isNightTime(): boolean {
+    const current = this.getCurrentDayTime();
+    return current >= 18 * 60 || current < 5 * 60;
+  }
+
+  private updateAchievements(dt: number): void {
+    if (this.successfulJumps > 0) {
+      this.completeAchievement("jump");
+    }
+    if (this.blocksBroken > 0) {
+      this.completeAchievement("mine");
+    }
+    if (this.blocksPlaced > 0) {
+      this.completeAchievement("place");
+    }
+    if (this.horizontalDistanceFromSpawn() >= 32) {
+      this.completeAchievement("explore");
+    }
+    if (this.isNightTime()) {
+      this.completeAchievement("night");
+    }
+
+    if (this.achievementToast !== null) {
+      this.achievementToast.timeLeft -= dt;
+      if (this.achievementToast.timeLeft <= 0) {
+        this.achievementToast = null;
+      }
+    }
   }
 
   /**
@@ -572,8 +733,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private worldToChunkCoord(worldVal: number): number {
-    const s = MinecraftAnimation.chunkSize;
-    return Math.floor((worldVal + s / 2) / s) * s;
+    return Chunk.worldToChunkAxis(worldVal, MinecraftAnimation.chunkSize);
   }
 
   private currentChunk(): Chunk {
@@ -582,17 +742,28 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
-  // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
-  //
-  // FIXME: Maybe this should be in `Chunk`, but only allowed a single constructor.
-  // Oh well. This can be refactored.
-  private loadChunkFromSeed(
-    centerX: number,
-    centerZ: number,
-    seed: string,
-  ): Chunk {
-    // TODO: Actually do it. For now, just create a new chunk alltogther.
-    return new Chunk(centerX, centerZ, 64);
+  private chunkAt(worldX: number, worldZ: number): Chunk {
+    const chunkX = this.worldToChunkCoord(Math.round(worldX));
+    const chunkZ = this.worldToChunkCoord(Math.round(worldZ));
+    return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
+  }
+
+  /**
+   * Resolves the chunk that owns the block column at (wx, wz).
+   * Snaps to integer block centers first so values like 31.999999 at a seam still map to the
+   * same chunk as column 32 (avoids phantom air / wrong chunk).
+   */
+  private getChunkAtWorld(wx: number, wz: number): Chunk | undefined {
+    const ix = Math.round(wx);
+    const iz = Math.round(wz);
+    const cx = this.worldToChunkCoord(ix);
+    const cz = this.worldToChunkCoord(iz);
+    const key = `${cx},${cz}`;
+    const live = this.renderedChunks.get(key);
+    if (live !== undefined) {
+      return live;
+    }
+    return this.chunkCache.get(key);
   }
 
   private loadChunksAroundPlayer(): void {
@@ -610,7 +781,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         if (!this.chunkCache.has(key)) {
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step));
+          let deltaMap = this.deltaMaps.has(key)
+            ? this.deltaMaps.get(key)
+            : new Map();
+          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
@@ -623,12 +797,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(4 * totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const positions = chunk.cubePositions();
       combined.set(positions, offset);
       offset += positions.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set(
+        [block.position.x, block.position.y, block.position.z, 0],
+        offset,
+      );
+      offset += 4;
     }
     return combined;
   }
@@ -638,12 +821,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const types = chunk.cubeTypes();
       combined.set(types, offset);
       offset += types.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set([block.type], offset);
+      offset += 1;
     }
     return combined;
   }
@@ -659,36 +848,39 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    this.enemies.forEach((enemy) => {
-      enemy.update(dt, this.player);
-    });
-
-    const walkDx = this.gui.walkDir().scale(0.1);
-    const momentumDx = this.player.velocity.scale(dt, new Vec3());
-    const totalDx = walkDx.add(momentumDx, new Vec3());
-    this.player.position.add(totalDx);
-
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    this.player.update(this.gui.walkDir(), prov, dt);
     this.gui.getCamera().setPos(this.player.position);
 
-    // Check for collisions.
-    //
-    // FIXME: Ew. This system sucks. It's what the hint says to do but...
-    const floorY = this.currentChunk().floorHeight(
-      this.player.position.x,
-      this.player.position.z,
-    );
-    // Apply gravity acceleration.
-    if (this.player.position.y > floorY + Player.hitboxHeight) {
-      const gDelta = -9.8 * dt;
-      const gDv = new Vec3([0.0, gDelta, 0.0]);
-      this.player.velocity.add(gDv);
-    } else {
-      // Stop all movement in vertical direction.
-      const v = this.player.velocity.copy();
-      v.y = 0.0;
-      this.player.velocity = v;
-      this.player.position.y = floorY + Player.hitboxHeight;
-    }
+    this.enemies.forEach((enemy) => {
+      enemy.update(prov, this.player, dt);
+    });
+
+    this.updateAchievements(dt);
+
+    // Update falling blocks
+    let newFallingBlocks: Block[] = [];
+    this.fallingBlocks.forEach((fallingBlock) => {
+      let blockChunk = this.chunkAt(
+        fallingBlock.position.x,
+        fallingBlock.position.z,
+      );
+
+      if (fallingBlock.update(dt, blockChunk)) {
+        newFallingBlocks.push(fallingBlock);
+      }
+      // Change back to static block once it lands on another block
+      else {
+        blockChunk.changeCubeType(
+          fallingBlock.position.x,
+          fallingBlock.position.z,
+          fallingBlock.position.y,
+          fallingBlock.type,
+        );
+      }
+    });
+    this.fallingBlocks = newFallingBlocks;
+
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
     const bg: Vec4 = this.backgroundColor;
@@ -806,8 +998,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     let centerX = Math.round(worldX);
     let centerY = Math.round(worldY);
     let centerZ = Math.round(worldZ);
-    let minCube = new Vec3([centerX - 0.5, centerY - 0.5, centerZ - 0.5]);
-    let maxCube = new Vec3([centerX + 0.5, centerY + 0.5, centerZ + 0.5]);
+    const h = 0.5;
+    let minCube = new Vec3([centerX - h, centerY - h, centerZ - h]);
+    let maxCube = new Vec3([centerX + h, centerY + h, centerZ + h]);
 
     // Calculate inverse directions to avoid division by zero
     const invDirX = 1.0 / rayDir.x;
@@ -875,18 +1068,16 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public jump() {
-    // If player is not already in the air, launch them up at 10 units/sec.
-    //
-    // FIXME: Same problem as in draw loop.
-    const floorY = this.currentChunk().floorHeight(
-      this.player.position.x,
-      this.player.position.z,
-    );
-    // FIXME: Wtf. Does this even work?
-    if (this.player.position.y <= floorY + Player.hitboxHeight) {
-      const dv = new Vec3([0.0, 10.0, 0.0]);
-      this.player.velocity.add(dv);
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    const previousVelocityY = this.player.velocity.y;
+    this.player.jump(prov);
+    if (this.player.velocity.y > previousVelocityY) {
+      this.successfulJumps++;
     }
+  }
+
+  public toggleAchievements(): void {
+    this.showAchievements = !this.showAchievements;
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -895,10 +1086,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     let bestN = new Vec3();
     let hit = false;
 
-    // Have player's reach extend 5 cubes
-    for (let dx = -5; dx <= 5; dx++) {
-      for (let dz = -5; dz <= 5; dz++) {
-        for (let dy = -5; dy <= 5; dy++) {
+    const rPick = 5;
+    for (let dx = -rPick; dx <= rPick; dx++) {
+      for (let dz = -rPick; dz <= rPick; dz++) {
+        for (let dy = -rPick; dy <= rPick; dy++) {
           let x = this.player.position.x + dx;
           let z = this.player.position.z + dz;
           let y = this.player.position.y + dy;
@@ -908,10 +1099,9 @@ export class MinecraftAnimation extends CanvasAnimation {
           let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
           let cubeType = currentChunk.cubeType(x, z, y);
 
-          if (cubeType !== undefined) {
+          if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
-            // TODO: Save the cube face that was hit for placing blocks
             if (t !== undefined && t < bestT) {
               bestT = t;
               bestPos = [x, y, z];
@@ -951,34 +1141,40 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     this.deltaMaps.set(key, chunkDeltaMap);
+    if (
+      brokenCubeType !== undefined &&
+      brokenCubeType !== Chunk.blockTypeAir &&
+      brokenCubeType !== Chunk.blockTypeWater
+    ) {
+      this.blocksBroken++;
+    }
     return brokenCubeType;
   }
 
   public placeBlock(cubeType: number) {
-    const cubeX = this.selectedCubePosition.x;
-    const cubeY = this.selectedCubePosition.y;
-    const cubeZ = this.selectedCubePosition.z;
+    // Place new cube based on side of cube that mouse is pointing at
+    const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
+    const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
+    const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
 
     const chunkX = this.worldToChunkCoord(cubeX);
     const chunkZ = this.worldToChunkCoord(cubeZ);
     let key = `${chunkX},${chunkZ}`;
     let chunk = this.renderedChunks.get(key)!;
 
-    // Place new cube based on side of cube that mouse is pointing at
-    let chunkDeltaMap = chunk.changeCubeType(
-      cubeX + this.isectNormal.x,
-      cubeZ + this.isectNormal.z,
-      cubeY + this.isectNormal.y,
-      cubeType,
-    );
+    let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
 
-    // TODO: Test falling blocks by checking if block below is empty
-    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
-      this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
-      // TODO: Remove block from chunk's map so that its static version is not rendered
+    // Test falling blocks
+    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
+      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
+      this.fallingBlocks.push(
+        new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
+      );
+      chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);
+    this.blocksPlaced++;
   }
 
   private drawOverlay(): void {
@@ -986,6 +1182,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const x = 18;
     const y = 18;
     const timeLine = `Time ${this.formatDayTime(this.getCurrentDayTime())}`;
+    const achievementPanelY = y + 42;
 
     ctx.clearRect(0, 0, this.canvas2d.width, this.canvas2d.height);
     ctx.save();
@@ -998,6 +1195,62 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillStyle = "#fff6d7";
     ctx.fillText(timeLine, x, y);
 
+    if (this.showAchievements) {
+      this.drawAchievementsPanel(x, achievementPanelY);
+    }
+    this.drawMinimap();
+    this.drawAchievementToast();
+
+    ctx.restore();
+  }
+
+  private drawAchievementsPanel(x: number, y: number): void {
+    const ctx = this.overlayCtx;
+    const rowHeight = 28;
+    const panelWidth = 280;
+    const panelHeight = 30 + this.achievements.length * rowHeight;
+
+    ctx.fillStyle = "rgba(12, 18, 28, 0.58)";
+    ctx.fillRect(x - 10, y - 8, panelWidth, panelHeight);
+    ctx.fillStyle = "#fff6d7";
+    ctx.font = "14px monospace";
+    ctx.fillText("Goals", x, y);
+
+    this.achievements.forEach((achievement, index) => {
+      const rowY = y + 22 + index * rowHeight;
+      const marker = achievement.completed ? "[x]" : "[ ]";
+      ctx.fillStyle = achievement.completed ? "#9be59b" : "#f0eee6";
+      ctx.fillText(`${marker} ${achievement.title}`, x, rowY);
+      ctx.fillStyle = achievement.completed ? "#d6f5d6" : "#c9d1d9";
+      ctx.font = "11px monospace";
+      ctx.fillText(achievement.description, x + 26, rowY + 14);
+      ctx.font = "14px monospace";
+    });
+  }
+
+  private drawAchievementToast(): void {
+    if (this.achievementToast === null) {
+      return;
+    }
+
+    const ctx = this.overlayCtx;
+    const width = 260;
+    const height = 60;
+    const x = this.canvas2d.width - width - 18;
+    const y = this.canvas2d.height - height - 18;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(52, 35, 12, 0.82)";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "#f7d774";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillStyle = "#f7d774";
+    ctx.fillText("Advancement Made!", x + 12, y + 10);
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText(this.achievementToast.title, x + 12, y + 28);
+    ctx.fillStyle = "#ddd3ba";
+    ctx.fillText(this.achievementToast.description, x + 12, y + 44);
     ctx.restore();
   }
 
@@ -1022,6 +1275,118 @@ export class MinecraftAnimation extends CanvasAnimation {
   private wrapDayTime(value: number): number {
     const dayDuration = MinecraftAnimation.dayDuration;
     return ((value % dayDuration) + dayDuration) % dayDuration;
+  }
+
+  /**
+   * Draw the minimap in the top right corner of the screen
+   */
+  private drawMinimap(): void {
+    const ctx = this.overlayCtx;
+    const playerPos = this.player.position;
+    const size = this.minimapPixelSize;
+    const minimapX = this.canvas2d.width - size - 10;
+    const minimapY = 10;
+    ctx.save();
+    ctx.translate(minimapX, minimapY);
+
+    // terrain
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        const worldX = Math.floor(playerPos.x - size / 2 + i);
+        const worldZ = Math.floor(playerPos.z - size / 2 + j);
+
+        const chunkX = this.worldToChunkCoord(worldX);
+        const chunkZ = this.worldToChunkCoord(worldZ);
+        const chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`);
+
+        if (!chunk) {
+          continue;
+        }
+
+        const topBlock = chunk.topBlockAt(worldX, worldZ);
+        if (
+          !topBlock ||
+          topBlock.type < 0 ||
+          topBlock.type >= this.minimapColors.length
+        ) {
+          ctx.fillStyle = "#C7C0B7";
+          ctx.fillRect(i, j, 1, 1);
+          continue;
+        }
+
+        // height-based tinting: darken below sea level, brighten above. tune t to adjust strength of effect
+        const height = topBlock.height;
+        const r = this.minimapColors[topBlock.type][0];
+        const g = this.minimapColors[topBlock.type][1];
+        const b = this.minimapColors[topBlock.type][2];
+        let lr: number, lg: number, lb: number;
+
+        if (height < Chunk.SEA_LEVEL) {
+          // Below sea level: dark bands
+          // Depths: 0-2 = very dark (0.45), 3-4 = dark (0.30), 5-6 = dim (0.15), 7 = slight (0.05)
+          const depth = Chunk.SEA_LEVEL - height;
+          const t =
+            depth >= 6 ? 0.45 : depth >= 4 ? 0.3 : depth >= 2 ? 0.15 : 0.05;
+          lr = Math.round(r * (1 - t));
+          lg = Math.round(g * (1 - t));
+          lb = Math.round(b * (1 - t));
+        } else {
+          // Above sea level: bright bands
+          // Heights above sea: 0-4 = base, 5-9 = +10%, 10-16 = +20%, 17-24 = +30%, 25+ = +40%
+          const elev = height - Chunk.SEA_LEVEL;
+          const t =
+            elev >= 25
+              ? 0.4
+              : elev >= 17
+                ? 0.3
+                : elev >= 10
+                  ? 0.2
+                  : elev >= 5
+                    ? 0.1
+                    : 0;
+          lr = Math.round(r + (255 - r) * t);
+          lg = Math.round(g + (255 - g) * t);
+          lb = Math.round(b + (255 - b) * t);
+        }
+
+        ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
+        ctx.fillRect(i, j, 1, 1);
+      }
+    }
+
+    // player icon
+    const camera = this.gui.getCamera();
+    const look = camera.forward().negate();
+    const angle = Math.atan2(-look.x, look.z);
+
+    ctx.save();
+    ctx.translate(size / 2, size / 2);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(0, 6);
+    ctx.lineTo(-4, -4);
+    ctx.lineTo(4, -4);
+    ctx.closePath();
+    ctx.fillStyle = "#0a9e2e";
+    ctx.fill();
+    ctx.restore();
+
+    // enemy icons
+    this.enemies.forEach((enemy) => {
+      const ex = enemy.position.x - playerPos.x + size / 2;
+      const ez = enemy.position.z - playerPos.z + size / 2;
+      if (ex >= 0 && ex < size && ez >= 0 && ez < size) {
+        ctx.fillStyle = "#ff0000";
+        ctx.fillRect(ex, ez, 2, 2);
+      }
+    });
+
+    // border
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, size, size);
+
+    ctx.restore();
   }
 }
 

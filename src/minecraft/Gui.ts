@@ -211,6 +211,10 @@ export class GUI implements IGUI {
         this.animation.reset();
         break;
       }
+      case "KeyG": {
+        this.animation.toggleAchievements();
+        break;
+      }
       case "Space": {
         this.animation.jump();
         break;
