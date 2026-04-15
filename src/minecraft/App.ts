@@ -27,6 +27,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
   private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
+  private numBlocksAddedMap: Map<string, number>; // if modified chunk has a different number of blocks
 
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
@@ -74,6 +75,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+    this.numBlocksAddedMap = new Map();
+
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
     this.fallingBlocks = [];
@@ -610,7 +613,16 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         if (!this.chunkCache.has(key)) {
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step));
+          let deltaMap = this.deltaMaps.has(key)
+            ? this.deltaMaps.get(key)
+            : new Map();
+          let numBlocksAdded = this.numBlocksAddedMap.has(key)
+            ? this.numBlocksAddedMap.get(key)
+            : 0;
+          this.chunkCache.set(
+            key,
+            new Chunk(chunkX, chunkZ, step, deltaMap, numBlocksAdded),
+          );
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
@@ -655,40 +667,18 @@ export class MinecraftAnimation extends CanvasAnimation {
   public draw(): void {
     // Load chunks.
     this.loadChunksAroundPlayer();
+    const playerChunk = this.currentChunk();
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    this.enemies.forEach((enemy) => {
-      enemy.update(dt, this.player);
-    });
-
-    const walkDx = this.gui.walkDir().scale(0.1);
-    const momentumDx = this.player.velocity.scale(dt, new Vec3());
-    const totalDx = walkDx.add(momentumDx, new Vec3());
-    this.player.position.add(totalDx);
-
+    this.player.update(this.gui.walkDir(), dt, playerChunk);
     this.gui.getCamera().setPos(this.player.position);
 
-    // Check for collisions.
-    //
-    // FIXME: Ew. This system sucks. It's what the hint says to do but...
-    const floorY = this.currentChunk().floorHeight(
-      this.player.position.x,
-      this.player.position.z,
-    );
-    // Apply gravity acceleration.
-    if (this.player.position.y > floorY + Player.hitboxHeight) {
-      const gDelta = -9.8 * dt;
-      const gDv = new Vec3([0.0, gDelta, 0.0]);
-      this.player.velocity.add(gDv);
-    } else {
-      // Stop all movement in vertical direction.
-      const v = this.player.velocity.copy();
-      v.y = 0.0;
-      this.player.velocity = v;
-      this.player.position.y = floorY + Player.hitboxHeight;
-    }
+    this.enemies.forEach((enemy) => {
+      enemy.update(dt, playerChunk, this.player);
+    });
+
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
     const bg: Vec4 = this.backgroundColor;
@@ -911,7 +901,6 @@ export class MinecraftAnimation extends CanvasAnimation {
           if (cubeType !== undefined) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
-            // TODO: Save the cube face that was hit for placing blocks
             if (t !== undefined && t < bestT) {
               bestT = t;
               bestPos = [x, y, z];
@@ -951,26 +940,22 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     this.deltaMaps.set(key, chunkDeltaMap);
+    this.numBlocksAddedMap.set(key, this.numBlocksAddedMap.get(key) ?? 0 - 1);
     return brokenCubeType;
   }
 
   public placeBlock(cubeType: number) {
-    const cubeX = this.selectedCubePosition.x;
-    const cubeY = this.selectedCubePosition.y;
-    const cubeZ = this.selectedCubePosition.z;
+    // Place new cube based on side of cube that mouse is pointing at
+    const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
+    const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
+    const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
 
     const chunkX = this.worldToChunkCoord(cubeX);
     const chunkZ = this.worldToChunkCoord(cubeZ);
     let key = `${chunkX},${chunkZ}`;
     let chunk = this.renderedChunks.get(key)!;
 
-    // Place new cube based on side of cube that mouse is pointing at
-    let chunkDeltaMap = chunk.changeCubeType(
-      cubeX + this.isectNormal.x,
-      cubeZ + this.isectNormal.z,
-      cubeY + this.isectNormal.y,
-      cubeType,
-    );
+    let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
 
     // TODO: Test falling blocks by checking if block below is empty
     if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
@@ -979,6 +964,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);
+    this.numBlocksAddedMap.set(key, this.numBlocksAddedMap.get(key) ?? 0 + 1);
   }
 
   private drawOverlay(): void {
