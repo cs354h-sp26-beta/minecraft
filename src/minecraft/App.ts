@@ -19,6 +19,20 @@ import {
 import { Mesh } from "./Mesh.js";
 import { CLoader } from "./AnimationFileLoader.js";
 
+type Achievement = {
+  id: string;
+  title: string;
+  description: string;
+  completed: boolean;
+  completedAt: number | null;
+};
+
+type AchievementToast = {
+  title: string;
+  description: string;
+  timeLeft: number;
+};
+
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
 
@@ -52,10 +66,17 @@ export class MinecraftAnimation extends CanvasAnimation {
   private overlayCtx: CanvasRenderingContext2D;
 
   private player: Player;
+  private spawnPosition: Vec3;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
 
   private enemies: Enemy[];
+  private achievements: Achievement[];
+  private achievementToast: AchievementToast | null;
+  private showAchievements: boolean;
+  private blocksBroken: number;
+  private blocksPlaced: number;
+  private successfulJumps: number;
 
   /* Overlay information */
   private minimapPixelSize = 135;
@@ -118,6 +139,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
+    this.spawnPosition = playerPosition.copy();
     this.fallingBlocks = [];
     this.isectNormal = new Vec3();
 
@@ -135,6 +157,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initBlankCube();
 
     this.enemies = [];
+    this.achievements = this.createAchievements();
+    this.achievementToast = null;
+    this.showAchievements = false;
+    this.blocksBroken = 0;
+    this.blocksPlaced = 0;
+    this.successfulJumps = 0;
     this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
@@ -142,6 +170,97 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
+  }
+
+  private createAchievements(): Achievement[] {
+    return [
+      {
+        id: "jump",
+        title: "First Jump",
+        description: "Jump for the first time.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "mine",
+        title: "Stone Age",
+        description: "Break your first block.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "place",
+        title: "Block by Block",
+        description: "Place a block into the world.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "explore",
+        title: "Adventuring Time",
+        description: "Travel 32 blocks from spawn.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "night",
+        title: "After Dark",
+        description: "Stay out until night falls.",
+        completed: false,
+        completedAt: null,
+      },
+    ];
+  }
+
+  private completeAchievement(id: string): void {
+    const achievement = this.achievements.find((entry) => entry.id === id);
+    if (!achievement || achievement.completed) {
+      return;
+    }
+
+    achievement.completed = true;
+    achievement.completedAt = performance.now() / 1000;
+    this.achievementToast = {
+      title: achievement.title,
+      description: achievement.description,
+      timeLeft: 4.0,
+    };
+  }
+
+  private horizontalDistanceFromSpawn(): number {
+    const dx = this.player.position.x - this.spawnPosition.x;
+    const dz = this.player.position.z - this.spawnPosition.z;
+    return Math.hypot(dx, dz);
+  }
+
+  private isNightTime(): boolean {
+    const current = this.getCurrentDayTime();
+    return current >= 18 * 60 || current < 5 * 60;
+  }
+
+  private updateAchievements(dt: number): void {
+    if (this.successfulJumps > 0) {
+      this.completeAchievement("jump");
+    }
+    if (this.blocksBroken > 0) {
+      this.completeAchievement("mine");
+    }
+    if (this.blocksPlaced > 0) {
+      this.completeAchievement("place");
+    }
+    if (this.horizontalDistanceFromSpawn() >= 32) {
+      this.completeAchievement("explore");
+    }
+    if (this.isNightTime()) {
+      this.completeAchievement("night");
+    }
+
+    if (this.achievementToast !== null) {
+      this.achievementToast.timeLeft -= dt;
+      if (this.achievementToast.timeLeft <= 0) {
+        this.achievementToast = null;
+      }
+    }
   }
 
   /**
@@ -665,10 +784,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           let deltaMap = this.deltaMaps.has(key)
             ? this.deltaMaps.get(key)
             : new Map();
-          this.chunkCache.set(
-            key,
-            new Chunk(chunkX, chunkZ, step, deltaMap),
-          );
+          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
@@ -739,6 +855,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.enemies.forEach((enemy) => {
       enemy.update(prov, this.player, dt);
     });
+
+    this.updateAchievements(dt);
 
     // Update falling blocks
     let newFallingBlocks: Block[] = [];
@@ -951,7 +1069,15 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    const previousVelocityY = this.player.velocity.y;
     this.player.jump(prov);
+    if (this.player.velocity.y > previousVelocityY) {
+      this.successfulJumps++;
+    }
+  }
+
+  public toggleAchievements(): void {
+    this.showAchievements = !this.showAchievements;
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -1015,6 +1141,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     this.deltaMaps.set(key, chunkDeltaMap);
+    if (
+      brokenCubeType !== undefined &&
+      brokenCubeType !== Chunk.blockTypeAir &&
+      brokenCubeType !== Chunk.blockTypeWater
+    ) {
+      this.blocksBroken++;
+    }
     return brokenCubeType;
   }
 
@@ -1041,6 +1174,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);
+    this.blocksPlaced++;
   }
 
   private drawOverlay(): void {
@@ -1048,6 +1182,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const x = 18;
     const y = 18;
     const timeLine = `Time ${this.formatDayTime(this.getCurrentDayTime())}`;
+    const achievementPanelY = y + 42;
 
     ctx.clearRect(0, 0, this.canvas2d.width, this.canvas2d.height);
     ctx.save();
@@ -1060,8 +1195,62 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillStyle = "#fff6d7";
     ctx.fillText(timeLine, x, y);
 
+    if (this.showAchievements) {
+      this.drawAchievementsPanel(x, achievementPanelY);
+    }
     this.drawMinimap();
+    this.drawAchievementToast();
 
+    ctx.restore();
+  }
+
+  private drawAchievementsPanel(x: number, y: number): void {
+    const ctx = this.overlayCtx;
+    const rowHeight = 28;
+    const panelWidth = 280;
+    const panelHeight = 30 + this.achievements.length * rowHeight;
+
+    ctx.fillStyle = "rgba(12, 18, 28, 0.58)";
+    ctx.fillRect(x - 10, y - 8, panelWidth, panelHeight);
+    ctx.fillStyle = "#fff6d7";
+    ctx.font = "14px monospace";
+    ctx.fillText("Goals", x, y);
+
+    this.achievements.forEach((achievement, index) => {
+      const rowY = y + 22 + index * rowHeight;
+      const marker = achievement.completed ? "[x]" : "[ ]";
+      ctx.fillStyle = achievement.completed ? "#9be59b" : "#f0eee6";
+      ctx.fillText(`${marker} ${achievement.title}`, x, rowY);
+      ctx.fillStyle = achievement.completed ? "#d6f5d6" : "#c9d1d9";
+      ctx.font = "11px monospace";
+      ctx.fillText(achievement.description, x + 26, rowY + 14);
+      ctx.font = "14px monospace";
+    });
+  }
+
+  private drawAchievementToast(): void {
+    if (this.achievementToast === null) {
+      return;
+    }
+
+    const ctx = this.overlayCtx;
+    const width = 260;
+    const height = 60;
+    const x = this.canvas2d.width - width - 18;
+    const y = this.canvas2d.height - height - 18;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(52, 35, 12, 0.82)";
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = "#f7d774";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, width, height);
+    ctx.fillStyle = "#f7d774";
+    ctx.fillText("Advancement Made!", x + 12, y + 10);
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText(this.achievementToast.title, x + 12, y + 28);
+    ctx.fillStyle = "#ddd3ba";
+    ctx.fillText(this.achievementToast.description, x + 12, y + 44);
     ctx.restore();
   }
 
