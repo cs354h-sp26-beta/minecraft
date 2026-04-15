@@ -752,12 +752,6 @@ export const portalFSText = `
         // Nether portal tint, light purple rn
         color.rgb *= vec3(0.85, 0.65, 0.8);
 
-        // Vignette using block-local UVs (edges darken)
-        vec2 centered = vUV - 0.5;
-        float vignette = 1.0 - dot(centered, centered) * 2.0; // distance^2 from center
-        vignette = clamp(vignette, 0.3, 1.0);
-        color.rgb *= vignette;
-
         gl_FragColor = color;
     }
 `;
