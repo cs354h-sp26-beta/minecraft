@@ -9,6 +9,13 @@ import {
   type BiomeProfile,
 } from "./Biomes.js";
 
+export interface BlockData {
+  x: number;
+  y: number;
+  z: number;
+  type: number;
+}
+
 export class Chunk {
   public static readonly blockTypeAir: number = -1;
   public static readonly blockTypeDirt: number = 0;
@@ -18,6 +25,11 @@ export class Chunk {
   public static readonly blockTypeIronOre: number = 4;
   public static readonly blockTypeGoldOre: number = 5;
   public static readonly blockTypeDiamondOre: number = 6;
+  public static readonly blockTypeGrass: number = 7;
+  public static readonly blockTypeSand: number = 8;
+  public static readonly blockTypeSandstone: number = 9;
+  public static readonly blockTypeSnow: number = 10;
+  public static readonly blockTypeNetherite: number = 11;
   public static readonly SEA_LEVEL: number = 8;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
@@ -30,9 +42,7 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
-  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
-  private numBlocksAdded: number;
 
   // world seed
   public static setWorldSeed(seed: string): void {
@@ -44,15 +54,12 @@ export class Chunk {
     centerZ: number,
     size: number,
     deltaMap = new Map(),
-    numBlocksAdded = 0,
   ) {
     this.x = centerX;
     this.z = centerZ;
     this.size = size;
     this.cubes = size * size;
-    this.positionMap = new Map();
     this.deltaMap = deltaMap;
-    this.numBlocksAdded = numBlocksAdded;
     this.generateCubes();
   }
 
@@ -136,13 +143,17 @@ export class Chunk {
     b: BiomeProfile,
     t: number,
   ): BiomeProfile {
+    const nearest = t < 0.5 ? a : b;
     return {
-      name: t < 0.5 ? a.name : b.name,
+      name: nearest.name,
       baseHeight: this.lerp(a.baseHeight, b.baseHeight, t),
       reliefScale: this.lerp(a.reliefScale, b.reliefScale, t),
       frequencyScale: this.lerp(a.frequencyScale, b.frequencyScale, t),
       highFreqBoost: this.lerp(a.highFreqBoost, b.highFreqBoost, t),
       octaveGain: this.lerp(a.octaveGain, b.octaveGain, t),
+      surfaceBlock: nearest.surfaceBlock,
+      subsurfaceBlock: nearest.subsurfaceBlock,
+      snowlineOffset: nearest.snowlineOffset,
     };
   }
 
@@ -332,7 +343,10 @@ export class Chunk {
       BIOME_BLEND_TUNING.defaultShapeHigh,
       normalized,
     );
-    return Math.floor(biome.baseHeight + shaped * biome.reliefScale);
+    return Math.min(
+      100,
+      Math.max(0, Math.floor(biome.baseHeight + shaped * biome.reliefScale)),
+    );
   }
 
   private generateCubes() {
@@ -393,86 +407,87 @@ export class Chunk {
     this.blockTypeData = new Int8Array(this.size * this.size * maxH);
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
+        const worldX = topLeftX + j;
+        const worldZ = topLeftZ + i;
         const h = this.heightMapData[this.size * i + j];
+        const biome = this.sampleBiomeProfileAt(worldX, worldZ);
         for (let y = 0; y < h; y++) {
           this.blockTypeData[y * this.size * this.size + i * this.size + j] =
-            this.blockTypeAt(topLeftX + j, y, topLeftZ + i, h);
+            this.blockTypeAt(worldX, y, worldZ, h, biome);
         }
       }
     }
 
-    // Count visible cubes: solid terrain blocks + water blocks
+    // Count all visible cubes up to generated column height (including water)
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(this.heightMapData[this.size * i + j], 1);
-        for (let y = 0; y < height; y++) {
-          if (this.getGeneratedBlockType(i, j, y) === Chunk.blockTypeAir)
-            continue;
-          if (this.isExposed(i, j, y)) this.cubes++;
-        }
-        if (height < seaLvl) {
-          for (let y = height; y < seaLvl; y++) {
-            if (this.isWaterExposed(i, j, y)) this.cubes++;
-          }
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
+        for (let y = 0; y < colMaxY; y++) {
+          if (
+            this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
+            this.isExposed(i, j, y)
+          )
+            this.cubes++;
         }
       }
     }
-    this.cubes += this.numBlocksAdded;
+    // Count player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
+      if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
+    }
+
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(this.heightMapData[this.size * i + j], 1);
-        for (let y = 0; y <= 100; y++) {
-          const key = `${j},${i},${y}`;
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
+        for (let y = 0; y < colMaxY; y++) {
+          const blockType = this.getLocalCubeType(i, j, y);
+          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
+            continue;
 
-          // skip empty cube
-          if (
-            y < height &&
-            (this.deltaMap.get(key) == Chunk.blockTypeAir ||
-              this.getGeneratedBlockType(i, j, y) === Chunk.blockTypeAir ||
-              !this.isExposed(i, j, y))
-          ) {
-            continue;
-          } else if (
-            y >= height &&
-            (this.deltaMap.get(key) == undefined ||
-              this.deltaMap.get(key) == Chunk.blockTypeAir)
-          ) {
-            continue;
-          }
           this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
           this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
-          if (this.deltaMap.has(key)) {
-            this.cubeTypesF32[cubeIdx] = this.deltaMap.get(key)!;
-            this.positionMap.set(key, this.deltaMap.get(key)!);
-          } else {
-            const blockType = this.getGeneratedBlockType(i, j, y);
-            this.cubeTypesF32[cubeIdx] = blockType;
-            this.positionMap.set(key, blockType);
-          }
+          this.cubeTypesF32[cubeIdx] = blockType;
           cubeIdx++;
         }
-        // Place water blocks only in carved pond basins
-        if (height < seaLvl) {
-          for (let y = height; y < seaLvl; y++) {
-            if (this.isWaterExposed(i, j, y)) {
-              this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
-              this.cubePositionsF32[4 * cubeIdx + 1] = y;
-              this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
-              this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-              this.cubeTypesF32[cubeIdx] = Chunk.blockTypeWater;
-              cubeIdx++;
-            }
-          }
-        }
       }
+    }
+    // Fill player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
+      if (y < colMaxY || !this.isExposed(i, j, y)) continue;
+
+      this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+      this.cubePositionsF32[4 * cubeIdx + 1] = y;
+      this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+      this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+      this.cubeTypesF32[cubeIdx] = blockType;
+      cubeIdx++;
     }
   }
 
@@ -481,10 +496,21 @@ export class Chunk {
     y: number,
     worldZ: number,
     columnHeight: number,
+    biome: BiomeProfile,
   ): number {
-    // Surface layers are always dirt (no caves near surface)
+    // Top block: snow if above snowline, otherwise biome surface block
+    if (y >= columnHeight - 1) {
+      if (
+        biome.snowlineOffset >= 0 &&
+        columnHeight >= biome.baseHeight + biome.reliefScale * 0.5
+      ) {
+        return Chunk.blockTypeSnow;
+      }
+      return biome.surfaceBlock;
+    }
+    // Subsurface layers use biome subsurface block (no caves near surface)
     if (y >= columnHeight - 3) {
-      return Chunk.blockTypeDirt;
+      return biome.subsurfaceBlock;
     }
 
     // Cave carving
@@ -535,18 +561,31 @@ export class Chunk {
     return Chunk.blockTypeCobble;
   }
 
+  // Returns the procedurally generated block type at local chunk coords (i=localZ, j=localX).
+  // Handles water for positions above terrain but below sea level.
   private getGeneratedBlockType(i: number, j: number, y: number): number {
+    const height = this.heightMapData[this.size * i + j];
+    if (y >= height) {
+      return y < Chunk.SEA_LEVEL ? Chunk.blockTypeWater : Chunk.blockTypeAir;
+    }
     return this.blockTypeData[y * this.size * this.size + i * this.size + j];
   }
 
-  // Returns true if the block at (i, j, y) is a solid (non-transparent) block.
-  // Out-of-bounds and above-terrain positions are not solid.
+  // Returns the effective block type at local chunk coords, applying deltaMap overrides.
+  // Skips string key allocation entirely for unedited chunks.
+  private getLocalCubeType(i: number, j: number, y: number): number {
+    if (this.deltaMap.size > 0) {
+      const override = this.deltaMap.get(`${j},${i},${y}`);
+      if (override !== undefined) return override;
+    }
+    return this.getGeneratedBlockType(i, j, y);
+  }
+
+  // Returns true if the block at (i, j, y) is non-air (solid terrain or water).
   private isSolidAt(i: number, j: number, y: number): boolean {
     if (i < 0 || i >= this.size || j < 0 || j >= this.size) return false;
     if (y < 0) return true; // below world is solid
-    const height = this.heightMapData[this.size * i + j];
-    if (y >= height) return false; // above terrain = air or water (transparent)
-    return this.getGeneratedBlockType(i, j, y) !== Chunk.blockTypeAir;
+    return this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir;
   }
 
   // A solid block is exposed if any of its 6 neighbors is non-solid
@@ -561,24 +600,80 @@ export class Chunk {
     return false;
   }
 
-  // Water block is exposed if it's at the surface or borders a non-water column
-  private isWaterExposed(i: number, j: number, y: number): boolean {
-    // Top water surface
-    if (y === Chunk.SEA_LEVEL - 1) return true;
-    // Chunk edge
-    if (i <= 0 || i >= this.size - 1 || j <= 0 || j >= this.size - 1)
-      return true;
-    // Edge of water body
-    if (this.getHeight(i - 1, j) <= y) return true;
-    if (this.getHeight(i + 1, j) <= y) return true;
-    if (this.getHeight(i, j - 1) <= y) return true;
-    if (this.getHeight(i, j + 1) <= y) return true;
-    return false;
-  }
+  private updateCubePositionsAndTypes() {
+    const [topLeftX, topLeftZ] = this.origin();
 
-  private getHeight(i: number, j: number): number {
-    if (i < 0 || i >= this.size || j < 0 || j >= this.size) return 0;
-    return this.heightMapData[this.size * i + j];
+    // Count all visible cubes up to generated column height (including water)
+    this.cubes = 0;
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
+        for (let y = 0; y < colMaxY; y++) {
+          if (
+            this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
+            this.isExposed(i, j, y)
+          )
+            this.cubes++;
+        }
+      }
+    }
+    // Count player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
+      if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
+    }
+
+    this.cubePositionsF32 = new Float32Array(4 * this.cubes);
+    this.cubeTypesF32 = new Float32Array(this.cubes);
+
+    let cubeIdx = 0;
+    for (let i = 0; i < this.size; i++) {
+      for (let j = 0; j < this.size; j++) {
+        const colMaxY = Math.max(
+          this.heightMapData[this.size * i + j],
+          Chunk.SEA_LEVEL,
+        );
+        for (let y = 0; y < colMaxY; y++) {
+          const blockType = this.getLocalCubeType(i, j, y);
+          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
+            continue;
+
+          this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+          this.cubePositionsF32[4 * cubeIdx + 1] = y;
+          this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+          this.cubeTypesF32[cubeIdx] = blockType;
+          cubeIdx++;
+        }
+      }
+    }
+    // Fill player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(
+        this.heightMapData[this.size * i + j],
+        Chunk.SEA_LEVEL,
+      );
+      if (y < colMaxY || !this.isExposed(i, j, y)) continue;
+
+      this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+      this.cubePositionsF32[4 * cubeIdx + 1] = y;
+      this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+      this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+      this.cubeTypesF32[cubeIdx] = blockType;
+      cubeIdx++;
+    }
   }
 
   public cubePositions(): Float32Array {
@@ -614,57 +709,375 @@ export class Chunk {
   // FIXME: Using this for collisions is not going to work with overhangs.
   // We will likely need to adapt to an API similar to `Player::collidesWithChunk`.
   // I also just don't like the coupling here, but oh well it is a prototype.
-  public floorHeight(worldX: number, worldZ: number): number {
-    const [topLeftX, topLeftZ] = this.origin();
+  // public floorHeight(worldX: number, worldZ: number): number {
+  //   const [topLeftX, topLeftZ] = this.origin();
+  //
+  //   const centerX = Math.round(worldX - topLeftX);
+  //   const centerZ = Math.round(worldZ - topLeftZ);
+  //
+  //   let floorY = -Infinity;
+  //   for (let dx = -1; dx <= 1; dx += 1) {
+  //     const cubeChunkX = centerX + dx;
+  //     if (cubeChunkX < 0 || cubeChunkX >= this.size) {
+  //       continue;
+  //     }
+  //
+  //     for (let dz = -1; dz <= 1; dz += 1) {
+  //       const cubeChunkZ = centerZ + dz;
+  //       if (cubeChunkZ < 0 || cubeChunkZ >= this.size) {
+  //         continue;
+  //       }
+  //
+  //       const cubeWorldX = topLeftX + cubeChunkX;
+  //       const cubeWorldZ = topLeftZ + cubeChunkZ;
+  //
+  //       // Clamp.
+  //       // https://stackoverflow.com/questions/11409895/whats-the-most-elegant-way-to-cap-a-number-to-a-segment
+  //       const nearX = Math.max(
+  //         cubeWorldX - 0.5,
+  //         Math.min(cubeWorldX + 0.5, worldX),
+  //       );
+  //       const nearZ = Math.max(
+  //         cubeWorldZ - 0.5,
+  //         Math.min(cubeWorldZ + 0.5, worldZ),
+  //       );
+  //
+  //       // Radial distance.
+  //       const rdX = worldX - nearX;
+  //       const rdZ = worldZ - nearZ;
+  //       const hbr = 0.4;
+  //       if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
+  //         const cubeWorldY =
+  //           this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
+  //         floorY = Math.max(floorY, cubeWorldY - 0.5);
+  //       }
+  //     }
+  //   }
+  //
+  //   return floorY;
+  // }
 
-    const centerX = Math.round(worldX - topLeftX);
-    const centerZ = Math.round(worldZ - topLeftZ);
+  ///// Cylinder-voxel collision
 
-    let floorY = -Infinity;
-    for (let dx = -1; dx <= 1; dx += 1) {
-      const cubeChunkX = centerX + dx;
-      if (cubeChunkX < 0 || cubeChunkX >= this.size) {
-        continue;
-      }
+  /**
+   *  True if the horizontal circle (radius r) at (px,pz) overlaps the block
+   *  column centered at integer (ix, iz).
+   */
+  public static circleOverlapsBlockColumn(
+    px: number,
+    pz: number,
+    r: number,
+    ix: number,
+    iz: number,
+  ): boolean {
+    const nx = Math.max(ix - 0.5, Math.min(ix + 0.5, px));
+    const nz = Math.max(iz - 0.5, Math.min(iz + 0.5, pz));
+    const dx = px - nx;
+    const dz = pz - nz;
+    return dx * dx + dz * dz < r * r + 1e-10;
+  }
 
-      for (let dz = -1; dz <= 1; dz += 1) {
-        const cubeChunkZ = centerZ + dz;
-        if (cubeChunkZ < 0 || cubeChunkZ >= this.size) {
+  /**
+   * Vertical capsule: y in [headY - height, headY], circular footprint of
+   * radius `radius`.
+   *
+   * Calls solidAt(ix, iy, iz) for integer block centers in the swept bounds.
+   */
+  public static verticalCapsuleIntersectsSolids(
+    solidAt: (ix: number, iy: number, iz: number) => boolean,
+    px: number,
+    headY: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): boolean {
+    const yLow = headY - capsuleHeight;
+    const yHigh = headY;
+    const iMin = Math.floor(px - radius - 0.5);
+    const iMax = Math.ceil(px + radius + 0.5);
+    const kMin = Math.floor(pz - radius - 0.5);
+    const kMax = Math.ceil(pz + radius + 0.5);
+    const iyMin = Math.floor(yLow - 0.5);
+    const iyMax = Math.ceil(yHigh + 0.5);
+
+    for (let ix = iMin; ix <= iMax; ix++) {
+      for (let iz = kMin; iz <= kMax; iz++) {
+        if (!Chunk.circleOverlapsBlockColumn(px, pz, radius, ix, iz)) {
           continue;
         }
-
-        const cubeWorldX = topLeftX + cubeChunkX;
-        const cubeWorldZ = topLeftZ + cubeChunkZ;
-
-        // Clamp.
-        // https://stackoverflow.com/questions/11409895/whats-the-most-elegant-way-to-cap-a-number-to-a-segment
-        const nearX = Math.max(
-          cubeWorldX - 0.5,
-          Math.min(cubeWorldX + 0.5, worldX),
-        );
-        const nearZ = Math.max(
-          cubeWorldZ - 0.5,
-          Math.min(cubeWorldZ + 0.5, worldZ),
-        );
-
-        // Radial distance.
-        const rdX = worldX - nearX;
-        const rdZ = worldZ - nearZ;
-        const hbr = Player.hitboxRadius;
-        if (rdX * rdX + rdZ * rdZ < hbr * hbr) {
-          const cubeWorldY =
-            this.heightMapData[cubeChunkZ * this.size + cubeChunkX];
-          floorY = Math.max(floorY, cubeWorldY - 0.5);
+        for (let iy = iyMin; iy <= iyMax; iy++) {
+          if (!solidAt(ix, iy, iz)) continue;
+          const bLow = iy - 0.5;
+          const bHigh = iy + 0.5;
+          if (yLow < bHigh && yHigh > bLow) return true;
         }
       }
     }
+    return false;
+  }
 
-    return floorY;
+  public static worldToChunkAxis(worldVal: number, chunkSize: number): number {
+    return Math.floor((worldVal + chunkSize / 2) / chunkSize) * chunkSize;
+  }
+
+  public static isSolidBlockWorldWide(
+    getChunk: Chunk.ColumnProvider,
+    wx: number,
+    wy: number,
+    wz: number,
+  ): boolean {
+    const ix = Math.round(wx);
+    const iy = Math.round(wy);
+    const iz = Math.round(wz);
+    const chunk = getChunk(ix, iz);
+    if (!chunk) return false;
+    return chunk.isSolidBlockAtWorld(ix, iy, iz);
+  }
+
+  public static cylinderIntersectsSolidWorld(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    headY: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): boolean {
+    return Chunk.verticalCapsuleIntersectsSolids(
+      (ix, iy, iz) => Chunk.isSolidBlockWorldWide(getChunk, ix, iy, iz),
+      px,
+      headY,
+      pz,
+      radius,
+      capsuleHeight,
+    );
+  }
+
+  public static supportedHeadYWorld(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    pz: number,
+    feetY: number,
+    radius: number,
+    capsuleHeight: number,
+    footSlack: number,
+  ): number {
+    let supportTop = -Infinity;
+    const iMin = Math.floor(px - radius - 0.5);
+    const iMax = Math.ceil(px + radius + 0.5);
+    const kMin = Math.floor(pz - radius - 0.5);
+    const kMax = Math.ceil(pz + radius + 0.5);
+
+    for (let ix = iMin; ix <= iMax; ix++) {
+      for (let iz = kMin; iz <= kMax; iz++) {
+        if (!Chunk.circleOverlapsBlockColumn(px, pz, radius, ix, iz)) {
+          continue;
+        }
+        const chunk = getChunk(ix, iz);
+        const colMax = chunk
+          ? chunk.supportTopUnderFeet(ix, iz, feetY, footSlack)
+          : -Infinity;
+        if (colMax === -Infinity) continue;
+        supportTop = Math.max(supportTop, colMax);
+      }
+    }
+    if (supportTop === -Infinity) return -Infinity;
+    return supportTop + capsuleHeight;
+  }
+
+  public static separateVerticalCapsuleFromSolids(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    py: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+    vy: number,
+  ): number {
+    const solid = (hx: number, hy: number, hz: number) =>
+      Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        hx,
+        hy,
+        hz,
+        radius,
+        capsuleHeight,
+      );
+
+    if (!solid(px, py, pz)) return py;
+    const step = 0.025;
+    const maxSteps = 400;
+
+    let downY = py;
+    let s = 0;
+    while (solid(px, downY, pz) && s < maxSteps) {
+      downY -= step;
+      s++;
+    }
+    const downClear = !solid(px, downY, pz);
+
+    let upY = py;
+    s = 0;
+    while (solid(px, upY, pz) && s < maxSteps) {
+      upY += step;
+      s++;
+    }
+    const upClear = !solid(px, upY, pz);
+
+    if (!downClear && !upClear) return py;
+    if (!downClear) return upY;
+    if (!upClear) return downY;
+
+    const downDist = py - downY;
+    const upDist = upY - py;
+
+    if (vy > 1e-4) {
+      return downY;
+    }
+    if (vy < -1e-4) {
+      return upY;
+    }
+    if (downDist < upDist) return downY;
+    if (upDist < downDist) return upY;
+    return downY;
+  }
+
+  /**
+   * Step down until the vertical capsule is clear (ceiling / upward
+   * penetration).
+   */
+  public static resolveUpwardPenetration(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    py: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): number {
+    if (
+      !Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        px,
+        py,
+        pz,
+        radius,
+        capsuleHeight,
+      )
+    ) {
+      return py;
+    }
+    const sepStep = 0.025;
+    let y = py;
+    let guard = 0;
+    while (
+      Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        px,
+        y,
+        pz,
+        radius,
+        capsuleHeight,
+      ) &&
+      guard < 400
+    ) {
+      y -= sepStep;
+      guard++;
+    }
+    return y;
+  }
+
+  public static tryHorizontalCylinderMove(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    py: number,
+    pz: number,
+    dx: number,
+    dz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): { ax: number; az: number } {
+    const solid = (x: number, z: number) =>
+      Chunk.cylinderIntersectsSolidWorld(
+        getChunk,
+        x,
+        py,
+        z,
+        radius,
+        capsuleHeight,
+      );
+
+    if (!solid(px + dx, pz + dz)) return { ax: dx, az: dz };
+    if (dx !== 0 && !solid(px + dx, pz)) return { ax: dx, az: 0 };
+    if (dz !== 0 && !solid(px, pz + dz)) return { ax: 0, az: dz };
+    return { ax: 0, az: 0 };
+  }
+
+  /**
+   * Samples head positions along a short jump arc; false if any sample
+   * intersects solid.
+   */
+  public static verticalCapsuleHasHeadroomForJump(
+    getChunk: Chunk.ColumnProvider,
+    px: number,
+    headY: number,
+    pz: number,
+    radius: number,
+    capsuleHeight: number,
+  ): boolean {
+    for (let dh = 0; dh <= 1; dh += 0.35) {
+      if (
+        Chunk.cylinderIntersectsSolidWorld(
+          getChunk,
+          px,
+          headY + dh,
+          pz,
+          radius,
+          capsuleHeight,
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Solid voxel at integer block center (world coords); false if empty or out
+   * of this chunk.
+   */
+  public isSolidBlockAtWorld(wx: number, wy: number, wz: number): boolean {
+    const type = this.cubeType(wx, wz, wy);
+    return type !== undefined && type !== Chunk.blockTypeAir;
+  }
+
+  /**
+   * Highest block top (iy + 0.5) in this column at/below feetY + footSlack, or
+   * -Infinity if none. Only columns owned by this chunk contribute; others
+   * should query the owning chunk.
+   */
+  public supportTopUnderFeet(
+    columnWorldX: number,
+    columnWorldZ: number,
+    feetY: number,
+    footSlack: number,
+    yMaxInclusive: number = 100,
+  ): number {
+    let colMax = -Infinity;
+    for (let iy = 0; iy <= yMaxInclusive; iy++) {
+      const type = this.cubeType(columnWorldX, columnWorldZ, iy);
+      if (type === undefined || type === Chunk.blockTypeAir) {
+        continue;
+      }
+      const top = iy + 0.5;
+      if (top <= feetY + footSlack) {
+        colMax = Math.max(colMax, top);
+      }
+    }
+    return colMax;
   }
 
   /**
    * Gets the type of the cube located at a given position in world coordinates.
-   * Returns undefined for an empty cube.
+   * Returns blockTypeAir for empty positions.
    */
   public cubeType(
     worldX: number,
@@ -672,12 +1085,10 @@ export class Chunk {
     worldY: number,
   ): number | undefined {
     const [topLeftX, topLeftZ] = this.origin();
-    const cubeChunkX = Math.round(worldX - topLeftX);
-    const cubeChunkZ = Math.round(worldZ - topLeftZ);
-    const cubeChunkY = Math.round(worldY);
-
-    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-    return this.positionMap.get(key);
+    const localX = Math.round(worldX - topLeftX);
+    const localZ = Math.round(worldZ - topLeftZ);
+    const localY = Math.round(worldY);
+    return this.getLocalCubeType(localZ, localX, localY);
   }
 
   /**
@@ -697,27 +1108,29 @@ export class Chunk {
 
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
 
-    if (newType == Chunk.blockTypeAir) {
-      this.positionMap.delete(key);
-      this.numBlocksAdded--;
-    } else {
-      this.numBlocksAdded++;
-    }
     this.deltaMap.set(key, newType);
-    this.generateCubes(); // re-generate cubes with the modification
+    this.updateCubePositionsAndTypes();
     return this.deltaMap;
   }
 
   /**
    * Returns the cube type for the top cube at a given xz world coordinate.
-   * Used for minimap coloring. 
+   * Used for minimap coloring.
    */
-  public topBlockAt(worldX: number, worldZ: number): { type: number, height: number } | undefined {
+  public topBlockAt(
+    worldX: number,
+    worldZ: number,
+  ): { type: number; height: number } | undefined {
     const [topLeftX, topLeftZ] = this.origin();
     const localX = Math.round(worldX - topLeftX);
     const localZ = Math.round(worldZ - topLeftZ);
 
-    if (localX < 0 || localX >= this.size || localZ < 0 || localZ >= this.size) {
+    if (
+      localX < 0 ||
+      localX >= this.size ||
+      localZ < 0 ||
+      localZ >= this.size
+    ) {
       return undefined;
     }
 
@@ -733,4 +1146,9 @@ export class Chunk {
     }
     return { type, height };
   }
+}
+
+// Check if the chunk is defined
+export namespace Chunk {
+  export type ColumnProvider = (ix: number, iz: number) => Chunk | undefined;
 }
