@@ -701,4 +701,30 @@ export class Chunk {
     this.generateCubes(); // re-generate cubes with the modification
     return this.deltaMap;
   }
+
+  /**
+   * Returns the cube type for the top cube at a given xz world coordinate.
+   * Used for minimap coloring. 
+   */
+  public topBlockAt(worldX: number, worldZ: number): { type: number, height: number } | undefined {
+    const [topLeftX, topLeftZ] = this.origin();
+    const localX = Math.round(worldX - topLeftX);
+    const localZ = Math.round(worldZ - topLeftZ);
+
+    if (localX < 0 || localX >= this.size || localZ < 0 || localZ >= this.size) {
+      return undefined;
+    }
+
+    const height = this.heightMapData[this.size * localZ + localX];
+
+    if (height < Chunk.SEA_LEVEL) {
+      return { type: Chunk.blockTypeWater, height };
+    }
+
+    const type = this.cubeType(worldX, worldZ, height - 1);
+    if (type === undefined) {
+      return undefined;
+    }
+    return { type, height };
+  }
 }
