@@ -207,12 +207,22 @@ export class GUI implements IGUI {
   }
 
   public walkDir(): Vec3 {
+    const right = this.camera.right();
+    right.y = 0;
+    if (right.length() > 0) {
+      right.normalize();
+    }
+
+    // Movement should follow camera yaw only, not pitch.
+    const forward = Vec3.cross(Vec3.up, right, new Vec3());
+    if (forward.length() > 0) {
+      forward.normalize();
+    }
     let answer = new Vec3();
-    if (this.Wdown) answer.add(this.camera.forward().negate());
-    if (this.Adown) answer.add(this.camera.right().negate());
-    if (this.Sdown) answer.add(this.camera.forward());
-    if (this.Ddown) answer.add(this.camera.right());
-    answer.y = 0;
+    if (this.Wdown) answer.add(forward);
+    if (this.Adown) answer.add(right.negate());
+    if (this.Sdown) answer.add(forward.negate());
+    if (this.Ddown) answer.add(right);
     answer.normalize();
     return answer;
   }
