@@ -175,7 +175,6 @@ export class PortalRenderer {
    */
   public renderPortalFBOs(
     playerPos: Vec3,
-    playerViewMatrix: Mat4,
     playerProjMatrix: Mat4,
     drawScene: SceneDrawFn,
   ): void {
@@ -183,7 +182,7 @@ export class PortalRenderer {
 
     for (let i = 0; i < this.portals.length; i++) {
       const portal = this.portals[i];
-      const portalView = portal.computePortalView(playerPos, playerViewMatrix);
+      const portalView = portal.computePortalView(playerPos);
       if (!portalView) continue;
 
       const portalProj = portal.computeObliqueProj(

@@ -29,10 +29,7 @@ export class Portal {
 
   // Compute the view matrix for looking through this portal's linked destination.
   // Mirrors the player camera across the source portal and transforms to the destination.
-  public computePortalView(
-    playerPos: Vec3,
-    playerViewMatrix: Mat4,
-  ): Mat4 | null {
+  public computePortalView(playerPos: Vec3): Mat4 | null {
     if (!this.linked) return null;
 
     const src = this;
@@ -112,38 +109,15 @@ export class Portal {
       dst.position.z + rotatedOffset.z,
     ]);
 
-    // 5. Compute look direction: rotate the player's forward through the same transform
-    const viewVals = playerViewMatrix.all();
-    // get forward vector from view matrix
-    const playerForward = new Vec3([-viewVals[2], -viewVals[6], -viewVals[10]]);
-
-    // Mirror the forward vector across source normal
-    const fDotN = Vec3.dot(playerForward, src.normal);
-    const mirroredForward = new Vec3([
-      playerForward.x - 2 * fDotN * src.normal.x,
-      playerForward.y - 2 * fDotN * src.normal.y,
-      playerForward.z - 2 * fDotN * src.normal.z,
-    ]);
-    const rotatedForward = rotation.multiplyVec3(mirroredForward);
-
-    // Similarly rotate the up vector
-    const playerUp = new Vec3([viewVals[1], viewVals[5], viewVals[9]]);
-    const uDotN = Vec3.dot(playerUp, src.normal);
-    const mirroredUp = new Vec3([
-      playerUp.x - 2 * uDotN * src.normal.x,
-      playerUp.y - 2 * uDotN * src.normal.y,
-      playerUp.z - 2 * uDotN * src.normal.z,
-    ]);
-    const rotatedUp = rotation.multiplyVec3(mirroredUp);
-
-    // 6. Build view matrix: lookAt(eye, target, up)
-    const target = new Vec3([
-      portalCamPos.x + rotatedForward.x,
-      portalCamPos.y + rotatedForward.y,
-      portalCamPos.z + rotatedForward.z,
+    // 5. Portal camera looks toward the destination portal center (window behavior).
+    //    Parallax comes from the eye position offset, not from head rotation.
+    const portalCenter = new Vec3([
+      dst.position.x + dst.up.x * (dst.height / 2),
+      dst.position.y + dst.up.y * (dst.height / 2),
+      dst.position.z + dst.up.z * (dst.height / 2),
     ]);
 
-    return Mat4.lookAt(portalCamPos, target, rotatedUp);
+    return Mat4.lookAt(portalCamPos, portalCenter, dst.up);
   }
 
   // Compute an oblique projection matrix that clips at the destination portal plane.

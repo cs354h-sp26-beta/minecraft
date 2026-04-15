@@ -1198,7 +1198,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     // --- Portal FBO pass: render destination scene from portal camera ---
     this.portalRenderer.renderPortalFBOs(
       this.gui.getCamera().pos(),
-      this.gui.viewMatrix(),
       this.gui.projMatrix(),
       (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
     );
