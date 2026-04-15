@@ -184,7 +184,7 @@ const grassTexture = `
 
     float noise = fbm(pixelCubeLocal.xz * 12.0 + pixelWorld.xz * 11.0, 2);
 
-    nearTop = clamp(0.0, 1.0, nearTop + noise * 0.4);
+    nearTop = clamp(nearTop + noise * 0.4, 0.0, 1.0);
 
     nearTop = pow(nearTop, 10.0);   
 
