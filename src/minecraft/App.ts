@@ -58,6 +58,18 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private enemies: Enemy[];
 
+  /* Overlay information */
+  private minimapPixelSize = 135;
+  private minimapColors = [ // index corresponds to block type, value is [r, g, b] color for minimap
+    [Number.parseInt("8b", 16), Number.parseInt("45", 16), Number.parseInt("13", 16)], // dirt
+    [Number.parseInt("a6", 16), Number.parseInt("a1", 16), Number.parseInt("99", 16)], // cobble
+    [Number.parseInt("2b", 16), Number.parseInt("4d", 16), Number.parseInt("8c", 16)], // water
+    [Number.parseInt("3f", 16), Number.parseInt("3f", 16), Number.parseInt("3f", 16)], // coal ore
+    [Number.parseInt("af", 16), Number.parseInt("af", 16), Number.parseInt("af", 16)], // iron ore
+    [Number.parseInt("ff", 16), Number.parseInt("d7", 16), Number.parseInt("00", 16)], // gold ore
+    [Number.parseInt("00", 16), Number.parseInt("ff", 16), Number.parseInt("ff", 16)], // diamond ore
+  ]
+
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
 
@@ -1031,6 +1043,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillStyle = "#fff6d7";
     ctx.fillText(timeLine, x, y);
 
+    this.drawMinimap();
+
     ctx.restore();
   }
 
@@ -1055,6 +1069,104 @@ export class MinecraftAnimation extends CanvasAnimation {
   private wrapDayTime(value: number): number {
     const dayDuration = MinecraftAnimation.dayDuration;
     return ((value % dayDuration) + dayDuration) % dayDuration;
+  }
+
+  /**
+   * Draw the minimap in the top right corner of the screen
+   */
+  private drawMinimap(): void {
+    const ctx = this.overlayCtx;
+    const playerPos = this.player.position;
+    const size = this.minimapPixelSize;
+    const minimapX = this.canvas2d.width - size - 10;
+    const minimapY = 10;
+    ctx.save();
+    ctx.translate(minimapX, minimapY);
+
+    // terrain
+    for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+            const worldX = Math.floor(playerPos.x - size / 2 + i);
+            const worldZ = Math.floor(playerPos.z - size / 2 + j);
+
+            const chunkX = this.worldToChunkCoord(worldX);
+            const chunkZ = this.worldToChunkCoord(worldZ);
+            const chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`);
+
+            if (!chunk) {
+              continue;
+            }
+
+            const topBlock = chunk.topBlockAt(worldX, worldZ);
+            if (!topBlock || topBlock.type < 0 || topBlock.type >= this.minimapColors.length) {
+              ctx.fillStyle = "#C7C0B7";
+              ctx.fillRect(i, j, 1, 1);
+              continue;
+            }
+
+            // height-based tinting: darken below sea level, brighten above. tune t to adjust strength of effect
+            const height = topBlock.height;
+            const r = this.minimapColors[topBlock.type][0];
+            const g = this.minimapColors[topBlock.type][1];
+            const b = this.minimapColors[topBlock.type][2];
+            let lr: number, lg: number, lb: number;
+
+            if (height < Chunk.SEA_LEVEL) {
+              // Below sea level: dark bands
+              // Depths: 0-2 = very dark (0.45), 3-4 = dark (0.30), 5-6 = dim (0.15), 7 = slight (0.05)
+              const depth = Chunk.SEA_LEVEL - height;
+              const t = depth >= 6 ? 0.45 : depth >= 4 ? 0.30 : depth >= 2 ? 0.15 : 0.05;
+              lr = Math.round(r * (1 - t));
+              lg = Math.round(g * (1 - t));
+              lb = Math.round(b * (1 - t));
+            } else {
+              // Above sea level: bright bands
+              // Heights above sea: 0-4 = base, 5-9 = +10%, 10-16 = +20%, 17-24 = +30%, 25+ = +40%
+              const elev = height - Chunk.SEA_LEVEL;
+              const t = elev >= 25 ? 0.40 : elev >= 17 ? 0.30 : elev >= 10 ? 0.20 : elev >= 5 ? 0.10 : 0;
+              lr = Math.round(r + (255 - r) * t);
+              lg = Math.round(g + (255 - g) * t);
+              lb = Math.round(b + (255 - b) * t);
+            }
+
+            ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
+            ctx.fillRect(i, j, 1, 1);
+        }
+    }
+
+    // player icon
+    const camera = this.gui.getCamera();
+    const look = camera.forward().negate();
+    const angle = Math.atan2(-look.x, look.z);
+    
+    ctx.save();
+    ctx.translate(size / 2, size / 2);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(0, 6);
+    ctx.lineTo(-4, -4);
+    ctx.lineTo(4, -4);
+    ctx.closePath();
+    ctx.fillStyle = "#0a9e2e";
+    ctx.fill();
+    ctx.restore();
+
+    // enemy icons
+    this.enemies.forEach((enemy) => {
+      const ex = enemy.position.x - playerPos.x + size / 2;
+      const ez = enemy.position.z - playerPos.z + size / 2;
+      if (ex >= 0 && ex < size && ez >= 0 && ez < size) {
+        ctx.fillStyle = "#ff0000";
+        ctx.fillRect(ex, ez, 2, 2);
+      }
+    });
+
+    // border
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, size, size);
+
+    ctx.restore();
   }
 }
 
