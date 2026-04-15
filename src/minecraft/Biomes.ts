@@ -85,8 +85,8 @@ export const HIGHLANDS_BIOME: BiomeProfile = {
 // Tall peaks with high base elevation and large relief variation
 export const MOUNTAINS_BIOME: BiomeProfile = {
   name: "mountains",
-  baseHeight: 40,
-  reliefScale: 90,
+  baseHeight: 30,
+  reliefScale: 70,
   frequencyScale: 0.62,
   highFreqBoost: 0.48,
   octaveGain: 0.64,
@@ -98,8 +98,8 @@ export const MOUNTAINS_BIOME: BiomeProfile = {
 // Jagged rock formations with high frequency detail and extreme elevation swings
 export const CRAG_BIOME: BiomeProfile = {
   name: "crag",
-  baseHeight: 46,
-  reliefScale: 78,
+  baseHeight: 35,
+  reliefScale: 65,
   frequencyScale: 0.95,
   highFreqBoost: 1.2,
   octaveGain: 1.02,
