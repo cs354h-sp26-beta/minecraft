@@ -215,6 +215,10 @@ export class GUI implements IGUI {
         this.animation.toggleAchievements();
         break;
       }
+      case "KeyE": {
+        this.animation.toggleInventory();
+        break;
+      }
       case "Space": {
         this.animation.jump();
         break;

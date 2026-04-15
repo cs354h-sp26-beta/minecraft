@@ -7,7 +7,8 @@ import subprocess
 srcfiles = glob.glob('./src/minecraft/*.ts')
 loaders = glob.glob('./src/lib/threejs/examples/jsm/loaders/*.js')
 cmd = (
-    'tsc --allowJs -m ES6 -t ES6 --outDir dist --sourceMap --alwaysStrict '
+    # 'tsc --allowJs -m ES6 -t ES6 --outDir dist --sourceMap --alwaysStrict '
+    'tsc --allowJs -m ES6 -t ES6 --moduleResolution node --outDir dist --sourceMap --alwaysStrict '
     '--strictPropertyInitialization false '
     + " ".join(srcfiles)
     + ' ./src/lib/vue/vue.js '

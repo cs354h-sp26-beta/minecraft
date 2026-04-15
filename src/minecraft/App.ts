@@ -74,6 +74,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private achievements: Achievement[];
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
+  private showInventory: boolean;
   private blocksBroken: number;
   private blocksPlaced: number;
   private successfulJumps: number;
@@ -160,6 +161,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.achievements = this.createAchievements();
     this.achievementToast = null;
     this.showAchievements = false;
+    this.showInventory = false;
     this.blocksBroken = 0;
     this.blocksPlaced = 0;
     this.successfulJumps = 0;
@@ -206,6 +208,13 @@ export class MinecraftAnimation extends CanvasAnimation {
         id: "night",
         title: "After Dark",
         description: "Stay out until night falls.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "inventory",
+        title: "Taking Inventory",
+        description: "Open your inventory.",
         completed: false,
         completedAt: null,
       },
@@ -1080,6 +1089,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.showAchievements = !this.showAchievements;
   }
 
+  public toggleInventory(): void {
+    this.showInventory = !this.showInventory;
+    if (this.showInventory) {
+      this.completeAchievement("inventory");
+    }
+  }
+
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
     let bestT = Infinity;
     let bestPos = [-1000, -1000, -1000];
@@ -1198,6 +1214,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
+    if (this.showInventory) {
+      this.drawInventoryPanel();
+    }
     this.drawMinimap();
     this.drawAchievementToast();
 
@@ -1226,6 +1245,29 @@ export class MinecraftAnimation extends CanvasAnimation {
       ctx.fillText(achievement.description, x + 26, rowY + 14);
       ctx.font = "14px monospace";
     });
+  }
+
+  private drawInventoryPanel(): void {
+    const ctx = this.overlayCtx;
+    const panelWidth = 280;
+    const panelHeight = 120;
+    const x = (this.canvas2d.width - panelWidth) / 2;
+    const y = this.canvas2d.height - panelHeight - 26;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(10, 14, 22, 0.82)";
+    ctx.fillRect(x, y, panelWidth, panelHeight);
+    ctx.strokeStyle = "#f0eee6";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, panelWidth, panelHeight);
+    ctx.font = "14px monospace";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText("Inventory", x + 12, y + 10);
+    ctx.fillStyle = "#c9d1d9";
+    ctx.fillText("Inventory UI coming soon.", x + 12, y + 34);
+    ctx.fillText("Press E to close.", x + 12, y + 56);
+    ctx.restore();
   }
 
   private drawAchievementToast(): void {
