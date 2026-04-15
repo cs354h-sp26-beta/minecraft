@@ -30,9 +30,7 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static worldSeed: string = "default";
 
-  private positionMap: Map<string, number>; // Maps local position (x, z, y) to cube type. Empty -> Chunk.blockTypeAir
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
-  private numBlocksAdded: number;
 
   // world seed
   public static setWorldSeed(seed: string): void {
@@ -44,15 +42,12 @@ export class Chunk {
     centerZ: number,
     size: number,
     deltaMap = new Map(),
-    numBlocksAdded = 0,
   ) {
     this.x = centerX;
     this.z = centerZ;
     this.size = size;
     this.cubes = size * size;
-    this.positionMap = new Map();
     this.deltaMap = deltaMap;
-    this.numBlocksAdded = numBlocksAdded;
     this.generateCubes();
   }
 
@@ -401,78 +396,59 @@ export class Chunk {
       }
     }
 
-    // Count visible cubes: solid terrain blocks + water blocks
+    // Count all visible cubes up to generated column height (including water)
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(this.heightMapData[this.size * i + j], 1);
-        for (let y = 0; y < height; y++) {
-          if (this.getGeneratedBlockType(i, j, y) === Chunk.blockTypeAir)
-            continue;
-          if (this.isExposed(i, j, y)) this.cubes++;
-        }
-        if (height < seaLvl) {
-          for (let y = height; y < seaLvl; y++) {
-            if (this.isWaterExposed(i, j, y)) this.cubes++;
-          }
+        const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+        for (let y = 0; y < colMaxY; y++) {
+          if (this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir && this.isExposed(i, j, y)) this.cubes++;
         }
       }
     }
-    this.cubes += this.numBlocksAdded;
+    // Count player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+      if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
+    }
+
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const height = Math.max(this.heightMapData[this.size * i + j], 1);
-        for (let y = 0; y <= 100; y++) {
-          const key = `${j},${i},${y}`;
+        const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+        for (let y = 0; y < colMaxY; y++) {
+          const blockType = this.getLocalCubeType(i, j, y);
+          if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y)) continue;
 
-          // skip empty cube
-          if (
-            y < height &&
-            (this.deltaMap.get(key) == Chunk.blockTypeAir ||
-              this.getGeneratedBlockType(i, j, y) === Chunk.blockTypeAir ||
-              !this.isExposed(i, j, y))
-          ) {
-            continue;
-          } else if (
-            y >= height &&
-            (this.deltaMap.get(key) == undefined ||
-              this.deltaMap.get(key) == Chunk.blockTypeAir)
-          ) {
-            continue;
-          }
           this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
           this.cubePositionsF32[4 * cubeIdx + 1] = y;
           this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-
-          if (this.deltaMap.has(key)) {
-            this.cubeTypesF32[cubeIdx] = this.deltaMap.get(key)!;
-            this.positionMap.set(key, this.deltaMap.get(key)!);
-          } else {
-            const blockType = this.getGeneratedBlockType(i, j, y);
-            this.cubeTypesF32[cubeIdx] = blockType;
-            this.positionMap.set(key, blockType);
-          }
+          
+          this.cubeTypesF32[cubeIdx] = blockType;
           cubeIdx++;
         }
-        // Place water blocks only in carved pond basins
-        if (height < seaLvl) {
-          for (let y = height; y < seaLvl; y++) {
-            if (this.isWaterExposed(i, j, y)) {
-              this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
-              this.cubePositionsF32[4 * cubeIdx + 1] = y;
-              this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
-              this.cubePositionsF32[4 * cubeIdx + 3] = 0;
-              this.cubeTypesF32[cubeIdx] = Chunk.blockTypeWater;
-              cubeIdx++;
-            }
-          }
-        }
       }
+    }
+    // Fill player-placed blocks above the generated column height
+    for (const [key, blockType] of this.deltaMap) {
+      if (blockType === Chunk.blockTypeAir) continue;
+      const [j, i, y] = key.split(",").map(Number);
+      const colMaxY = Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
+      if (y < colMaxY || !this.isExposed(i, j, y)) continue;
+
+      this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
+      this.cubePositionsF32[4 * cubeIdx + 1] = y;
+      this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
+      this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+
+      this.cubeTypesF32[cubeIdx] = blockType;
+      cubeIdx++;
     }
   }
 
@@ -535,18 +511,31 @@ export class Chunk {
     return Chunk.blockTypeCobble;
   }
 
+  // Returns the procedurally generated block type at local chunk coords (i=localZ, j=localX).
+  // Handles water for positions above terrain but below sea level.
   private getGeneratedBlockType(i: number, j: number, y: number): number {
+    const height = this.heightMapData[this.size * i + j];
+    if (y >= height) {
+      return y < Chunk.SEA_LEVEL ? Chunk.blockTypeWater : Chunk.blockTypeAir;
+    }
     return this.blockTypeData[y * this.size * this.size + i * this.size + j];
   }
 
-  // Returns true if the block at (i, j, y) is a solid (non-transparent) block.
-  // Out-of-bounds and above-terrain positions are not solid.
+  // Returns the effective block type at local chunk coords, applying deltaMap overrides.
+  // Skips string key allocation entirely for unedited chunks.
+  private getLocalCubeType(i: number, j: number, y: number): number {
+    if (this.deltaMap.size > 0) {
+      const override = this.deltaMap.get(`${j},${i},${y}`);
+      if (override !== undefined) return override;
+    }
+    return this.getGeneratedBlockType(i, j, y);
+  }
+
+  // Returns true if the block at (i, j, y) is non-air (solid terrain or water).
   private isSolidAt(i: number, j: number, y: number): boolean {
     if (i < 0 || i >= this.size || j < 0 || j >= this.size) return false;
     if (y < 0) return true; // below world is solid
-    const height = this.heightMapData[this.size * i + j];
-    if (y >= height) return false; // above terrain = air or water (transparent)
-    return this.getGeneratedBlockType(i, j, y) !== Chunk.blockTypeAir;
+    return this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir;
   }
 
   // A solid block is exposed if any of its 6 neighbors is non-solid
@@ -559,26 +548,6 @@ export class Chunk {
     if (!this.isSolidAt(i, j - 1, y)) return true;
     if (!this.isSolidAt(i, j + 1, y)) return true;
     return false;
-  }
-
-  // Water block is exposed if it's at the surface or borders a non-water column
-  private isWaterExposed(i: number, j: number, y: number): boolean {
-    // Top water surface
-    if (y === Chunk.SEA_LEVEL - 1) return true;
-    // Chunk edge
-    if (i <= 0 || i >= this.size - 1 || j <= 0 || j >= this.size - 1)
-      return true;
-    // Edge of water body
-    if (this.getHeight(i - 1, j) <= y) return true;
-    if (this.getHeight(i + 1, j) <= y) return true;
-    if (this.getHeight(i, j - 1) <= y) return true;
-    if (this.getHeight(i, j + 1) <= y) return true;
-    return false;
-  }
-
-  private getHeight(i: number, j: number): number {
-    if (i < 0 || i >= this.size || j < 0 || j >= this.size) return 0;
-    return this.heightMapData[this.size * i + j];
   }
 
   public cubePositions(): Float32Array {
@@ -982,7 +951,7 @@ export class Chunk {
 
   /**
    * Gets the type of the cube located at a given position in world coordinates.
-   * Returns undefined for a cube not in this chunk.
+   * Returns blockTypeAir for empty positions.
    */
   public cubeType(
     worldX: number,
@@ -990,21 +959,10 @@ export class Chunk {
     worldY: number,
   ): number | undefined {
     const [topLeftX, topLeftZ] = this.origin();
-    const cubeChunkX = Math.round(worldX - topLeftX);
-    const cubeChunkZ = Math.round(worldZ - topLeftZ);
-    const cubeChunkY = Math.round(worldY);
-
-    if (
-      cubeChunkX < 0 ||
-      cubeChunkX >= this.size ||
-      cubeChunkZ < 0 ||
-      cubeChunkZ >= this.size
-    ) {
-      return undefined;
-    }
-
-    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-    return this.positionMap.get(key) ?? Chunk.blockTypeAir;
+    const localX = Math.round(worldX - topLeftX);
+    const localZ = Math.round(worldZ - topLeftZ);
+    const localY = Math.round(worldY);
+    return this.getLocalCubeType(localZ, localX, localY);
   }
 
   /**
@@ -1024,12 +982,6 @@ export class Chunk {
 
     const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
 
-    if (newType == Chunk.blockTypeAir) {
-      this.positionMap.delete(key);
-      this.numBlocksAdded--;
-    } else {
-      this.numBlocksAdded++;
-    }
     this.deltaMap.set(key, newType);
     this.generateCubes(); // re-generate cubes with the modification
     return this.deltaMap;
