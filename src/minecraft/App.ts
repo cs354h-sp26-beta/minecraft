@@ -5,7 +5,7 @@ import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
 import { GUI } from "./Gui.js";
-import { Player, Block } from "./Entity.js";
+import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
 import {
@@ -13,7 +13,11 @@ import {
   blankCubeVSText,
   skyboxFSText,
   skyboxVSText,
+  enemyFSText,
+  enemyVSText,
 } from "./Shaders.js";
+import { Mesh } from "./Mesh.js";
+import { CLoader } from "./AnimationFileLoader.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
@@ -32,6 +36,13 @@ export class MinecraftAnimation extends CanvasAnimation {
   private blankCubeRenderPass: RenderPass;
   private skyboxRenderPass: RenderPass;
 
+  /*  Enemy Rendering */
+  private enemyRenderPass: RenderPass;
+  private enemyMeshLoader: CLoader;
+  private enemyMesh: Mesh | null;
+  private enemyBoneTransTex: WebGLTexture;
+  private enemyBoneRotTex: WebGLTexture;
+
   /* Global Rendering Info */
   private lightPosition: Vec4;
   private backgroundColor: Vec4;
@@ -43,6 +54,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   private player: Player;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
+
+  private enemies: Enemy[];
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -75,8 +88,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     this.skyboxRenderPass = new RenderPass(gl, skyboxVSText, skyboxFSText);
     this.cubeGeometry = new Cube();
+    this.enemyRenderPass = new RenderPass(gl, enemyVSText, enemyFSText);
     this.initSkybox();
     this.initBlankCube();
+
+    this.enemies = [];
+    this.enemyMesh = null;
+    this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
+    this.enemyMeshLoader.load(() => this.initEnemies());
 
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
@@ -255,6 +274,140 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.setup();
   }
 
+  /**
+    * Sets up the enemy drawing
+   */
+  private initEnemies(): void {
+    if (this.enemyMeshLoader.meshes.length === 0) { throw new Error("Failed to load enemy mesh."); }
+    this.enemyMesh = this.enemyMeshLoader.meshes[0];
+    this.enemyMesh!.scale(0.5);
+
+    let faceCount = this.enemyMesh!.geometry.position.count / 3;
+    let fIndices = new Uint32Array(faceCount * 3);
+    for (let i = 0; i < faceCount * 3; i += 3) {
+      fIndices[i] = i;
+      fIndices[i + 1] = i + 1;
+      fIndices[i + 2] = i + 2;
+    }
+    this.enemyRenderPass.setIndexBufferData(fIndices);
+
+    this.enemyRenderPass.addInstancedAttribute("aOffset", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
+    this.enemyRenderPass.addInstancedAttribute("aRot", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
+    this.enemyRenderPass.addInstancedAttribute("aIdx", 1, this.ctx.FLOAT, false,
+        1 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, new Float32Array(0));
+
+    this.enemyRenderPass.addAttribute("aNorm", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.normal.values);
+    this.enemyRenderPass.addAttribute("skinIndices", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.skinIndex.values);
+    this.enemyRenderPass.addAttribute("skinWeights", 4, this.ctx.FLOAT, false,
+        4 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.skinWeight.values);
+    this.enemyRenderPass.addAttribute("v0", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v0.values);
+    this.enemyRenderPass.addAttribute("v1", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v1.values);
+    this.enemyRenderPass.addAttribute("v2", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v2.values);
+    this.enemyRenderPass.addAttribute("v3", 3, this.ctx.FLOAT, false,
+        3 * Float32Array.BYTES_PER_ELEMENT, 0, undefined, this.enemyMesh!.geometry.v3.values);
+
+    this.enemyRenderPass.addUniform("uLightPos",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniform4fv(loc, this.lightPosition.xyzw);
+        },);
+    this.enemyRenderPass.addUniform("uProj",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.projMatrix().all()));
+        });
+    this.enemyRenderPass.addUniform("uView",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.uniformMatrix4fv(loc, false, new Float32Array(this.gui.viewMatrix().all()));
+        });
+
+    this.enemyBoneTransTex = this.ctx.createTexture();
+    if (this.enemyBoneTransTex === null) {
+      console.error("Error creating texture");
+    }
+    this.enemyBoneRotTex = this.ctx.createTexture();
+    if (this.enemyBoneRotTex === null) {
+      console.error("Error creating texture");
+    }
+
+    this.enemyRenderPass.addUniform("uTexDim",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+            const width = this.enemyMesh!.bones.length;
+            const height = this.enemies.length;
+            gl.uniform2f(loc, width, height);
+        });
+    this.enemyRenderPass.addUniform("uJTrans",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.activeTexture(gl.TEXTURE0);
+          this.loadEnemyBoneTranslations(gl);
+          gl.uniform1i(loc, 0);
+        });
+    this.enemyRenderPass.addUniform("uJRots",
+        (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+          gl.activeTexture(gl.TEXTURE1);
+          this.loadEnemyBoneRotations(gl);
+          gl.uniform1i(loc, 1);
+        });
+
+    // this.enemyRenderPass.addUniform("jTrans",
+    //     (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    //       gl.uniform3fv(loc, this.enemyMesh!.getBoneTranslations());
+    //     });
+    // this.enemyRenderPass.addUniform("jRots",
+    //     (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    //       gl.uniform4fv(loc, this.enemyMesh!.getBoneRotations());
+    //     });
+
+    this.enemyRenderPass.setDrawData(this.ctx.TRIANGLES, this.enemyMesh!.geometry.position.count, this.ctx.UNSIGNED_INT, 0);
+    this.enemyRenderPass.setup();
+
+    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x + 2, this.player.position.y - 85, this.player.position.z + 2])));
+    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x - 2, this.player.position.y - 85, this.player.position.z + 2])));
+    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x + 2, this.player.position.y - 85, this.player.position.z - 2])));
+    this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([this.player.position.x - 2, this.player.position.y - 85, this.player.position.z - 2])));
+  }
+
+  private loadEnemyBoneTranslations(gl: WebGLRenderingContext): void {
+    const height = this.enemies.length;
+    const width = this.enemyMesh!.bones.length;
+    let boneTransData = new Uint8Array(width * height * 4);
+
+    for (let i = 0; i < this.enemies.length; i++) {
+        const enemy = this.enemies[i];
+        const boneTrans = enemy.mesh.getBoneTranslationsUi8();
+        boneTransData.set(boneTrans, i * width * 4);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, this.enemyBoneTransTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, boneTransData);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  }
+
+  private loadEnemyBoneRotations(gl: WebGLRenderingContext): void {
+    const height = this.enemies.length;
+    const width = this.enemyMesh!.bones.length;
+    let boneRotData = new Uint8Array(width * height * 4);
+
+    for (let i = 0; i < this.enemies.length; i++) {
+      const enemy = this.enemies[i];
+      const boneRots = enemy.mesh.getBoneRotationsUi8();
+      boneRotData.set(boneRots, i * width * 4);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, this.enemyBoneRotTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, boneRotData);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  }
+
   private worldToChunkCoord(worldVal: number): number {
     const s = MinecraftAnimation.chunkSize;
     return Math.floor((worldVal + s / 2) / s) * s;
@@ -346,7 +499,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    const walkDx = this.gui.walkDir();
+    this.enemies.forEach((enemy) => {enemy.update(dt, this.player);});
+
+    const walkDx = this.gui.walkDir().scale(0.1);
     const momentumDx = this.player.velocity.scale(dt, new Vec3());
     const totalDx = walkDx.add(momentumDx, new Vec3());
     this.player.position.add(totalDx);
@@ -414,6 +569,26 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
     this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
     this.blankCubeRenderPass.drawInstanced(instanceCount);
+
+    // Enemies
+    if (this.enemyMesh !== null) {
+      const enemyInstanceCount = this.enemies.length;
+      const enemyPositions = new Float32Array(enemyInstanceCount * 4);
+      const enemyRotations = new Float32Array(enemyInstanceCount * 4);
+      const enemyIdxs = new Float32Array(enemyInstanceCount);
+      for (let i = 0; i < this.enemies.length; i++) {
+        enemyIdxs[i] = i;
+        const pos = this.enemies[i].position;
+        enemyPositions.set([pos.x, pos.y, pos.z, 0], i * 4);
+        const rot = this.enemies[i].getRotation();
+        enemyRotations.set([rot.x, rot.y, rot.z, rot.w], i * 4);
+      }
+
+      this.enemyRenderPass.updateAttributeBuffer("aOffset", enemyPositions);
+      this.enemyRenderPass.updateAttributeBuffer("aRot", enemyRotations);
+      this.enemyRenderPass.updateAttributeBuffer("aIdx", enemyIdxs);
+      this.enemyRenderPass.drawInstanced(enemyInstanceCount);
+    }
   }
 
   /**
