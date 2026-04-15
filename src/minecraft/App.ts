@@ -42,6 +42,7 @@ type AchievementToast = {
 
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
+  private static readonly safeFallDistance = 3;
 
   private gui: GUI;
 
@@ -77,6 +78,9 @@ export class MinecraftAnimation extends CanvasAnimation {
   private spawnPosition: Vec3;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
+  private wasPlayerGrounded: boolean;
+  private airborneStartY: number;
+  private fallDamageArmed: boolean;
 
   private enemies: Enemy[];
   private achievements: Achievement[];
@@ -121,6 +125,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.spawnPosition = playerPosition.copy();
     this.fallingBlocks = [];
     this.isectNormal = new Vec3();
+    this.wasPlayerGrounded = false;
+    this.airborneStartY = this.player.position.y;
+    this.fallDamageArmed = false;
 
     this.loadChunksAroundPlayer();
 
@@ -280,7 +287,101 @@ export class MinecraftAnimation extends CanvasAnimation {
   public reset(): void {
     this.gui.reset();
 
-    this.player.position = this.gui.getCamera().pos();
+    this.player.position = this.spawnPosition.copy();
+    this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
+    this.player.health = this.player.maxHealth;
+    this.wasPlayerGrounded = false;
+    this.airborneStartY = this.player.position.y;
+    this.fallDamageArmed = false;
+    this.gui.getCamera().setPos(this.player.position);
+    this.loadChunksAroundPlayer();
+  }
+
+  private isPlayerGrounded(chunkProvider: Chunk.ColumnProvider): boolean {
+    const floorHead = Chunk.supportedHeadYWorld(
+      chunkProvider,
+      this.player.position.x,
+      this.player.position.z,
+      this.player.position.y - this.player.hitboxHeight,
+      this.player.hitboxRadius,
+      this.player.hitboxHeight,
+      0.55,
+    );
+    return (
+      floorHead !== -Infinity && this.player.position.y <= floorHead + 0.02
+    );
+  }
+
+  private respawnPlayer(): void {
+    this.player.position = this.spawnPosition.copy();
+    this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
+    this.player.health = this.player.maxHealth;
+    this.wasPlayerGrounded = false;
+    this.airborneStartY = this.player.position.y;
+    this.fallDamageArmed = false;
+    this.gui.getCamera().setPos(this.player.position);
+  }
+
+  private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
+    const feetY = this.player.position.y - this.player.hitboxHeight;
+    const sampleHeights = [feetY - 0.6, feetY - 0.1, feetY + 0.4, feetY + 0.9];
+    const offset = this.player.hitboxRadius * 0.7;
+    const sampleOffsets = [
+      [0, 0],
+      [offset, 0],
+      [-offset, 0],
+      [0, offset],
+      [0, -offset],
+    ];
+
+    for (const [dx, dz] of sampleOffsets) {
+      const sampleX = this.player.position.x + dx;
+      const sampleZ = this.player.position.z + dz;
+      const chunk = chunkProvider(Math.round(sampleX), Math.round(sampleZ));
+      if (!chunk) {
+        continue;
+      }
+      for (const sampleY of sampleHeights) {
+        if (
+          chunk.cubeType(sampleX, sampleZ, sampleY) === Chunk.blockTypeWater
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private updatePlayerFallDamage(chunkProvider: Chunk.ColumnProvider): void {
+    const grounded = this.isPlayerGrounded(chunkProvider);
+
+    if (!grounded) {
+      if (this.wasPlayerGrounded) {
+        this.airborneStartY = this.player.position.y;
+      }
+    } else {
+      if (!this.fallDamageArmed) {
+        this.fallDamageArmed = true;
+      } else if (!this.wasPlayerGrounded) {
+        if (this.isPlayerTouchingWater(chunkProvider)) {
+          this.airborneStartY = this.player.position.y;
+          this.wasPlayerGrounded = grounded;
+          return;
+        }
+        const fallDistance = this.airborneStartY - this.player.position.y;
+        const damage = Math.max(
+          0,
+          fallDistance - MinecraftAnimation.safeFallDistance,
+        );
+        if (damage > 0) {
+          this.player.takeDamage(damage);
+        }
+      }
+      this.airborneStartY = this.player.position.y;
+    }
+
+    this.wasPlayerGrounded = grounded;
   }
 
   public giveRandomItem(): void {
@@ -868,7 +969,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     const dt = 1 / 60;
 
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
-    this.player.update(this.gui.walkDir(), prov, dt);
+    if (!this.player.isDead()) {
+      this.player.update(this.gui.walkDir(), prov, dt);
+      this.updatePlayerFallDamage(prov);
+    } else {
+      this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
+    }
     this.gui.getCamera().setPos(this.player.position);
 
     this.enemies.forEach((enemy) => {
@@ -1088,6 +1194,9 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    if (this.player.isDead()) {
+      return;
+    }
     const previousVelocityY = this.player.velocity.y;
     this.player.jump(prov);
     if (this.player.velocity.y > previousVelocityY) {
@@ -1097,6 +1206,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public toggleAchievements(): void {
     this.showAchievements = !this.showAchievements;
+  }
+
+  public isPlayerDead(): boolean {
+    return this.player.isDead();
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -1255,10 +1368,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
+    this.drawHealthBar();
     this.drawMinimap();
     this.drawHotbar();
-    this.drawHealthBar();
     this.drawAchievementToast();
+    if (this.player.isDead()) {
+      this.drawDeathOverlay();
+    }
 
     ctx.restore();
   }
@@ -1310,6 +1426,25 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillText(this.achievementToast.title, x + 12, y + 28);
     ctx.fillStyle = "#ddd3ba";
     ctx.fillText(this.achievementToast.description, x + 12, y + 44);
+    ctx.restore();
+  }
+
+  private drawDeathOverlay(): void {
+    const ctx = this.overlayCtx;
+    const centerX = this.canvas2d.width / 2;
+    const centerY = this.canvas2d.height / 2;
+
+    ctx.save();
+    ctx.fillStyle = "rgba(20, 0, 0, 0.45)";
+    ctx.fillRect(0, 0, this.canvas2d.width, this.canvas2d.height);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "bold 48px monospace";
+    ctx.fillStyle = "#ff6b6b";
+    ctx.fillText("You Died!", centerX, centerY - 26);
+    ctx.font = "18px monospace";
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText("Press R to Respawn", centerX, centerY + 18);
     ctx.restore();
   }
 

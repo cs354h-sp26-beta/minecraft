@@ -80,6 +80,12 @@ export class GUI implements IGUI {
       0.1,
       1000.0,
     );
+    this.Adown = false;
+    this.Wdown = false;
+    this.Sdown = false;
+    this.Ddown = false;
+    this.dragging = false;
+    this.cubeSelected = false;
   }
 
   /**
@@ -117,6 +123,9 @@ export class GUI implements IGUI {
   }
 
   public dragStart(mouse: MouseEvent): void {
+    if (this.animation.isPlayerDead()) {
+      return;
+    }
     this.prevX = mouse.screenX;
     this.prevY = mouse.screenY;
     this.dragging = true;
@@ -138,6 +147,9 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
+    if (this.animation.isPlayerDead()) {
+      return;
+    }
     let x = mouse.offsetX;
     let y = mouse.offsetY;
     const dx = mouse.screenX - this.prevX;
@@ -190,6 +202,9 @@ export class GUI implements IGUI {
    * @param key
    */
   public onKeydown(key: KeyboardEvent): void {
+    if (this.animation.isPlayerDead() && key.code !== "KeyR") {
+      return;
+    }
     switch (key.code) {
       case "KeyW": {
         this.Wdown = true;

@@ -185,12 +185,15 @@ class Entity {
     ) {
       return;
     }
-    this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
+    this.velocity.add(new Vec3([0.0, 5.0, 0.0]));
   }
 
   public takeDamage(amount: number = 1) {
     if (this.isDead()) return;
     this.health -= amount;
+    if (this.health < 0) {
+      this.health = 0;
+    }
   }
 
   public heal(amount: number = 0.5) {
