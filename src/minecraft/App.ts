@@ -73,6 +73,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private canvas2d: HTMLCanvasElement;
   private overlayCtx: CanvasRenderingContext2D;
   private heartBitmap: ImageBitmap | null = null;
+  private foodBitmap: ImageBitmap | null = null;
   private crosshairBitmap: ImageBitmap | null = null;
 
   private player: Player;
@@ -108,6 +109,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   /* Overlay information */
   private minimapPixelSize = 135;
   private minimapColors: Map<number, [number, number, number]>;
+
+  /* Hunger */
+  private hungerTimer: number;
+  private starvationTimer: number;
+  private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
+  private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -174,6 +181,9 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.inventory = new Inventory();
     this.selectedHotbarIdx = 0;
+
+    this.hungerTimer = 0;
+    this.starvationTimer = 0;
     
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
@@ -182,6 +192,14 @@ export class MinecraftAnimation extends CanvasAnimation {
       createImageBitmap(heartImg).then((bmp) => {
         this.heartBitmap = bmp;
       });
+    };
+
+    const foodImg = new Image(); 
+    foodImg.src = "./static/assets/food.png";
+    foodImg.onload = () => {
+      createImageBitmap(foodImg).then((bmp) => {
+        this.foodBitmap = bmp;
+      })
     };
 
     const crosshairImg = new Image();
@@ -346,6 +364,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.position = this.spawnPosition.copy();
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
+    this.player.food = this.player.maxFood;
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
@@ -1091,6 +1110,23 @@ export class MinecraftAnimation extends CanvasAnimation {
       enemy.update(prov, this.player, dt);
     });
 
+    // Update hunger
+    this.hungerTimer += dt;
+    if (this.hungerTimer >= this.hungerInterval) {
+      this.hungerTimer = 0; 
+      this.player.experienceHunger(1);
+    }
+    
+    if (this.player.food <= 0) {
+      this.starvationTimer += dt;
+      if (this.starvationTimer >= this.starvationInterval) {
+        this.starvationTimer = 0;
+        this.player.takeDamage(1);
+      }
+    } else {
+      this.starvationTimer = 0;
+    }
+
     this.updateAchievements(dt);
 
     // Update falling blocks
@@ -1486,6 +1522,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
     this.drawHealthBar();
+    this.drawHungerBar();
     this.drawMinimap();
     this.drawHotbar();
     this.drawAchievementToast();
@@ -1806,8 +1843,16 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     const heartSize = 24;
     const spacing = 4;
-    const startX = 18;
-    const startY = this.canvas2d.height - heartSize - 18;
+
+    // Position above the hotbar, left-aligned with hotbar
+    const slotSize = 60;
+    const hotbarSize = Inventory.width;
+    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
+    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
+    const hotbarY = this.canvas2d.height - slotSize - 35;
+
+    const startX = hotbarX - 15;
+    const startY = hotbarY - 15 - heartSize - 4;
 
     ctx.save();
     for (let i = 0; i < totalHearts; i++) {
@@ -1870,6 +1915,73 @@ export class MinecraftAnimation extends CanvasAnimation {
       size,
       size,
     );
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+  }
+
+  private drawHungerBar(): void {
+    if (!this.foodBitmap) return;
+
+    const ctx = this.overlayCtx;
+    const food = this.player.food;
+    const maxFood = this.player.maxFood;
+    const totalFood = maxFood / 2;
+    const fullFood = Math.floor(food / 2);
+    const halfFood = food % 2 >= 0.5;
+
+    const foodSize = 24;
+    const spacing = 4;
+
+    // Position above the hotbar, right-aligned with hotbar
+    const slotSize = 60;
+    const hotbarSize = Inventory.width;
+    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
+    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
+    const hotbarY = this.canvas2d.height - slotSize - 35;
+
+    const totalBarWidth = totalFood * foodSize + (totalFood - 1) * spacing;
+    const startX = hotbarX + hotbarWidth + 15 - totalBarWidth;
+    const startY = hotbarY - 15 - foodSize - 4;
+
+    ctx.save();
+    for (let i = 0; i < totalFood; i++) {
+      const x = startX + i * (foodSize + spacing);
+      if (i < fullFood) {
+        // Full food
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(this.foodBitmap, x, startY, foodSize, foodSize);
+      } else if (i === fullFood && halfFood) {
+        // Half food: draw left half full, right half dimmed
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(
+          this.foodBitmap,
+          0,
+          0,
+          this.foodBitmap.width / 2,
+          this.foodBitmap.height,
+          x,
+          startY,
+          foodSize / 2,
+          foodSize,
+        );
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(
+          this.foodBitmap,
+          this.foodBitmap.width / 2,
+          0,
+          this.foodBitmap.width / 2,
+          this.foodBitmap.height,
+          x + foodSize / 2,
+          startY,
+          foodSize / 2,
+          foodSize,
+        );
+      } else {
+        // Empty food 
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(this.foodBitmap, x, startY, foodSize, foodSize);
+      }
+    }
     ctx.globalAlpha = 1.0;
     ctx.restore();
   }
