@@ -5,7 +5,7 @@ import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
 import { GUI } from "./Gui.js";
-import { Player, Block } from "./Entity.js";
+import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
 import {
@@ -13,7 +13,11 @@ import {
   blankCubeVSText,
   skyboxFSText,
   skyboxVSText,
+  enemyFSText,
+  enemyVSText,
 } from "./Shaders.js";
+import { Mesh } from "./Mesh.js";
+import { CLoader } from "./AnimationFileLoader.js";
 
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
@@ -32,6 +36,13 @@ export class MinecraftAnimation extends CanvasAnimation {
   private blankCubeRenderPass: RenderPass;
   private skyboxRenderPass: RenderPass;
 
+  /*  Enemy Rendering */
+  private enemyRenderPass: RenderPass;
+  private enemyMeshLoader: CLoader;
+  private enemyMesh: Mesh | null;
+  private enemyBoneTransTex: WebGLTexture;
+  private enemyBoneRotTex: WebGLTexture;
+
   /* Global Rendering Info */
   private lightPosition: Vec4;
   private backgroundColor: Vec4;
@@ -43,6 +54,58 @@ export class MinecraftAnimation extends CanvasAnimation {
   private player: Player;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
+
+  private enemies: Enemy[];
+
+  /**
+   * Entities whose chunk is not in `renderedChunks` are parked here by chunk key.
+   * Used for mobs (`Enemy`) and block entities (`Block`); the player is always active.
+   */
+  private parkedEntitiesByChunk: Map<
+    string,
+    { enemies: Enemy[]; blocks: Block[] }
+  >;
+
+  /* Overlay information */
+  private minimapPixelSize = 135;
+  private minimapColors = [
+    // index corresponds to block type, value is [r, g, b] color for minimap
+    [
+      Number.parseInt("8b", 16),
+      Number.parseInt("45", 16),
+      Number.parseInt("13", 16),
+    ], // dirt
+    [
+      Number.parseInt("a6", 16),
+      Number.parseInt("a1", 16),
+      Number.parseInt("99", 16),
+    ], // cobble
+    [
+      Number.parseInt("2b", 16),
+      Number.parseInt("4d", 16),
+      Number.parseInt("8c", 16),
+    ], // water
+    [
+      Number.parseInt("3f", 16),
+      Number.parseInt("3f", 16),
+      Number.parseInt("3f", 16),
+    ], // coal ore
+    [
+      Number.parseInt("af", 16),
+      Number.parseInt("af", 16),
+      Number.parseInt("af", 16),
+    ], // iron ore
+    [
+      Number.parseInt("ff", 16),
+      Number.parseInt("d7", 16),
+      Number.parseInt("00", 16),
+    ], // gold ore
+    [
+      Number.parseInt("00", 16),
+      Number.parseInt("ff", 16),
+      Number.parseInt("ff", 16),
+    ], // diamond ore
+  ];
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -61,10 +124,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
     this.fallingBlocks = [];
     this.isectNormal = new Vec3();
+    this.parkedEntitiesByChunk = new Map();
 
     this.loadChunksAroundPlayer();
 
@@ -75,8 +140,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     this.skyboxRenderPass = new RenderPass(gl, skyboxVSText, skyboxFSText);
     this.cubeGeometry = new Cube();
+    this.enemyRenderPass = new RenderPass(gl, enemyVSText, enemyFSText);
     this.initSkybox();
     this.initBlankCube();
+
+    this.enemies = [];
+    this.enemyMesh = null;
+    this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
+    this.enemyMeshLoader.load(() => this.initEnemies());
 
     this.lightPosition = new Vec4([-1000, 1000, -1000, 1]);
     this.backgroundColor = new Vec4([0.0, 0.37254903, 0.37254903, 1.0]);
@@ -255,6 +326,303 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.setup();
   }
 
+  /**
+   * Sets up the enemy drawing
+   */
+  private initEnemies(): void {
+    if (this.enemyMeshLoader.meshes.length === 0) {
+      throw new Error("Failed to load enemy mesh.");
+    }
+    this.enemyMesh = this.enemyMeshLoader.meshes[0];
+    this.enemyMesh!.scale(0.5);
+
+    let faceCount = this.enemyMesh!.geometry.position.count / 3;
+    let fIndices = new Uint32Array(faceCount * 3);
+    for (let i = 0; i < faceCount * 3; i += 3) {
+      fIndices[i] = i;
+      fIndices[i + 1] = i + 1;
+      fIndices[i + 2] = i + 2;
+    }
+    this.enemyRenderPass.setIndexBufferData(fIndices);
+
+    this.enemyRenderPass.addInstancedAttribute(
+      "aOffset",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.enemyRenderPass.addInstancedAttribute(
+      "aRot",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.enemyRenderPass.addInstancedAttribute(
+      "aIdx",
+      1,
+      this.ctx.FLOAT,
+      false,
+      1 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+
+    this.enemyRenderPass.addAttribute(
+      "aNorm",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.normal.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "skinIndices",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.skinIndex.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "skinWeights",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.skinWeight.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v0",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v0.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v1",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v1.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v2",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v2.values,
+    );
+    this.enemyRenderPass.addAttribute(
+      "v3",
+      3,
+      this.ctx.FLOAT,
+      false,
+      3 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.enemyMesh!.geometry.v3.values,
+    );
+
+    this.enemyRenderPass.addUniform(
+      "uLightPos",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform4fv(loc, this.lightPosition.xyzw);
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uProj",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.projMatrix().all()),
+        );
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uView",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.viewMatrix().all()),
+        );
+      },
+    );
+
+    this.enemyBoneTransTex = this.ctx.createTexture();
+    if (this.enemyBoneTransTex === null) {
+      console.error("Error creating texture");
+    }
+    this.enemyBoneRotTex = this.ctx.createTexture();
+    if (this.enemyBoneRotTex === null) {
+      console.error("Error creating texture");
+    }
+
+    this.enemyRenderPass.addUniform(
+      "uTexDim",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const width = this.enemyMesh!.bones.length;
+        const height = this.enemies.length;
+        gl.uniform2f(loc, width, height);
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uJTrans",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.activeTexture(gl.TEXTURE0);
+        this.loadEnemyBoneTranslations(gl);
+        gl.uniform1i(loc, 0);
+      },
+    );
+    this.enemyRenderPass.addUniform(
+      "uJRots",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.activeTexture(gl.TEXTURE1);
+        this.loadEnemyBoneRotations(gl);
+        gl.uniform1i(loc, 1);
+      },
+    );
+
+    // this.enemyRenderPass.addUniform("jTrans",
+    //     (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    //       gl.uniform3fv(loc, this.enemyMesh!.getBoneTranslations());
+    //     });
+    // this.enemyRenderPass.addUniform("jRots",
+    //     (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+    //       gl.uniform4fv(loc, this.enemyMesh!.getBoneRotations());
+    //     });
+
+    this.enemyRenderPass.setDrawData(
+      this.ctx.TRIANGLES,
+      this.enemyMesh!.geometry.position.count,
+      this.ctx.UNSIGNED_INT,
+      0,
+    );
+    this.enemyRenderPass.setup();
+
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x + 2,
+          this.player.position.y - 85,
+          this.player.position.z + 2,
+        ]),
+      ),
+    );
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x - 2,
+          this.player.position.y - 85,
+          this.player.position.z + 2,
+        ]),
+      ),
+    );
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x + 2,
+          this.player.position.y - 85,
+          this.player.position.z - 2,
+        ]),
+      ),
+    );
+    this.enemies.push(
+      new Enemy(
+        this.enemyMesh!,
+        new Vec3([
+          this.player.position.x - 2,
+          this.player.position.y - 85,
+          this.player.position.z - 2,
+        ]),
+      ),
+    );
+  }
+
+  private loadEnemyBoneTranslations(gl: WebGLRenderingContext): void {
+    const height = this.enemies.length;
+    const width = this.enemyMesh!.bones.length;
+    let boneTransData = new Uint8Array(width * height * 4);
+
+    for (let i = 0; i < this.enemies.length; i++) {
+      const enemy = this.enemies[i];
+      const boneTrans = enemy.mesh.getBoneTranslationsUi8();
+      boneTransData.set(boneTrans, i * width * 4);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, this.enemyBoneTransTex);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      boneTransData,
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  }
+
+  private loadEnemyBoneRotations(gl: WebGLRenderingContext): void {
+    const height = this.enemies.length;
+    const width = this.enemyMesh!.bones.length;
+    let boneRotData = new Uint8Array(width * height * 4);
+
+    for (let i = 0; i < this.enemies.length; i++) {
+      const enemy = this.enemies[i];
+      const boneRots = enemy.mesh.getBoneRotationsUi8();
+      boneRotData.set(boneRots, i * width * 4);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, this.enemyBoneRotTex);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      width,
+      height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      boneRotData,
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  }
+
   private worldToChunkCoord(worldVal: number): number {
     return Chunk.worldToChunkAxis(worldVal, MinecraftAnimation.chunkSize);
   }
@@ -265,17 +633,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
-  // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
-  //
-  // FIXME: Maybe this should be in `Chunk`, but only allowed a single constructor.
-  // Oh well. This can be refactored.
-  private loadChunkFromSeed(
-    centerX: number,
-    centerZ: number,
-    seed: string,
-  ): Chunk {
-    // TODO: Actually do it. For now, just create a new chunk alltogther.
-    return new Chunk(centerX, centerZ, 64);
+  private chunkAt(worldX: number, worldZ: number): Chunk {
+    const chunkX = this.worldToChunkCoord(Math.round(worldX));
+    const chunkZ = this.worldToChunkCoord(Math.round(worldZ));
+    return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
   /**
@@ -296,125 +657,75 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.chunkCache.get(key);
   }
 
-  private applyVerticalSeparationAndZeroVelocity(
-    newY: number,
-    prevY: number,
-  ): void {
-    this.player.position.y = newY;
-    if (newY === prevY) return;
-    const vy = this.player.velocity.y;
-    if (newY < prevY && vy > 0) this.player.velocity.y = 0;
-    if (newY > prevY && vy < 0) this.player.velocity.y = 0;
+  /**
+   * Chunk key string for the column containing `pos` (same convention as chunk
+   * maps).
+   */
+  private entityChunkKey(pos: Vec3): string {
+    const ix = Math.round(pos.x);
+    const iz = Math.round(pos.z);
+    const cx = this.worldToChunkCoord(ix);
+    const cz = this.worldToChunkCoord(iz);
+    return `${cx},${cz}`;
   }
 
-  private stepPlayerPhysics(dt: number): void {
-    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
-    const r = Player.hitboxRadius;
-    const h = Player.hitboxHeight;
-    const footSlack = 0.55;
-
-    const walkDx = this.gui.walkDir();
-    const momentumH = this.player.velocity.scale(dt, new Vec3());
-    momentumH.y = 0;
-    const totalH = walkDx.add(momentumH, new Vec3());
-
-    let px = this.player.position.x;
-    let py = this.player.position.y;
-    let pz = this.player.position.z;
-
-    const { ax, az } = Chunk.tryHorizontalCylinderMove(
-      prov,
-      px,
-      py,
-      pz,
-      totalH.x,
-      totalH.z,
-      r,
-      h,
-    );
-    if (ax === 0) this.player.velocity.x = 0;
-    if (az === 0) this.player.velocity.z = 0;
-    this.player.position.x += ax;
-    this.player.position.z += az;
-    px = this.player.position.x;
-    py = this.player.position.y;
-    pz = this.player.position.z;
-
-    let floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    const grounded = floorHead !== -Infinity && py <= floorHead + 0.02;
-
-    if (!grounded) {
-      this.player.velocity.add(new Vec3([0.0, -9.8 * dt, 0.0]));
-    } else {
-      const v = this.player.velocity.copy();
-      if (v.y < 0) v.y = 0;
-      this.player.velocity = v;
+  private getOrCreateParked(chunkKey: string): {
+    enemies: Enemy[];
+    blocks: Block[];
+  } {
+    let p = this.parkedEntitiesByChunk.get(chunkKey);
+    if (!p) {
+      p = { enemies: [], blocks: [] };
+      this.parkedEntitiesByChunk.set(chunkKey, p);
     }
+    return p;
+  }
 
-    this.player.position.y += this.player.velocity.y * dt;
-    py = this.player.position.y;
+  /** Park mobs and block-entities that live in a chunk that just unloaded. */
+  private unloadEntitiesForChunk(chunkKey: string): void {
+    const toParkEnemies: Enemy[] = [];
+    const toParkBlocks: Block[] = [];
+    this.enemies = this.enemies.filter((e) => {
+      if (this.entityChunkKey(e.position) === chunkKey) {
+        toParkEnemies.push(e);
+        return false;
+      }
+      return true;
+    });
+    this.fallingBlocks = this.fallingBlocks.filter((b) => {
+      if (this.entityChunkKey(b.position) === chunkKey) {
+        toParkBlocks.push(b);
+        return false;
+      }
+      return true;
+    });
+    if (toParkEnemies.length === 0 && toParkBlocks.length === 0) return;
+    const parked = this.getOrCreateParked(chunkKey);
+    parked.enemies.push(...toParkEnemies);
+    parked.blocks.push(...toParkBlocks);
+  }
 
-    floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    if (floorHead !== -Infinity && py < floorHead) {
-      this.player.position.y = floorHead;
-      if (this.player.velocity.y < 0) this.player.velocity.y = 0;
-      py = this.player.position.y;
+  /** Restore entities parked while this chunk was unloaded. */
+  private loadEntitiesForChunk(chunkKey: string): void {
+    const parked = this.parkedEntitiesByChunk.get(chunkKey);
+    if (!parked) return;
+    if (parked.enemies.length > 0) {
+      this.enemies.push(...parked.enemies);
+      parked.enemies.length = 0;
     }
-
-    const yBeforeSep = py;
-    const ySep = Chunk.separateVerticalCapsuleFromSolids(
-      prov,
-      px,
-      py,
-      pz,
-      r,
-      h,
-      this.player.velocity.y,
-    );
-    this.applyVerticalSeparationAndZeroVelocity(ySep, yBeforeSep);
-    py = this.player.position.y;
-
-    if (
-      this.player.velocity.y > 0 &&
-      Chunk.cylinderIntersectsSolidWorld(prov, px, py, pz, r, h)
-    ) {
-      py = Chunk.resolveUpwardPenetration(prov, px, py, pz, r, h);
-      this.player.position.y = py;
-      this.player.velocity.y = 0;
+    if (parked.blocks.length > 0) {
+      this.fallingBlocks.push(...parked.blocks);
+      parked.blocks.length = 0;
     }
-
-    floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    if (floorHead !== -Infinity && py < floorHead) {
-      this.player.position.y = floorHead;
-      if (this.player.velocity.y < 0) this.player.velocity.y = 0;
+    if (parked.enemies.length === 0 && parked.blocks.length === 0) {
+      this.parkedEntitiesByChunk.delete(chunkKey);
     }
   }
 
   private loadChunksAroundPlayer(): void {
+    const prevLoadedKeys = new Set(this.renderedChunks.keys());
+    const nextLoadedKeys = new Set<string>();
+
     // FIXME: Reuse chunks already loaded, instead of re-adding each frame.
     this.renderedChunks.clear();
 
@@ -428,11 +739,26 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkX = cx + di * step;
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
+        nextLoadedKeys.add(key);
         if (!this.chunkCache.has(key)) {
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step));
+          let deltaMap = this.deltaMaps.has(key)
+            ? this.deltaMaps.get(key)
+            : new Map();
+          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
+      }
+    }
+
+    for (const key of prevLoadedKeys) {
+      if (!nextLoadedKeys.has(key)) {
+        this.unloadEntitiesForChunk(key);
+      }
+    }
+    for (const key of nextLoadedKeys) {
+      if (!prevLoadedKeys.has(key)) {
+        this.loadEntitiesForChunk(key);
       }
     }
   }
@@ -442,12 +768,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(4 * totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const positions = chunk.cubePositions();
       combined.set(positions, offset);
       offset += positions.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set(
+        [block.position.x, block.position.y, block.position.z, 0],
+        offset,
+      );
+      offset += 4;
     }
     return combined;
   }
@@ -457,12 +792,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const chunk of this.renderedChunks.values()) {
       totalCubes += chunk.numCubes();
     }
+    totalCubes += this.fallingBlocks.length;
+
     const combined = new Float32Array(totalCubes);
     let offset = 0;
     for (const chunk of this.renderedChunks.values()) {
       const types = chunk.cubeTypes();
       combined.set(types, offset);
       offset += types.length;
+    }
+    for (const block of this.fallingBlocks) {
+      combined.set([block.type], offset);
+      offset += 1;
     }
     return combined;
   }
@@ -478,9 +819,39 @@ export class MinecraftAnimation extends CanvasAnimation {
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    this.stepPlayerPhysics(dt);
-
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    this.player.update(this.gui.walkDir(), prov, dt);
     this.gui.getCamera().setPos(this.player.position);
+
+    this.enemies.forEach((enemy) => {
+      enemy.update(prov, this.player, dt);
+    });
+
+    // Update falling block entities (only while their chunk is loaded; otherwise parked)
+    let newFallingBlocks: Block[] = [];
+    this.fallingBlocks.forEach((fallingBlock) => {
+      const blockChunk = this.getChunkAtWorld(
+        fallingBlock.position.x,
+        fallingBlock.position.z,
+      );
+      if (blockChunk === undefined) {
+        newFallingBlocks.push(fallingBlock);
+        return;
+      }
+
+      if (fallingBlock.update(dt, blockChunk)) {
+        newFallingBlocks.push(fallingBlock);
+      } else {
+        blockChunk.changeCubeType(
+          fallingBlock.position.x,
+          fallingBlock.position.z,
+          fallingBlock.position.y,
+          fallingBlock.type,
+        );
+      }
+    });
+    this.fallingBlocks = newFallingBlocks;
+
     // Drawing
     const gl: WebGLRenderingContext = this.ctx;
     const bg: Vec4 = this.backgroundColor;
@@ -523,6 +894,26 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
     this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
     this.blankCubeRenderPass.drawInstanced(instanceCount);
+
+    // Enemies
+    if (this.enemyMesh !== null) {
+      const enemyInstanceCount = this.enemies.length;
+      const enemyPositions = new Float32Array(enemyInstanceCount * 4);
+      const enemyRotations = new Float32Array(enemyInstanceCount * 4);
+      const enemyIdxs = new Float32Array(enemyInstanceCount);
+      for (let i = 0; i < this.enemies.length; i++) {
+        enemyIdxs[i] = i;
+        const pos = this.enemies[i].position;
+        enemyPositions.set([pos.x, pos.y, pos.z, 0], i * 4);
+        const rot = this.enemies[i].getRotation();
+        enemyRotations.set([rot.x, rot.y, rot.z, rot.w], i * 4);
+      }
+
+      this.enemyRenderPass.updateAttributeBuffer("aOffset", enemyPositions);
+      this.enemyRenderPass.updateAttributeBuffer("aRot", enemyRotations);
+      this.enemyRenderPass.updateAttributeBuffer("aIdx", enemyIdxs);
+      this.enemyRenderPass.drawInstanced(enemyInstanceCount);
+    }
   }
 
   /**
@@ -649,29 +1040,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
-    const r = Player.hitboxRadius;
-    const h = Player.hitboxHeight;
-    const footSlack = 0.55;
-    const px = this.player.position.x;
-    const py = this.player.position.y;
-    const pz = this.player.position.z;
-    const floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    if (
-      floorHead === -Infinity ||
-      py > floorHead + 0.02 ||
-      !Chunk.verticalCapsuleHasHeadroomForJump(prov, px, py, pz, r, h)
-    ) {
-      return;
-    }
-    this.player.velocity.add(new Vec3([0.0, 10.0, 0.0]));
+    this.player.jump(prov);
   }
 
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
@@ -693,10 +1062,9 @@ export class MinecraftAnimation extends CanvasAnimation {
           let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
           let cubeType = currentChunk.cubeType(x, z, y);
 
-          if (cubeType !== undefined) {
+          if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
-            // TODO: Save the cube face that was hit for placing blocks
             if (t !== undefined && t < bestT) {
               bestT = t;
               bestPos = [x, y, z];
@@ -740,27 +1108,25 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public placeBlock(cubeType: number) {
-    const cubeX = this.selectedCubePosition.x;
-    const cubeY = this.selectedCubePosition.y;
-    const cubeZ = this.selectedCubePosition.z;
+    // Place new cube based on side of cube that mouse is pointing at
+    const cubeX = this.selectedCubePosition.x + this.isectNormal.x;
+    const cubeY = this.selectedCubePosition.y + this.isectNormal.y;
+    const cubeZ = this.selectedCubePosition.z + this.isectNormal.z;
 
     const chunkX = this.worldToChunkCoord(cubeX);
     const chunkZ = this.worldToChunkCoord(cubeZ);
     let key = `${chunkX},${chunkZ}`;
     let chunk = this.renderedChunks.get(key)!;
 
-    // Place new cube based on side of cube that mouse is pointing at
-    let chunkDeltaMap = chunk.changeCubeType(
-      cubeX + this.isectNormal.x,
-      cubeZ + this.isectNormal.z,
-      cubeY + this.isectNormal.y,
-      cubeType,
-    );
+    let chunkDeltaMap = chunk.changeCubeType(cubeX, cubeZ, cubeY, cubeType);
 
-    // TODO: Test falling blocks by checking if block below is empty
-    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === undefined) {
-      this.fallingBlocks.push(new Block(new Vec3([cubeX, cubeY, cubeZ])));
-      // TODO: Remove block from chunk's map so that its static version is not rendered
+    // Test falling blocks
+    if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
+      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
+      this.fallingBlocks.push(
+        new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
+      );
+      chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
     }
 
     this.deltaMaps.set(key, chunkDeltaMap);
@@ -782,6 +1148,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillRect(x - 10, y - 8, panelWidth, panelHeight);
     ctx.fillStyle = "#fff6d7";
     ctx.fillText(timeLine, x, y);
+
+    this.drawMinimap();
 
     ctx.restore();
   }
@@ -807,6 +1175,118 @@ export class MinecraftAnimation extends CanvasAnimation {
   private wrapDayTime(value: number): number {
     const dayDuration = MinecraftAnimation.dayDuration;
     return ((value % dayDuration) + dayDuration) % dayDuration;
+  }
+
+  /**
+   * Draw the minimap in the top right corner of the screen
+   */
+  private drawMinimap(): void {
+    const ctx = this.overlayCtx;
+    const playerPos = this.player.position;
+    const size = this.minimapPixelSize;
+    const minimapX = this.canvas2d.width - size - 10;
+    const minimapY = 10;
+    ctx.save();
+    ctx.translate(minimapX, minimapY);
+
+    // terrain
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        const worldX = Math.floor(playerPos.x - size / 2 + i);
+        const worldZ = Math.floor(playerPos.z - size / 2 + j);
+
+        const chunkX = this.worldToChunkCoord(worldX);
+        const chunkZ = this.worldToChunkCoord(worldZ);
+        const chunk = this.renderedChunks.get(`${chunkX},${chunkZ}`);
+
+        if (!chunk) {
+          continue;
+        }
+
+        const topBlock = chunk.topBlockAt(worldX, worldZ);
+        if (
+          !topBlock ||
+          topBlock.type < 0 ||
+          topBlock.type >= this.minimapColors.length
+        ) {
+          ctx.fillStyle = "#C7C0B7";
+          ctx.fillRect(i, j, 1, 1);
+          continue;
+        }
+
+        // height-based tinting: darken below sea level, brighten above. tune t to adjust strength of effect
+        const height = topBlock.height;
+        const r = this.minimapColors[topBlock.type][0];
+        const g = this.minimapColors[topBlock.type][1];
+        const b = this.minimapColors[topBlock.type][2];
+        let lr: number, lg: number, lb: number;
+
+        if (height < Chunk.SEA_LEVEL) {
+          // Below sea level: dark bands
+          // Depths: 0-2 = very dark (0.45), 3-4 = dark (0.30), 5-6 = dim (0.15), 7 = slight (0.05)
+          const depth = Chunk.SEA_LEVEL - height;
+          const t =
+            depth >= 6 ? 0.45 : depth >= 4 ? 0.3 : depth >= 2 ? 0.15 : 0.05;
+          lr = Math.round(r * (1 - t));
+          lg = Math.round(g * (1 - t));
+          lb = Math.round(b * (1 - t));
+        } else {
+          // Above sea level: bright bands
+          // Heights above sea: 0-4 = base, 5-9 = +10%, 10-16 = +20%, 17-24 = +30%, 25+ = +40%
+          const elev = height - Chunk.SEA_LEVEL;
+          const t =
+            elev >= 25
+              ? 0.4
+              : elev >= 17
+                ? 0.3
+                : elev >= 10
+                  ? 0.2
+                  : elev >= 5
+                    ? 0.1
+                    : 0;
+          lr = Math.round(r + (255 - r) * t);
+          lg = Math.round(g + (255 - g) * t);
+          lb = Math.round(b + (255 - b) * t);
+        }
+
+        ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
+        ctx.fillRect(i, j, 1, 1);
+      }
+    }
+
+    // player icon
+    const camera = this.gui.getCamera();
+    const look = camera.forward().negate();
+    const angle = Math.atan2(-look.x, look.z);
+
+    ctx.save();
+    ctx.translate(size / 2, size / 2);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(0, 6);
+    ctx.lineTo(-4, -4);
+    ctx.lineTo(4, -4);
+    ctx.closePath();
+    ctx.fillStyle = "#0a9e2e";
+    ctx.fill();
+    ctx.restore();
+
+    // enemy icons
+    this.enemies.forEach((enemy) => {
+      const ex = enemy.position.x - playerPos.x + size / 2;
+      const ez = enemy.position.z - playerPos.z + size / 2;
+      if (ex >= 0 && ex < size && ez >= 0 && ez < size) {
+        ctx.fillStyle = "#ff0000";
+        ctx.fillRect(ex, ez, 2, 2);
+      }
+    });
+
+    // border
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, size, size);
+
+    ctx.restore();
   }
 }
 

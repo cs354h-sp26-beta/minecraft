@@ -117,8 +117,8 @@ const dirtTexture = `
 
         vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
 
-        vec3 baseColor = vec3(0.545, 0.271, 0.075);
-        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) * 0.8 + hash(pixelUV) * 0.3;
+        vec3 baseColor = vec3(0.845, 0.471, 0.18);
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) + hash(pixelUV) * 0.3;
         vec3 textureColor = baseColor * noise; // add subtle noise
         if (noise < 0.2) textureColor -= vec3(0.14, 0.08, 0.04); // add some darker spots
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
@@ -164,7 +164,29 @@ const cobbleTexture = `
       float groove = smoothstep(0.35, -0.55, v * 0.5);  // dark at edges
       float noise = fbm(pixelatedWorld.xz * 8.0, 2);     // surface variation
       vec3 baseColor = vec3(0.65, 0.63, 0.6);
-      return baseColor * (0.31 + 1.8 * groove + 0.42 * noise);
+      return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
+    }
+`;
+
+const oreTexture = `
+    vec3 makeOre(vec2 uv, vec3 world, float scale, vec3 color) {
+        vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
+        vec3 p = pixelatedWorld * scale;
+        float v = 0.3 * voronoi(p);
+        float groove = smoothstep(0.35, -0.75, v * 0.7);  // dark at edges
+        float coloredGroove = perlin(pixelatedWorld.xz * 2.5 + uv); // add color variation to grooves
+
+        vec3 baseColor = vec3(0.5, 0.5, 0.5);
+        
+        float noise = fbm(uv * 8.0, 2);
+
+        coloredGroove = pow(coloredGroove, 3.0);
+
+        vec3 noColor = baseColor * (0.14 + 0.12 * noise) + groove * 0.8;
+
+        vec3 colored = color * (0.7 - groove + 0.2 * noise);
+
+        return mix(noColor, colored, coloredGroove);
     }
 `;
 
@@ -222,6 +244,8 @@ export const blankCubeFSText = `
     ${cobbleTexture}
 
     ${waterTexture}
+
+    ${oreTexture}
     
     void main() {
         vec3 kd = vec3(1.0, 1.0, 1.0);
@@ -241,6 +265,9 @@ export const blankCubeFSText = `
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
+        } else {
+            vec3 oreColor = vec3(0.9, 0.1, 0.2);
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
         }
 
         gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
@@ -593,5 +620,99 @@ export const skyboxFSText = `
         }
 
         gl_FragColor = vec4(color, 1.0);
+    }
+`;
+
+export const enemyVSText = `
+    precision mediump float;
+
+    attribute vec3 aNorm;
+    attribute vec4 skinIndices;
+    attribute vec4 skinWeights;
+	
+	//vertices used for bone weights (assumes up to four weights per vertex)
+    attribute vec4 v0;
+    attribute vec4 v1;
+    attribute vec4 v2;
+    attribute vec4 v3;
+    
+    attribute float aIdx;
+    attribute vec4 aOffset;
+    attribute vec4 aRot;
+    
+    varying vec4 normal;
+    varying vec4 wsPos;
+    
+    uniform vec4 uLightPos;
+    uniform mat4 uView;
+    uniform mat4 uProj;
+
+	// Joint translations and rotations to determine weights (assumes up to 64 joints per rig)
+	uniform vec2 uTexDim; // Dimensions of the joint textures (width = numBones, height = numEnemies)
+    uniform sampler2D uJTrans; // Represents range from [-4, 4]
+    uniform sampler2D uJRots; // Represents range from [-1, 1]
+
+    vec3 qtrans(vec4 q, vec3 v) {
+        return v + 2.0 * cross(cross(v, q.xyz) - q.w*v, q.xyz);
+    }
+
+    void main () {
+    
+        vec3 weightedPos = vec3(0.0, 0.0, 0.0);
+        vec3 weightedNormal = vec3(0.0, 0.0, 0.0);
+        
+        for (int i = 0; i < 4; i++) {
+            float weight = skinWeights[i];
+            
+            if (weight > 0.0) {
+                int boneIdx = int(skinIndices[i]);
+                
+                vec3 v = vec3(0.0, 0.0, 0.0);
+                if (i == 0) { v = v0.xyz; }
+                else if (i == 1) { v = v1.xyz; }
+                else if (i == 2) { v = v2.xyz; }
+                else if (i == 3) { v = v3.xyz; }
+                
+                vec2 uv = vec2(float(boneIdx) + 0.5, aIdx + 0.5) / uTexDim;
+                vec3 trans = texture2D(uJTrans, uv).xyz * 2.0 - 1.0;
+                vec4 rot = normalize(texture2D(uJRots, uv) * 2.0 - 1.0);
+                
+                weightedPos += weight * (trans + qtrans(rot, v));
+                weightedNormal += weight * qtrans(rot, aNorm);
+            }
+        }
+
+        wsPos = aOffset + vec4(qtrans(aRot, weightedPos), 1.0);
+        normal = normalize(vec4(qtrans(aRot, weightedNormal), 0.0));	
+
+        gl_Position = uProj * uView * wsPos;
+    }
+
+`;
+
+export const enemyFSText = `
+    precision mediump float;
+
+    uniform vec4 uLightPos;
+    uniform float uTime;
+    
+    varying vec4 normal;
+    varying vec4 wsPos;
+    varying vec2 uv;
+
+    void main () {
+        vec3 kd = vec3(1.0, 1.0, 1.0);
+        vec3 ka = vec3(0.1, 0.1, 0.1);
+        
+        /* Compute light fall off */
+        vec4 lightDirection = uLightPos - wsPos;
+        float dot_nl = dot(normalize(lightDirection), normalize(normal));
+	    dot_nl = clamp(dot_nl, 0.0, 1.0);
+
+        vec3 textureColor = vec3(0.4, 0.1, 0.1);
+
+        gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0) * textureColor, 1.0);
+        
+        //gl_FragColor = vec4((normal.x + 1.0)/2.0, (normal.y + 1.0)/2.0, (normal.z + 1.0)/2.0,1.0);
     }
 `;
