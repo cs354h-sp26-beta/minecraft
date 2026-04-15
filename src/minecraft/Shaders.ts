@@ -596,8 +596,6 @@ export const skyboxFSText = `
     }
 `;
 
-
-
 export const enemyVSText = `
     precision mediump float;
 
