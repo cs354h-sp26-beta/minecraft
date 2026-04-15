@@ -93,6 +93,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   /* Inventory */
   private inventory: Inventory;
   private selectedHotbarIdx: number;
+  private isInInventory: boolean;
 
   /* Overlay information */
   private minimapPixelSize = 135;
@@ -149,6 +150,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blocksBroken = 0;
     this.blocksPlaced = 0;
     this.successfulJumps = 0;
+
+    this.isInInventory = false;
+
     this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
@@ -1376,6 +1380,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.drawDeathOverlay();
     }
 
+    if (this.isInInventory) {
+      this.drawInventory();
+    }
+
     ctx.restore();
   }
 
@@ -1661,6 +1669,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     ctx.restore();
+  }
+
+  private drawInventory(): void {
+
   }
 
   public setHotbarSlot(number: number) {

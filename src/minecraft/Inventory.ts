@@ -71,6 +71,11 @@ export function registerItemTypes() {
     }
     registerItem("dirt", "Dirt").setAction(ItemAction.Place, Chunk.blockTypeDirt);
     registerItem("cobble", "Cobblestone").setAction(ItemAction.Place, Chunk.blockTypeCobble);
+    registerItem("bedrock", "Bedrock").setAction(ItemAction.Place, Chunk.blockTypeBedrock);
+    registerItem("sand", "Sand").setAction(ItemAction.Place, Chunk.blockTypeSand);
+    registerItem("sandstone", "Sandstone").setAction(ItemAction.Place, Chunk.blockTypeSandstone);
+    registerItem("snow", "Snow").setAction(ItemAction.Place, Chunk.blockTypeSnow);
+    registerItem("netherite", "Netherite").setAction(ItemAction.Place, Chunk.blockTypeNetherite);
 
     registerItem("water_bucket", "Water Bucket", 1).setAction(ItemAction.Place, Chunk.blockTypeWater);
 
