@@ -67,7 +67,7 @@ export function registerItemTypes() {
     const registerItem = (id: string, name: string, maxStackSize: number = 16): ItemType => {
         const imagePath = `./static/assets/items/${id}.png`;
         itemTypes.set(id, new ItemType(id, name, imagePath, maxStackSize));
-        return itemTypes.get(id);
+        return itemTypes.get(id)!;
     }
     registerItem("dirt", "Dirt").setAction(ItemAction.Place, Chunk.blockTypeDirt);
     registerItem("cobble", "Cobblestone").setAction(ItemAction.Place, Chunk.blockTypeCobble);
@@ -115,8 +115,8 @@ export class Inventory {
         }
     }
 
-    public insertStack(itemStack?: ItemStack): boolean {
-        if (!itemStack) { return true; }
+    public insertStack(itemStack: ItemStack | null): boolean {
+        if (itemStack === null) { return true; }
 
         const itemType = itemStack.itemType;
         let count = itemStack.count;
