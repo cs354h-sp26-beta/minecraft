@@ -1899,6 +1899,45 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
+  public inventoryClick(mouseX: number, mouseY: number, button: number): void {
+    const cols = Inventory.width;
+    const rows = Inventory.height;
+    const slotSize = 60;
+    const gap = 10;
+
+    const hotbarGap = 30;
+    const gridWidth = cols * slotSize + (cols - 1) * gap;
+    const gridHeight = rows * slotSize + (rows - 2) * gap + hotbarGap;
+    const originX = (this.canvas2d.width - gridWidth) / 2;
+    const originY = (this.canvas2d.height - gridHeight) / 2;
+
+    // Position relative to inventory grid origin
+    const relX = mouseX - originX;
+    const relY = mouseY - originY;
+
+    for (let row = 0; row < rows; row++) {
+      const invRow = row < rows - 1 ? row + 1 : 0;
+      const yOffset =
+        row < rows - 1
+          ? row * (slotSize + gap)
+          : row * slotSize + (rows - 2) * gap + hotbarGap;
+
+      for (let col = 0; col < cols; col++) {
+        const x = col * (slotSize + gap);
+
+        if (relX >= x && relX < x + slotSize &&
+            relY >= yOffset && relY < yOffset + slotSize) {
+          this.onInventorySlotClick(col, invRow, button);
+          return;
+        }
+      }
+    }
+  }
+
+  private onInventorySlotClick(col: number, row: number, button: number): void {
+    console.log(`Inventory slot clicked: col=${col}, row=${row}, button=${button}`);
+  }
+
   public setHotbarSlot(number: number) {
     this.selectedHotbarIdx = number;
   }

@@ -132,7 +132,16 @@ export class GUI implements IGUI {
   }
 
   public dragStart(mouse: MouseEvent): void {
-    if (this.animation.isPlayerDead() || !this._pointerLocked) {
+    if (this.animation.isPlayerDead()) {
+      return;
+    }
+
+    if (this.animation.isInventoryOpen()) {
+      this.animation.inventoryClick(mouse.offsetX, mouse.offsetY, mouse.button);
+      return;
+    }
+
+    if (!this._pointerLocked) {
       return;
     }
 
