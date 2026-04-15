@@ -44,7 +44,7 @@ export class MeshGeometry {
 export class Bone {
     public mesh: Mesh;
     public parent: number;
-    public parentBone: Bone;
+    public parentBone: Bone | null;
     public children: number[];
     public position: Vec3; // current position of the bone's joint *in world coordinates*. Used by the provided skeleton shader, so you need to keep this up to date.
     public endpoint: Vec3; // current position of the bone's second (non-joint) endpoint, in world coordinates

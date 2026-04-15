@@ -39,7 +39,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   /*  Enemy Rendering */
   private enemyRenderPass: RenderPass;
   private enemyMeshLoader: CLoader;
-  private enemyMesh: Mesh;
+  private enemyMesh: Mesh | null;
   private enemyBoneTransTex: WebGLTexture;
   private enemyBoneRotTex: WebGLTexture;
 
