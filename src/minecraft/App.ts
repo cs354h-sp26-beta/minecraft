@@ -302,6 +302,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     putColor(Chunk.blockTypeIronOre, "afafaf");
     putColor(Chunk.blockTypeGoldOre, "ffd700");
     putColor(Chunk.blockTypeDiamondOre, "00ffff");
+    putColor(Chunk.blockTypeGrass, "567d46");
+    putColor(Chunk.blockTypeSand, "e8d5a3");
+    putColor(Chunk.blockTypeSandstone, "d4c496");
+    putColor(Chunk.blockTypeSnow, "f0f0f0");
+    putColor(Chunk.blockTypeNetherite, "443a3a");
+    putColor(Chunk.blockTypeBedrock, "555555");
+    putColor(Chunk.blockTypePortal, "8b00d4");
   }
 
   /**
@@ -1374,6 +1381,11 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.selectedCubePosition.z,
       this.selectedCubePosition.y,
     );
+
+    if (brokenCubeType === Chunk.blockTypeWater || brokenCubeType === Chunk.blockTypePortal) {
+      return;
+    }
+
     let chunkDeltaMap = chunk.changeCubeType(
       this.selectedCubePosition.x,
       this.selectedCubePosition.z,

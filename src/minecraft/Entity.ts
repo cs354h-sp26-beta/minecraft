@@ -64,6 +64,7 @@ class Entity {
 
     const momentumH = this.velocity.scale(dt, new Vec3());
     momentumH.y = 0;
+    lookDir = lookDir.scale(0.4, new Vec3());
     const totalH = lookDir.add(momentumH, new Vec3());
 
     let px = this.position.x;
@@ -185,7 +186,7 @@ class Entity {
     ) {
       return;
     }
-    this.velocity.add(new Vec3([0.0, 5.0, 0.0]));
+    this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
   }
 
   public takeDamage(amount: number = 1) {
@@ -343,7 +344,7 @@ export class Block {
     }
 
     // Apply gravity acceleration.
-    const gDelta = -9.8 * dt;
+    const gDelta = -9.8 * 2 * dt;
     const gDv = new Vec3([0.0, gDelta, 0.0]);
     this.velocity.add(gDv);
     return true;

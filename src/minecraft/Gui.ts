@@ -141,6 +141,9 @@ export class GUI implements IGUI {
     } else if (mouse.button === 2) {
       this.animation.rightClick(this.cubeSelected);
     }
+
+    // Re-raycast after block updates
+    this.raycastFromScreenPos(this.width / 2, this.height / 2);
   }
 
   public dragEnd(mouse: MouseEvent): void {
