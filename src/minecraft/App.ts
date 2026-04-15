@@ -1342,13 +1342,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
+    this.drawHealthBar();
     this.drawMinimap();
     this.drawHotbar();
+    this.drawAchievementToast();
     if (this.player.isDead()) {
       this.drawDeathOverlay();
     }
-    this.drawHealthBar();
-    this.drawAchievementToast();
 
     ctx.restore();
   }
@@ -1402,7 +1402,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillText(this.achievementToast.description, x + 12, y + 44);
     ctx.restore();
   }
-
   private drawDeathOverlay(): void {
     const ctx = this.overlayCtx;
     const centerX = this.canvas2d.width / 2;
@@ -1649,14 +1648,26 @@ export class MinecraftAnimation extends CanvasAnimation {
         ctx.globalAlpha = 1.0;
         ctx.drawImage(
           this.heartBitmap,
-          0, 0, this.heartBitmap.width / 2, this.heartBitmap.height,
-          x, startY, heartSize / 2, heartSize,
+          0,
+          0,
+          this.heartBitmap.width / 2,
+          this.heartBitmap.height,
+          x,
+          startY,
+          heartSize / 2,
+          heartSize,
         );
         ctx.globalAlpha = 0.25;
         ctx.drawImage(
           this.heartBitmap,
-          this.heartBitmap.width / 2, 0, this.heartBitmap.width / 2, this.heartBitmap.height,
-          x + heartSize / 2, startY, heartSize / 2, heartSize,
+          this.heartBitmap.width / 2,
+          0,
+          this.heartBitmap.width / 2,
+          this.heartBitmap.height,
+          x + heartSize / 2,
+          startY,
+          heartSize / 2,
+          heartSize,
         );
       } else {
         // Empty heart
