@@ -24,18 +24,23 @@ type ColumnSample = {
 };
 
 export class DecorationGenerator {
+  private static readonly maxInstancesPerChunk = 260;
+
   public generateForChunk(chunkKey: string, chunk: Chunk): DecorBuffer {
     const columnSamples = this.sampleColumns(chunk);
 
     const instances: ColumnSample[] = [];
     for (const sample of columnSamples.values()) {
+      if (instances.length >= DecorationGenerator.maxInstancesPerChunk) {
+        break;
+      }
       const placementChance = this.rand01(
         `${chunkKey}|${sample.x}|${sample.z}|place`,
       );
       const altitude = sample.topY;
       const altitudeFactor = this.clamp01((altitude - 5) / 70);
       const localNoise = this.rand01(`${chunkKey}|${sample.x}|${sample.z}|noise`);
-      const threshold = 0.35 - altitudeFactor * 0.15 + localNoise * 0.15;
+      const threshold = 0.055 - altitudeFactor * 0.025 + localNoise * 0.025;
       if (placementChance > threshold) {
         continue;
       }
@@ -97,12 +102,30 @@ export class DecorationGenerator {
 
   private sampleColumns(chunk: Chunk): Map<string, ColumnSample> {
     const positions = chunk.cubePositions();
+    const types = chunk.cubeTypes();
+    const waterColumns = new Set<string>();
     const columnSamples = new Map<string, ColumnSample>();
     for (let i = 0; i < positions.length; i += 4) {
+      const cubeIdx = i / 4;
+      const blockType = types[cubeIdx];
       const wx = positions[i + 0];
       const wy = positions[i + 1];
       const wz = positions[i + 2];
       const key = `${wx},${wz}`;
+
+      if (blockType === Chunk.blockTypeWater) {
+        waterColumns.add(key);
+        columnSamples.delete(key);
+        continue;
+      }
+      if (
+        blockType === Chunk.blockTypeAir
+      ) {
+        continue;
+      }
+      if (waterColumns.has(key)) {
+        continue;
+      }
       const existing = columnSamples.get(key);
       if (!existing || wy > existing.topY) {
         columnSamples.set(key, {
@@ -117,16 +140,16 @@ export class DecorationGenerator {
 
   private pickType(seed: string, worldY: number): DecorType {
     const r = this.rand01(`${seed}|type`);
-    if (worldY > 50 && r < 0.2) {
+    if (worldY > 50 && r < 0.04) {
       return DecorType.Tree;
     }
-    if (r < 0.35) {
+    if (r < 0.58) {
       return DecorType.Grass;
     }
-    if (r < 0.6) {
+    if (r < 0.82) {
       return DecorType.Shrub;
     }
-    if (r < 0.85) {
+    if (r < 0.97) {
       return DecorType.Rock;
     }
     return DecorType.Tree;
@@ -135,14 +158,14 @@ export class DecorationGenerator {
   private scaleForType(type: DecorType, randomScale: number): number {
     switch (type) {
       case DecorType.Tree:
-        return 3.0 + randomScale * 2.0;
+        return 1.6 + randomScale * 0.8;
       case DecorType.Rock:
-        return 1.0 + randomScale * 0.8;
+        return 0.55 + randomScale * 0.35;
       case DecorType.Shrub:
-        return 0.8 + randomScale * 0.6;
+        return 0.45 + randomScale * 0.3;
       case DecorType.Grass:
       default:
-        return 0.6 + randomScale * 0.4;
+        return 0.25 + randomScale * 0.2;
     }
   }
 
