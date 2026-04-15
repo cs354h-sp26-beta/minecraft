@@ -95,6 +95,15 @@ export class MinecraftAnimation extends CanvasAnimation {
   private selectedHotbarIdx: number;
   private isInInventory: boolean;
 
+  /**
+   * Entities whose chunk is not in `renderedChunks` are parked here by chunk key.
+   * Used for mobs (`Enemy`) and block entities (`Block`); the player is always active.
+   */
+  private parkedEntitiesByChunk: Map<
+    string,
+    { enemies: Enemy[]; blocks: Block[] }
+  >;
+
   /* Overlay information */
   private minimapPixelSize = 135;
   private minimapColors: Map<number, [number, number, number]>;
@@ -126,6 +135,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.spawnPosition = playerPosition.copy();
     this.fallingBlocks = [];
     this.isectNormal = new Vec3();
+    this.parkedEntitiesByChunk = new Map();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
@@ -890,7 +900,75 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.chunkCache.get(key);
   }
 
+  /**
+   * Chunk key string for the column containing `pos` (same convention as chunk
+   * maps).
+   */
+  private entityChunkKey(pos: Vec3): string {
+    const ix = Math.round(pos.x);
+    const iz = Math.round(pos.z);
+    const cx = this.worldToChunkCoord(ix);
+    const cz = this.worldToChunkCoord(iz);
+    return `${cx},${cz}`;
+  }
+
+  private getOrCreateParked(chunkKey: string): {
+    enemies: Enemy[];
+    blocks: Block[];
+  } {
+    let p = this.parkedEntitiesByChunk.get(chunkKey);
+    if (!p) {
+      p = { enemies: [], blocks: [] };
+      this.parkedEntitiesByChunk.set(chunkKey, p);
+    }
+    return p;
+  }
+
+  /** Park mobs and block-entities that live in a chunk that just unloaded. */
+  private unloadEntitiesForChunk(chunkKey: string): void {
+    const toParkEnemies: Enemy[] = [];
+    const toParkBlocks: Block[] = [];
+    this.enemies = this.enemies.filter((e) => {
+      if (this.entityChunkKey(e.position) === chunkKey) {
+        toParkEnemies.push(e);
+        return false;
+      }
+      return true;
+    });
+    this.fallingBlocks = this.fallingBlocks.filter((b) => {
+      if (this.entityChunkKey(b.position) === chunkKey) {
+        toParkBlocks.push(b);
+        return false;
+      }
+      return true;
+    });
+    if (toParkEnemies.length === 0 && toParkBlocks.length === 0) return;
+    const parked = this.getOrCreateParked(chunkKey);
+    parked.enemies.push(...toParkEnemies);
+    parked.blocks.push(...toParkBlocks);
+  }
+
+  /** Restore entities parked while this chunk was unloaded. */
+  private loadEntitiesForChunk(chunkKey: string): void {
+    const parked = this.parkedEntitiesByChunk.get(chunkKey);
+    if (!parked) return;
+    if (parked.enemies.length > 0) {
+      this.enemies.push(...parked.enemies);
+      parked.enemies.length = 0;
+    }
+    if (parked.blocks.length > 0) {
+      this.fallingBlocks.push(...parked.blocks);
+      parked.blocks.length = 0;
+    }
+    if (parked.enemies.length === 0 && parked.blocks.length === 0) {
+      this.parkedEntitiesByChunk.delete(chunkKey);
+    }
+  }
+
   private loadChunksAroundPlayer(): void {
+    const prevLoadedKeys = new Set(this.renderedChunks.keys());
+    const nextLoadedKeys = new Set<string>();
+
     // FIXME: Reuse chunks already loaded, instead of re-adding each frame.
     this.renderedChunks.clear();
 
@@ -904,6 +982,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkX = cx + di * step;
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
+        nextLoadedKeys.add(key);
         if (!this.chunkCache.has(key)) {
           let deltaMap = this.deltaMaps.has(key)
             ? this.deltaMaps.get(key)
@@ -912,6 +991,17 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
+      }
+    }
+
+    for (const key of prevLoadedKeys) {
+      if (!nextLoadedKeys.has(key)) {
+        this.unloadEntitiesForChunk(key);
+      }
+    }
+    for (const key of nextLoadedKeys) {
+      if (!prevLoadedKeys.has(key)) {
+        this.loadEntitiesForChunk(key);
       }
     }
   }
@@ -990,16 +1080,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Update falling blocks
     let newFallingBlocks: Block[] = [];
     this.fallingBlocks.forEach((fallingBlock) => {
-      let blockChunk = this.chunkAt(
+      const blockChunk = this.getChunkAtWorld(
         fallingBlock.position.x,
         fallingBlock.position.z,
       );
+      if (blockChunk === undefined) {
+        newFallingBlocks.push(fallingBlock);
+        return;
+      }
 
       if (fallingBlock.update(dt, blockChunk)) {
         newFallingBlocks.push(fallingBlock);
-      }
-      // Change back to static block once it lands on another block
-      else {
+      } else {
         blockChunk.changeCubeType(
           fallingBlock.position.x,
           fallingBlock.position.z,
