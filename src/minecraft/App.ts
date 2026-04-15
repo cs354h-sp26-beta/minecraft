@@ -8,6 +8,8 @@ import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
+import { Portal } from "./Portal.js";
+import { PortalRenderer } from "./PortalRenderer.js";
 import {
   blankCubeFSText,
   blankCubeVSText,
@@ -64,6 +66,9 @@ export class MinecraftAnimation extends CanvasAnimation {
   private enemyMesh: Mesh | null;
   private enemyBoneTransTex: WebGLTexture;
   private enemyBoneRotTex: WebGLTexture;
+
+  /* Portal Rendering */
+  private portalRenderer: PortalRenderer;
 
   /* Global Rendering Info */
   private lightPosition: Vec4;
@@ -133,7 +138,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
-        (Date.now() >>> 0),
+        Date.now() >>> 0,
     );
 
     this.loadMinimapColors();
@@ -166,6 +171,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initSkybox();
     this.initBlankCube();
 
+    // Portal rendering setup
+    this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
+    this.initTestPortals();
+
     this.enemies = [];
     this.achievements = this.createAchievements();
     this.achievementToast = null;
@@ -189,7 +198,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
-    
+
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
     heartImg.src = "./static/assets/heart.png";
@@ -199,12 +208,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       });
     };
 
-    const foodImg = new Image(); 
+    const foodImg = new Image();
     foodImg.src = "./static/assets/food.png";
     foodImg.onload = () => {
       createImageBitmap(foodImg).then((bmp) => {
         this.foodBitmap = bmp;
-      })
+      });
     };
 
     const crosshairImg = new Image();
@@ -607,6 +616,24 @@ export class MinecraftAnimation extends CanvasAnimation {
       0,
     );
     this.blankCubeRenderPass.setup();
+  }
+
+  private initTestPortals(): void {
+    const src = new Portal(
+      new Vec3([5, 12, 5]),
+      new Vec3([0, 0, 1]),
+      new Vec3([0, 1, 0]),
+      4,
+      5,
+    );
+    const dst = new Portal(
+      new Vec3([40, 12, 40]),
+      new Vec3([0, 0, -1]),
+      new Vec3([0, 1, 0]),
+      4,
+      5,
+    );
+    this.portalRenderer.addPortalPair(src, dst);
   }
 
   /**
@@ -1118,10 +1145,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Update hunger
     this.hungerTimer += dt;
     if (this.hungerTimer >= this.hungerInterval) {
-      this.hungerTimer = 0; 
+      this.hungerTimer = 0;
       this.player.experienceHunger(1);
     }
-    
+
     if (this.player.food <= 0) {
       this.starvationTimer += dt;
       if (this.starvationTimer >= this.starvationInterval) {
@@ -1160,18 +1187,106 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.fallingBlocks = newFallingBlocks;
 
     // Drawing
-    const gl: WebGLRenderingContext = this.ctx;
+    const gl = this.ctx as WebGL2RenderingContext;
     const bg: Vec4 = this.backgroundColor;
-    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
     gl.frontFace(gl.CCW);
     gl.cullFace(gl.BACK);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
+    // --- Portal FBO pass: render destination scene from portal camera ---
+    this.portalRenderer.renderPortalFBOs(
+      this.gui.getCamera().pos(),
+      this.gui.viewMatrix(),
+      this.gui.projMatrix(),
+      (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
+    );
+
+    // --- Main pass: render overworld to screen ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.drawScene(0, 0, 1280, 960);
+
+    // --- Portal blocks pass: draw portal surface sampling the FBO ---
+    this.portalRenderer.drawPortalBlocks(
+      this.gui.viewMatrix(),
+      this.gui.projMatrix(),
+    );
+
     this.drawOverlay();
+  }
+
+  private setMatrixUniform(pass: RenderPass, name: string, matrix: Mat4): void {
+    pass.addUniform(
+      name,
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(loc, false, new Float32Array(matrix.all()));
+      },
+    );
+  }
+
+  private drawSceneWithCamera(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    viewMatrix: Mat4,
+    projMatrix: Mat4,
+  ): void {
+    const gl = this.ctx as WebGL2RenderingContext;
+    gl.viewport(x, y, width, height);
+
+    // Skybox with portal camera (zero out translation)
+    const skyVals = viewMatrix.copy().all();
+    skyVals[12] = 0;
+    skyVals[13] = 0;
+    skyVals[14] = 0;
+    this.setMatrixUniform(this.skyboxRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.skyboxRenderPass, "uView", new Mat4(skyVals));
+
+    gl.depthMask(false);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.CULL_FACE);
+    this.skyboxRenderPass.draw();
+
+    gl.depthMask(true);
+    gl.depthFunc(gl.LESS);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+
+    // Terrain with portal camera
+    this.setMatrixUniform(this.blankCubeRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.blankCubeRenderPass, "uView", viewMatrix);
+
+    const allPositions = this.getAllCubePositions();
+    const allTypes = this.getAllCubeTypes();
+    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
+    this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.drawInstanced(allTypes.length);
+
+    // Restore player camera uniforms
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uView",
+      this.gui.viewMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uView",
+      this.getSkyboxViewMatrix(),
+    );
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
@@ -1423,7 +1538,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.selectedCubePosition.y,
     );
 
-    if (brokenCubeType === Chunk.blockTypeWater || brokenCubeType === Chunk.blockTypePortal) {
+    if (
+      brokenCubeType === Chunk.blockTypeWater ||
+      brokenCubeType === Chunk.blockTypePortal
+    ) {
       return;
     }
 
@@ -1627,7 +1745,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private getTimeValue(): number {
-    return performance.now() / 1000;
+    return performance.now() / 1000 + MinecraftAnimation.dayDuration * 0.3;
   }
 
   private wrapDayTime(value: number): number {
@@ -1906,7 +2024,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (!this.crosshairBitmap) return;
 
     const ctx = this.overlayCtx;
-    const centerX = this.canvas2d.width / 2; 
+    const centerX = this.canvas2d.width / 2;
     const centerY = this.canvas2d.height / 2;
     const size = 30;
 
@@ -1982,7 +2100,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           foodSize,
         );
       } else {
-        // Empty food 
+        // Empty food
         ctx.globalAlpha = 0.25;
         ctx.drawImage(this.foodBitmap, x, startY, foodSize, foodSize);
       }
