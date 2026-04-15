@@ -73,6 +73,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private canvas2d: HTMLCanvasElement;
   private overlayCtx: CanvasRenderingContext2D;
   private heartBitmap: ImageBitmap | null = null;
+  private crosshairBitmap: ImageBitmap | null = null;
 
   private player: Player;
   private spawnPosition: Vec3;
@@ -163,13 +164,21 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.inventory = new Inventory();
     this.selectedHotbarIdx = 0;
-
-    // Load heart icon for health bar
+    
+    // Load pngs as bitmaps for drawing
     const heartImg = new Image();
     heartImg.src = "./static/assets/heart.png";
     heartImg.onload = () => {
       createImageBitmap(heartImg).then((bmp) => {
         this.heartBitmap = bmp;
+      });
+    };
+
+    const crosshairImg = new Image();
+    crosshairImg.src = "./static/assets/crosshair.png";
+    crosshairImg.onload = () => {
+      createImageBitmap(crosshairImg).then((bmp) => {
+        this.crosshairBitmap = bmp;
       });
     };
   }
@@ -1376,6 +1385,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.drawMinimap();
     this.drawHotbar();
     this.drawAchievementToast();
+    this.drawCrosshair();
     if (this.player.isDead()) {
       this.drawDeathOverlay();
     }
@@ -1734,6 +1744,28 @@ export class MinecraftAnimation extends CanvasAnimation {
         ctx.drawImage(this.heartBitmap, x, startY, heartSize, heartSize);
       }
     }
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+  }
+
+  private drawCrosshair(): void {
+    if (!this.crosshairBitmap) return;
+
+    const ctx = this.overlayCtx;
+    const centerX = this.canvas2d.width / 2; 
+    const centerY = this.canvas2d.height / 2;
+    const size = 30;
+
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    ctx.fillStyle = "#ffffff";
+    ctx.drawImage(
+      this.crosshairBitmap,
+      centerX - size / 2,
+      centerY - size / 2,
+      size,
+      size,
+    );
     ctx.globalAlpha = 1.0;
     ctx.restore();
   }
