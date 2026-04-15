@@ -631,19 +631,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
   }
 
-  // Given a location (we encode this as a string for now) and a seed, reconstruct the original chunk.
-  //
-  // FIXME: Maybe this should be in `Chunk`, but only allowed a single constructor.
-  // Oh well. This can be refactored.
-  private loadChunkFromSeed(
-    centerX: number,
-    centerZ: number,
-    seed: string,
-  ): Chunk {
-    // TODO: Actually do it. For now, just create a new chunk alltogther.
-    return new Chunk(centerX, centerZ, 64);
-  }
-
   /**
    * Resolves the chunk that owns the block column at (wx, wz).
    * Snaps to integer block centers first so values like 31.999999 at a seam still map to the
@@ -660,124 +647,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       return live;
     }
     return this.chunkCache.get(key);
-  }
-
-  private applyVerticalSeparationAndZeroVelocity(
-    newY: number,
-    prevY: number,
-  ): void {
-    this.player.position.y = newY;
-    if (newY === prevY) return;
-    const vy = this.player.velocity.y;
-    if (newY < prevY && vy > 0) this.player.velocity.y = 0;
-    if (newY > prevY && vy < 0) this.player.velocity.y = 0;
-  }
-
-  private stepPlayerPhysics(dt: number): void {
-    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
-    const r = Player.hitboxRadius;
-    const h = Player.hitboxHeight;
-    const footSlack = 0.55;
-
-    const walkDx = this.gui.walkDir();
-    const momentumH = this.player.velocity.scale(dt, new Vec3());
-    momentumH.y = 0;
-    const totalH = walkDx.add(momentumH, new Vec3());
-
-    let px = this.player.position.x;
-    let py = this.player.position.y;
-    let pz = this.player.position.z;
-
-    const { ax, az } = Chunk.tryHorizontalCylinderMove(
-      prov,
-      px,
-      py,
-      pz,
-      totalH.x,
-      totalH.z,
-      r,
-      h,
-    );
-    if (ax === 0) this.player.velocity.x = 0;
-    if (az === 0) this.player.velocity.z = 0;
-    this.player.position.x += ax;
-    this.player.position.z += az;
-    px = this.player.position.x;
-    py = this.player.position.y;
-    pz = this.player.position.z;
-
-    let floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    const grounded = floorHead !== -Infinity && py <= floorHead + 0.02;
-
-    if (!grounded) {
-      this.player.velocity.add(new Vec3([0.0, -9.8 * dt, 0.0]));
-    } else {
-      const v = this.player.velocity.copy();
-      if (v.y < 0) v.y = 0;
-      this.player.velocity = v;
-    }
-
-    this.player.position.y += this.player.velocity.y * dt;
-    py = this.player.position.y;
-
-    floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    if (floorHead !== -Infinity && py < floorHead) {
-      this.player.position.y = floorHead;
-      if (this.player.velocity.y < 0) this.player.velocity.y = 0;
-      py = this.player.position.y;
-    }
-
-    const yBeforeSep = py;
-    const ySep = Chunk.separateVerticalCapsuleFromSolids(
-      prov,
-      px,
-      py,
-      pz,
-      r,
-      h,
-      this.player.velocity.y,
-    );
-    this.applyVerticalSeparationAndZeroVelocity(ySep, yBeforeSep);
-    py = this.player.position.y;
-
-    if (
-      this.player.velocity.y > 0 &&
-      Chunk.cylinderIntersectsSolidWorld(prov, px, py, pz, r, h)
-    ) {
-      py = Chunk.resolveUpwardPenetration(prov, px, py, pz, r, h);
-      this.player.position.y = py;
-      this.player.velocity.y = 0;
-    }
-
-    floorHead = Chunk.supportedHeadYWorld(
-      prov,
-      px,
-      pz,
-      py - h,
-      r,
-      h,
-      footSlack,
-    );
-    if (floorHead !== -Infinity && py < floorHead) {
-      this.player.position.y = floorHead;
-      if (this.player.velocity.y < 0) this.player.velocity.y = 0;
-    }
   }
 
   private loadChunksAroundPlayer(): void {
@@ -864,16 +733,16 @@ export class MinecraftAnimation extends CanvasAnimation {
   public draw(): void {
     // Load chunks.
     this.loadChunksAroundPlayer();
-    const playerChunk = this.currentChunk();
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
 
-    this.player.update(this.gui.walkDir(), dt, playerChunk);
+    const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+    this.player.update(this.gui.walkDir(), prov, dt);
     this.gui.getCamera().setPos(this.player.position);
 
     this.enemies.forEach((enemy) => {
-      enemy.update(dt, playerChunk, this.player);
+      enemy.update(prov, this.player, dt);
     });
 
     // Update falling blocks
@@ -1087,8 +956,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
-    const r = Player.hitboxRadius;
-    const h = Player.hitboxHeight;
+    const r = this.player.hitboxRadius;
+    const h = this.player.hitboxHeight;
     const footSlack = 0.55;
     const px = this.player.position.x;
     const py = this.player.position.y;
@@ -1192,7 +1061,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Test falling blocks
     if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
-      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY);
+      const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
       this.fallingBlocks.push(
         new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
       );
