@@ -23,11 +23,17 @@ class Entity {
   public readonly hitboxRadius: number;
   public readonly hitboxHeight: number;
 
-  constructor(position: Vec3, hitboxRadius: number, hitboxHeight: number) {
+  // Health stats
+  public health: number;
+  public maxHealth: number;
+
+  constructor(position: Vec3, hitboxRadius: number, hitboxHeight: number, health: number = 100) {
     this.position = position;
     this.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.hitboxRadius = hitboxRadius;
     this.hitboxHeight = hitboxHeight;
+    this.health = health;
+    this.maxHealth = health;
   }
 
   private applyVerticalSeparationAndZeroVelocity(
@@ -176,11 +182,27 @@ class Entity {
     }
     this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
   }
+
+  public takeDamage(amount: number = 0.5) {
+    if (this.isDead()) return;
+    this.health -= amount;
+  }
+
+  public heal(amount: number = 0.5) {
+    this.health += amount;
+    if (this.health > this.maxHealth) {
+      this.health = this.maxHealth;
+    }
+  }
+
+  public isDead(): boolean {
+    return this.health <= 0;
+  }
 }
 
 export class Player extends Entity {
   constructor(position: Vec3) {
-    super(position, 0.4, 2.0);
+    super(position, 0.4, 2.0, 20);
   }
 
   public update(
@@ -219,7 +241,7 @@ export class Enemy extends Entity {
 
   constructor(mesh: Mesh, position: Vec3) {
     // HACK: Enemy centered at CoM rather than head.
-    super(position, 0.4, 1.0);
+    super(position, 0.4, 1.0, 20);
     this.yaw = 0.0;
     this.mesh = new Mesh(mesh);
     this.mesh.setPose(enemyIdlePose);
