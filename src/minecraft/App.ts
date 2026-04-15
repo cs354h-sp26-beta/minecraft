@@ -131,6 +131,11 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     registerItemTypes();
 
+    Chunk.setSeedHash(
+      globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
+        (Date.now() >>> 0),
+    );
+
     this.loadMinimapColors();
 
     this.gui = new GUI(this.canvas2d, this);

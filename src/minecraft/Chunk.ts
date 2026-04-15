@@ -1,5 +1,4 @@
 import { Mat3, Mat4, Vec3, Vec4 } from "../lib/TSM.js";
-import Rand from "../lib/rand-seed/Rand.js";
 import { Player } from "./Entity.js";
 import {
   ACTIVE_BIOME_PROFILES,
@@ -58,6 +57,10 @@ export class Chunk {
     this.cubes = size * size;
     this.deltaMap = deltaMap;
     this.generateCubes();
+  }
+
+  public static setSeedHash(seedHash: number): void {
+    Chunk.seedHash = seedHash >>> 0;
   }
 
   private origin(): [number, number] {
