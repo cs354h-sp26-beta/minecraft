@@ -294,7 +294,7 @@ export class Chunk {
 
     // Find which two biomes we're between
     const lowerIdx = Math.floor(scaled);
-    const upperIdx = Math.min(biomeCount - 1, lowerIdx + 1);
+    const upperIdx = (lowerIdx + 1) % biomeCount;
     const frac = scaled - lowerIdx; // Position between lower and upper biome (0 to 1)
     const transitionWidth = BIOME_SELECTION_TUNING.transitionWidth;
 

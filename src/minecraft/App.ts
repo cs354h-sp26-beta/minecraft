@@ -1671,9 +1671,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
-  private drawInventory(): void {
-
-  }
+  private drawInventory(): void {}
 
   public setHotbarSlot(number: number) {
     this.selectedHotbarIdx = number;
