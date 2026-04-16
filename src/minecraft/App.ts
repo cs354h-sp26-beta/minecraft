@@ -9,6 +9,7 @@ import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
+import { PortalRenderer } from "./PortalRenderer.js";
 import { DecorationGenerator, type DecorBuffer } from "./Decorations.js";
 import {
   blankCubeFSText,
@@ -80,6 +81,9 @@ export class MinecraftAnimation extends CanvasAnimation {
   private enemyMesh: Mesh | null;
   private enemyBoneTransTex: WebGLTexture;
   private enemyBoneRotTex: WebGLTexture;
+
+  /* Portal Rendering */
+  private portalRenderer: PortalRenderer;
 
   /* Global Rendering Info */
   private lightPosition: Vec4;
@@ -207,6 +211,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initBlankCube();
     this.initDecorBillboards();
 
+    // Portal rendering setup
+    this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
     this.enemies = [];
     this.selectedEnemy = null;
     this.achievements = this.createAchievements();
@@ -1532,18 +1538,104 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     // Drawing
-    const gl: WebGLRenderingContext = this.ctx;
+    const gl = this.ctx as WebGL2RenderingContext;
     const bg: Vec4 = this.backgroundColor;
-    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
     gl.frontFace(gl.CCW);
     gl.cullFace(gl.BACK);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
+    // --- Portal FBO pass: render destination scene from portal camera ---
+    this.portalRenderer.renderPortalFBOs(
+      this.gui.getCamera().pos(),
+      (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
+    );
+
+    // --- Main pass: render overworld to screen ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.drawScene(0, 0, 1280, 960);
+
+    // --- Portal blocks pass: draw portal surface sampling the FBO ---
+    this.portalRenderer.drawPortalBlocks(
+      this.gui.viewMatrix(),
+      this.gui.projMatrix(),
+    );
+
     this.drawOverlay();
+  }
+
+  private setMatrixUniform(pass: RenderPass, name: string, matrix: Mat4): void {
+    pass.addUniform(
+      name,
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(loc, false, new Float32Array(matrix.all()));
+      },
+    );
+  }
+
+  private drawSceneWithCamera(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    viewMatrix: Mat4,
+    projMatrix: Mat4,
+  ): void {
+    const gl = this.ctx as WebGL2RenderingContext;
+    gl.viewport(x, y, width, height);
+
+    // Skybox with portal camera (zero out translation)
+    const skyVals = viewMatrix.copy().all();
+    skyVals[12] = 0;
+    skyVals[13] = 0;
+    skyVals[14] = 0;
+    this.setMatrixUniform(this.skyboxRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.skyboxRenderPass, "uView", new Mat4(skyVals));
+
+    gl.depthMask(false);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.CULL_FACE);
+    this.skyboxRenderPass.draw();
+
+    gl.depthMask(true);
+    gl.depthFunc(gl.LESS);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+
+    // Terrain with portal camera
+    this.setMatrixUniform(this.blankCubeRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.blankCubeRenderPass, "uView", viewMatrix);
+
+    const allPositions = this.getAllCubePositions();
+    const allTypes = this.getAllCubeTypes();
+    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
+    this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.drawInstanced(allTypes.length);
+
+    // Restore player camera uniforms
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uView",
+      this.gui.viewMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uView",
+      this.getSkyboxViewMatrix(),
+    );
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
@@ -1743,7 +1835,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     if (
       this.doubleJumpAvailable &&
-        (this.inventory.hasEquipmentById("boots") || this.inventory.hasEquipmentById("jetpack"))
+      (this.inventory.hasEquipmentById("boots") ||
+        this.inventory.hasEquipmentById("jetpack"))
     ) {
       this.player.velocity.y = Math.max(this.player.velocity.y, 8.5);
       this.doubleJumpAvailable = false;
@@ -1775,7 +1868,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /**
    * Raycasts the crosshair ray against cubes and enemies, picking whichever is closer.
-   * For cubes, it'll update `selectedCubePosition` and `isectNormal`. For enemies, 
+   * For cubes, it'll update `selectedCubePosition` and `isectNormal`. For enemies,
    * it'll update `selectedEnemy`.
    * Returns true if either is hit
    */
@@ -2155,9 +2248,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     if (
-      chunk.isWater(this.selectedCubePosition.x,
-          this.selectedCubePosition.z,
-          this.selectedCubePosition.y) ||
+      chunk.isWater(
+        this.selectedCubePosition.x,
+        this.selectedCubePosition.z,
+        this.selectedCubePosition.y,
+      ) ||
       brokenCubeType === Chunk.blockTypePortal ||
       brokenCubeType === Chunk.blockTypePortalFrame
     ) {
@@ -2312,7 +2407,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.inventory.drawHotbar(
         this.overlayCtx,
         this.canvas2d.width,
-        this.canvas2d.height
+        this.canvas2d.height,
       );
       this.drawHealthBar();
       this.drawHungerBar();
@@ -2410,7 +2505,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private getTimeValue(): number {
-    return performance.now() / 1000;
+    return performance.now() / 1000 + MinecraftAnimation.dayDuration * 0.3;
   }
 
   private wrapDayTime(value: number): number {
@@ -2650,7 +2745,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     const x = centerX - size / 2;
     const y = centerY - size / 2;
 
-    const targetingEnemy = this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
+    const targetingEnemy =
+      this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
 
     ctx.save();
     ctx.globalAlpha = 0.75;
@@ -2743,13 +2839,16 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Bar dimensions in canvas pixels.
     const BAR_W = 50;
     const BAR_H = 10;
-    const BAR_YOFFSET = 1.5; // world units above enemy CoM 
+    const BAR_YOFFSET = 1.5; // world units above enemy CoM
 
     const canvasW = this.canvas2d.width;
     const canvasH = this.canvas2d.height;
 
     // Combined projection * view matrix. Compute once per frame.
-    const viewProj = this.gui.projMatrix().copy().multiply(this.gui.viewMatrix());
+    const viewProj = this.gui
+      .projMatrix()
+      .copy()
+      .multiply(this.gui.viewMatrix());
 
     const playerPos = this.player.position;
 
@@ -2793,7 +2892,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       const screenX = (ndcX + 1) * 0.5 * canvasW;
       const screenY = (1 - ndcY) * 0.5 * canvasH;
 
-      const healthRatio = Math.max(0, Math.min(1, enemy.health / enemy.maxHealth));
+      const healthRatio = Math.max(
+        0,
+        Math.min(1, enemy.health / enemy.maxHealth),
+      );
 
       ctx.globalAlpha = alpha;
 
@@ -2822,7 +2924,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
     ctx.globalAlpha = 1.0;
     ctx.restore();
-    }
+  }
 }
 
 export function initializeCanvas(): void {

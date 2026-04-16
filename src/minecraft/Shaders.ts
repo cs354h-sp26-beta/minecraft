@@ -1224,41 +1224,46 @@ export const portalVSText = `
 
     uniform mat4 uView;
     uniform mat4 uProj;
+    uniform vec3 uSrcOrigin;
+    uniform vec3 uSrcRight;
+    uniform vec3 uSrcUp;
+    uniform vec2 uPortalSize;
 
     attribute vec4 aVertPos;
     attribute vec4 aOffset;
-    attribute vec2 aUV;
 
-    varying vec2 vUV;
+    varying vec2 vPortalUV;
 
     void main () {
-        gl_Position = uProj * uView * (aVertPos + aOffset);
-        vUV = aUV;
+        vec4 worldPos = aVertPos + aOffset;
+        gl_Position = uProj * uView * worldPos;
+
+        // Project vertex onto the source portal plane, then compute
+        // portal-local UV in [0,1]. The off-axis frustum ensures the
+        // destination portal fills the entire FBO, so this UV maps directly.
+        vec3 srcNormal = cross(uSrcRight, uSrcUp);
+        vec3 relPos = worldPos.xyz - uSrcOrigin;
+        float distFromPlane = dot(relPos, srcNormal);
+        vec3 onPlane = relPos - distFromPlane * srcNormal;
+
+        float u = dot(onPlane, uSrcRight);
+        float v = dot(onPlane, uSrcUp);
+
+        vPortalUV = vec2((u + 0.5) / uPortalSize.x, (v + 0.5) / uPortalSize.y);
     }
 `;
 
 export const portalFSText = `
     precision mediump float;
 
-    uniform sampler2D uPortalTex; // FBO for destination scene
-    uniform vec2 uResolution;
-    // uniform float uTime; Could use in animated portal effect
+    uniform sampler2D uPortalTex;
 
-    varying vec2 vUV;
+    varying vec2 vPortalUV;
 
     void main() {
-        // Sample the portal FBO using screen-space UVs
-        vec2 screenUV = gl_FragCoord.xy / uResolution; // [0, 1]
-        vec4 color = texture2D(uPortalTex, screenUV);
+        vec4 color = texture2D(uPortalTex, vPortalUV);
 
-        // Nether portal tint, light purple rn
         color.rgb *= vec3(0.85, 0.65, 0.8);
-
-        // Vignette using block-local UVs (edges darken)
-        vec2 centered = vUV - 0.5;
-        float vignette = 1.0 - dot(centered, centered) * 2.0; // distance^2 from center
-        vignette = clamp(vignette, 0.3, 1.0);
-        color.rgb *= vignette;
 
         gl_FragColor = color;
     }

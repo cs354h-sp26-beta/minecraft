@@ -281,7 +281,8 @@ export class GUI implements IGUI {
           this.animation.inventory.craftSelectedRecipe();
           return;
         }
-        default: {}
+        default: {
+        }
       }
     }
 

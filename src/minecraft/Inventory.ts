@@ -1,8 +1,8 @@
 import { Player } from "./Entity.js";
 import { Chunk } from "./Chunk.js";
-import {DecorationGenerator} from "./Decorations.js";
-import {CRAFTING_RECIPES, CraftingRecipe} from "./Crafting.js";
-import {MinecraftAnimation} from "./App.js";
+import { DecorationGenerator } from "./Decorations.js";
+import { CRAFTING_RECIPES, CraftingRecipe } from "./Crafting.js";
+import { MinecraftAnimation } from "./App.js";
 
 export enum ItemAction {
   None,
@@ -16,7 +16,10 @@ export class ItemType {
   public name: string;
   public maxStackSize: number;
   public actionType: ItemAction;
-  private action: null | number | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void);
+  private action:
+    | null
+    | number
+    | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void);
   public img: ImageBitmap | null;
 
   constructor(id: string, name: string, image: string, maxStackSize: number) {
@@ -41,7 +44,7 @@ export class ItemType {
       })
       .catch((error) => {
         this.img = null;
-        console.error("Error loading image:", error)
+        console.error("Error loading image:", error);
       });
   }
 
@@ -54,7 +57,9 @@ export class ItemType {
   public setAction(actionType: ItemAction.Place, blockType: number): ItemType;
   public setAction(
     actionType: ItemAction,
-    action?: number | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void),
+    action?:
+      | number
+      | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void),
   ): ItemType {
     this.actionType = actionType;
     if (action !== undefined) {
@@ -65,9 +70,17 @@ export class ItemType {
     return this;
   }
 
-  public useAction(app: MinecraftAnimation, itemStack: ItemStack, player: Player) {
+  public useAction(
+    app: MinecraftAnimation,
+    itemStack: ItemStack,
+    player: Player,
+  ) {
     if (this.actionType === ItemAction.Use) {
-      const actionFunc = this.action as (app: MinecraftAnimation, stack: ItemStack, p: Player) => void;
+      const actionFunc = this.action as (
+        app: MinecraftAnimation,
+        stack: ItemStack,
+        p: Player,
+      ) => void;
       actionFunc(app, itemStack, player);
     }
   }
@@ -96,8 +109,8 @@ export function registerItemTypes() {
     Chunk.blockTypeCobble,
   );
   registerItem("wood", "Wood").setAction(
-      ItemAction.Place,
-      DecorationGenerator.blockTypeWood,
+    ItemAction.Place,
+    DecorationGenerator.blockTypeWood,
   );
   registerItem("bedrock", "Bedrock").setAction(
     ItemAction.Place,
@@ -132,15 +145,19 @@ export function registerItemTypes() {
   registerItem("ammo", "Ammo", 64);
   registerItem("boots", "Jump Boots", 1).setAction(ItemAction.Equip);
   registerItem("jetpack", "Jetpack", 1).setAction(ItemAction.Equip);
-  registerItem("blaster", "Blaster", 1).setAction(ItemAction.Use,
-      (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
-        app.fireBlaster();
-      });
+  registerItem("blaster", "Blaster", 1).setAction(
+    ItemAction.Use,
+    (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
+      app.fireBlaster();
+    },
+  );
 
-  registerItem("food", "Food").setAction(ItemAction.Use,
-      (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
-        p.eat(5);
-      });
+  registerItem("food", "Food").setAction(
+    ItemAction.Use,
+    (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
+      p.eat(5);
+    },
+  );
 }
 
 export class ItemStack {
@@ -314,7 +331,10 @@ export class Inventory {
   }
 
   public hasEquipment(itemType: ItemType): boolean {
-    return this.equipmentSlots.filter(i => i && i.itemType.id === itemType.id).length > 0;
+    return (
+      this.equipmentSlots.filter((i) => i && i.itemType.id === itemType.id)
+        .length > 0
+    );
   }
 
   public hasEquipmentById(itemId: string): boolean {
@@ -379,7 +399,10 @@ export class Inventory {
     for (const stack of this.items) {
       if (!stack) {
         return true;
-      } else if (stack.itemType.id === itemType.id && stack.count < itemType.maxStackSize) {
+      } else if (
+        stack.itemType.id === itemType.id &&
+        stack.count < itemType.maxStackSize
+      ) {
         const spaceLeft = itemType.maxStackSize - stack.count;
         count -= Math.min(spaceLeft, count);
         if (count <= 0) {
@@ -624,7 +647,14 @@ export class Inventory {
     mouseX: number,
     mouseY: number,
   ): void {
-    const { SLOT_SIZE, SLOT_GAP, INV_PADDING, PANEL_GAP, CRAFTING_PANEL_HEIGHT, CRAFTING_PANEL_GAP } = Inventory;
+    const {
+      SLOT_SIZE,
+      SLOT_GAP,
+      INV_PADDING,
+      PANEL_GAP,
+      CRAFTING_PANEL_HEIGHT,
+      CRAFTING_PANEL_GAP,
+    } = Inventory;
     const gridWidth = Inventory.invGridWidth();
     const gridHeight = Inventory.invGridHeight();
     const equipH = Inventory.equipmentHeight();
@@ -665,8 +695,21 @@ export class Inventory {
     const craftX = equipX;
     const craftW = gridWidth + equipW + INV_PADDING * 2 + PANEL_GAP;
     const craftY = gridHeight + CRAFTING_PANEL_GAP;
-    this.drawPanel(ctx, craftX, craftY, craftW, CRAFTING_PANEL_HEIGHT, "Crafting");
-    this.drawCraftingContents(ctx, craftX, craftY, craftW, CRAFTING_PANEL_HEIGHT);
+    this.drawPanel(
+      ctx,
+      craftX,
+      craftY,
+      craftW,
+      CRAFTING_PANEL_HEIGHT,
+      "Crafting",
+    );
+    this.drawCraftingContents(
+      ctx,
+      craftX,
+      craftY,
+      craftW,
+      CRAFTING_PANEL_HEIGHT,
+    );
 
     // Draw item held by mouse
     if (this.mouseItem) {
@@ -679,7 +722,12 @@ export class Inventory {
   }
 
   /** Layout for the crafting panel contents (relative to panel origin). */
-  private craftingLayout(panelX: number, panelY: number, panelW: number, panelH: number) {
+  private craftingLayout(
+    panelX: number,
+    panelY: number,
+    panelW: number,
+    panelH: number,
+  ) {
     const innerPad = 14;
     const recipeListX = panelX + innerPad;
     const recipeListY = panelY + innerPad;
@@ -698,9 +746,19 @@ export class Inventory {
     const craftButtonY = detailY + detailH - craftButtonH - 4;
 
     return {
-      recipeListX, recipeListY, recipeListW, recipeListH, recipeRowH,
-      detailX, detailY, detailW, detailH,
-      craftButtonX, craftButtonY, craftButtonW, craftButtonH,
+      recipeListX,
+      recipeListY,
+      recipeListW,
+      recipeListH,
+      recipeRowH,
+      detailX,
+      detailY,
+      detailW,
+      detailH,
+      craftButtonX,
+      craftButtonY,
+      craftButtonW,
+      craftButtonH,
     };
   }
 
@@ -724,9 +782,17 @@ export class Inventory {
       const rowY = layout.recipeListY + i * layout.recipeRowH;
       const selected = i === this.selectedCraftingRecipeIdx;
 
-      ctx.fillStyle = selected ? "rgba(225,216,183,0.22)" : "rgba(255,255,255,0.05)";
+      ctx.fillStyle = selected
+        ? "rgba(225,216,183,0.22)"
+        : "rgba(255,255,255,0.05)";
       ctx.beginPath();
-      ctx.roundRect(layout.recipeListX, rowY, layout.recipeListW, layout.recipeRowH - 6, 8);
+      ctx.roundRect(
+        layout.recipeListX,
+        rowY,
+        layout.recipeListW,
+        layout.recipeRowH - 6,
+        8,
+      );
       ctx.fill();
 
       ctx.fillStyle = selected ? "#fff6d7" : "#f0eee6";
@@ -740,7 +806,13 @@ export class Inventory {
     // Detail panel background
     ctx.fillStyle = "rgba(255,255,255,0.06)";
     ctx.beginPath();
-    ctx.roundRect(layout.detailX, layout.detailY, layout.detailW, layout.detailH, 8);
+    ctx.roundRect(
+      layout.detailX,
+      layout.detailY,
+      layout.detailW,
+      layout.detailH,
+      8,
+    );
     ctx.fill();
 
     const recipe = this.currentCraftingRecipe();
@@ -752,7 +824,9 @@ export class Inventory {
     ctx.font = "12px monospace";
     ctx.fillText("Inputs:", layout.detailX + 12, layout.detailY + 36);
     const inputs = recipe.ingredients
-      .map((ing) => `${ing.itemId} x${ing.count} (${this.countItem(ing.itemId)})`)
+      .map(
+        (ing) => `${ing.itemId} x${ing.count} (${this.countItem(ing.itemId)})`,
+      )
       .join(", ");
     ctx.fillText(inputs, layout.detailX + 12, layout.detailY + 54);
     ctx.fillText(
@@ -763,9 +837,17 @@ export class Inventory {
 
     // Craft button
     const canCraft = this.canCraftRecipe(recipe);
-    ctx.fillStyle = canCraft ? "rgba(84, 190, 120, 0.9)" : "rgba(190, 84, 84, 0.9)";
+    ctx.fillStyle = canCraft
+      ? "rgba(84, 190, 120, 0.9)"
+      : "rgba(190, 84, 84, 0.9)";
     ctx.beginPath();
-    ctx.roundRect(layout.craftButtonX, layout.craftButtonY, layout.craftButtonW, layout.craftButtonH, 8);
+    ctx.roundRect(
+      layout.craftButtonX,
+      layout.craftButtonY,
+      layout.craftButtonW,
+      layout.craftButtonH,
+      8,
+    );
     ctx.fill();
 
     ctx.fillStyle = "#fff6d7";
@@ -788,7 +870,7 @@ export class Inventory {
       return;
     }
     this.selectedCraftingRecipeIdx =
-        (this.selectedCraftingRecipeIdx + delta + len) % len;
+      (this.selectedCraftingRecipeIdx + delta + len) % len;
   }
 
   private currentCraftingRecipe(): CraftingRecipe {
@@ -805,10 +887,7 @@ export class Inventory {
       }
     }
 
-    return this.canFitItemById(
-        recipe.outputItemId,
-        recipe.outputCount,
-    );
+    return this.canFitItemById(recipe.outputItemId, recipe.outputCount);
   }
 
   public craftSelectedRecipe(): boolean {
@@ -824,15 +903,15 @@ export class Inventory {
     }
 
     const inserted = this.insertItemById(
-        recipe.outputItemId,
-        recipe.outputCount,
+      recipe.outputItemId,
+      recipe.outputCount,
     );
     if (inserted) {
       this.itemsCrafted++;
     }
     return inserted;
   }
-  
+
   // private seedStarterInventory(): void {
   //   const starters: Array<[string, number]> = [
   //     ["dirt", 16],
@@ -865,7 +944,14 @@ export class Inventory {
     canvasHeight: number,
     button: number,
   ): void {
-    const { SLOT_SIZE, SLOT_GAP, INV_PADDING, PANEL_GAP, CRAFTING_PANEL_HEIGHT, CRAFTING_PANEL_GAP } = Inventory;
+    const {
+      SLOT_SIZE,
+      SLOT_GAP,
+      INV_PADDING,
+      PANEL_GAP,
+      CRAFTING_PANEL_HEIGHT,
+      CRAFTING_PANEL_GAP,
+    } = Inventory;
     const [originX, originY] = this.gridOrigin(canvasWidth, canvasHeight);
     const relX = mouseX - originX;
     const relY = mouseY - originY;
@@ -884,7 +970,9 @@ export class Inventory {
     const equipX = -(equipW + INV_PADDING * 2 + PANEL_GAP) + INV_PADDING;
     const equipY = 0;
     for (let i = 0; i < Inventory.equipmentCount; i++) {
-      if (this.isInSlot(relX, relY, equipX, equipY + i * (SLOT_SIZE + SLOT_GAP))) {
+      if (
+        this.isInSlot(relX, relY, equipX, equipY + i * (SLOT_SIZE + SLOT_GAP))
+      ) {
         this.clickSlot(Inventory.equipmentIndex(i), button);
         return;
       }
@@ -894,8 +982,20 @@ export class Inventory {
     const craftX = equipX;
     const craftW = gridWidth + equipW + INV_PADDING * 2 + PANEL_GAP;
     const craftY = gridHeight + CRAFTING_PANEL_GAP;
-    if (relX >= craftX && relX < craftX + craftW && relY >= craftY && relY < craftY + CRAFTING_PANEL_HEIGHT) {
-      this.handleCraftingClick(relX, relY, craftX, craftY, craftW, CRAFTING_PANEL_HEIGHT);
+    if (
+      relX >= craftX &&
+      relX < craftX + craftW &&
+      relY >= craftY &&
+      relY < craftY + CRAFTING_PANEL_HEIGHT
+    ) {
+      this.handleCraftingClick(
+        relX,
+        relY,
+        craftX,
+        craftY,
+        craftW,
+        CRAFTING_PANEL_HEIGHT,
+      );
     }
   }
 
@@ -914,7 +1014,8 @@ export class Inventory {
       relX >= layout.recipeListX &&
       relX < layout.recipeListX + layout.recipeListW &&
       relY >= layout.recipeListY &&
-      relY < layout.recipeListY + layout.recipeRowH * this.craftingRecipes.length
+      relY <
+        layout.recipeListY + layout.recipeRowH * this.craftingRecipes.length
     ) {
       const idx = Math.floor((relY - layout.recipeListY) / layout.recipeRowH);
       if (idx >= 0 && idx < this.craftingRecipes.length) {
