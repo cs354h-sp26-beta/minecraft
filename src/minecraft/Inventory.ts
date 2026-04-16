@@ -1,5 +1,6 @@
 import { Player } from "./Entity.js";
 import { Chunk } from "./Chunk.js";
+import {DecorationGenerator} from "./Decorations.js";
 
 export enum ItemAction {
   None,
@@ -88,6 +89,10 @@ export function registerItemTypes() {
     ItemAction.Place,
     Chunk.blockTypeCobble,
   );
+  registerItem("wood", "Wood").setAction(
+      ItemAction.Place,
+      DecorationGenerator.blockTypeWood,
+  );
   registerItem("bedrock", "Bedrock").setAction(
     ItemAction.Place,
     Chunk.blockTypeBedrock,
@@ -150,6 +155,7 @@ export class ItemStack {
       case Chunk.blockTypeDirt:
         return new ItemStack(itemTypes.get("dirt")!, 1);
       case Chunk.blockTypeCobble:
+      case DecorationGenerator.blockTypeDecorRock:
         return new ItemStack(itemTypes.get("cobble")!, 1);
       case Chunk.blockTypeCoalOre:
         return new ItemStack(itemTypes.get("coal")!, 1);
@@ -171,6 +177,9 @@ export class ItemStack {
         return new ItemStack(itemTypes.get("snow")!, 1);
       case Chunk.blockTypeNetherite:
         return new ItemStack(itemTypes.get("netherite")!, 1);
+      case DecorationGenerator.blockTypeWood:
+      case DecorationGenerator.blockTypeBirchWood:
+        return new ItemStack(itemTypes.get("wood")!, 1);
       default:
         return null;
     }

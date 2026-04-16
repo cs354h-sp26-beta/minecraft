@@ -361,6 +361,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     putColor(Chunk.blockTypeNetherite, "443a3a");
     putColor(Chunk.blockTypeBedrock, "555555");
     putColor(Chunk.blockTypePortal, "8b00d4");
+
+    putColor(DecorationGenerator.blockTypeWood, "6b4226");
+    putColor(DecorationGenerator.blockTypeLeaves, "2d5a1e");
+    putColor(DecorationGenerator.blockTypeBirchWood, "d6cdb2");
+    putColor(DecorationGenerator.blockTypeSpruceLeaves, "1a3a1a");
+    putColor(DecorationGenerator.blockTypeDecorRock, "7a7a7a");
   }
 
   /**
