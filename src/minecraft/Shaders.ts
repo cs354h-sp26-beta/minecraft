@@ -272,6 +272,23 @@ const cobbleTexture = `
 }
 `;
 
+const portalFrameTexture = `
+    vec3 makePortalFrame(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+
+        vec3 purple   = vec3(0.42, 0.10, 0.58);
+        vec3 magenta  = vec3(0.78, 0.18, 0.62);
+        vec3 darkBlue = vec3(0.06, 0.04, 0.32);
+
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) + hash(pixelUV) * 0.3;
+        vec3 textureColor = mix(purple, magenta, clamp(noise, 0.0, 1.0));
+        textureColor = mix(darkBlue, textureColor, smoothstep(0.0, 0.55, noise));
+        if (noise < 0.2) textureColor -= vec3(0.05, 0.03, 0.08); // darker spots
+        if (noise > 0.85) textureColor += vec3(0.15, 0.10, 0.20); // bright magenta highlights
+        return textureColor;
+    }
+`
+
 const oreTexture = `
     vec3 makeOre(vec2 uv, vec3 world, float scale, vec3 color) {
         vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
@@ -360,6 +377,8 @@ export const blankCubeFSText = `
 
     ${oreTexture}
     
+    ${portalFrameTexture}
+    
     void main() {
         vec3 kd = vec3(1.0, 1.0, 1.0);
         vec3 ka = vec3(0.1, 0.1, 0.1);
@@ -410,6 +429,8 @@ export const blankCubeFSText = `
             textureColor = makeSpruceLeaves(uv, wsPos.xyz);
         } else if (vBlockType == 24.0) {
             textureColor = makeDecorRock(uv, wsPos.xyz);
+        } else if (vBlockType == 30.0) {
+            textureColor = makePortalFrame(uv);
         }
 
         gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);

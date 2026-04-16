@@ -113,6 +113,10 @@ export function registerItemTypes() {
     ItemAction.Place,
     Chunk.blockTypeNetherite,
   );
+  registerItem("portal_frame", "Portal Frame").setAction(
+    ItemAction.Place,
+    Chunk.blockTypePortalFrame,
+  );
 
   registerItem("water_bucket", "Water Bucket", 1).setAction(
     ItemAction.Place,
@@ -246,7 +250,7 @@ export class Inventory {
     if (!itemType) {
       throw Error("Item type not found: " + itemType);
     }
-    return this.insertStack(new ItemStack(itemType, 1));
+    return this.insertStack(new ItemStack(itemType, count));
   }
 
   public removeItem(itemType: ItemType, count: number): boolean {
@@ -272,7 +276,7 @@ export class Inventory {
     if (!itemType) {
       throw Error("Item type not found: " + itemType);
     }
-    return this.removeItem(itemType, 1);
+    return this.removeItem(itemType, count);
   }
 
   public static slotIndex(x: number, y: number): number {
@@ -391,7 +395,7 @@ export class Inventory {
     if (!itemType) {
       throw Error("Item type not found: " + itemType);
     }
-    return this.canFitStack(new ItemStack(itemType, 1));
+    return this.canFitStack(new ItemStack(itemType, count));
   }
 
   private static readonly SLOT_SIZE = 60;
@@ -421,7 +425,7 @@ export class Inventory {
   }
 
   private static readonly PANEL_GAP = 50;
-  private static readonly CRAFTING_PANEL_HEIGHT = 280;
+  private static readonly CRAFTING_PANEL_HEIGHT = 330;
   private static readonly CRAFTING_PANEL_GAP = 75;
 
   /** Returns the width of the inventory grid. */

@@ -75,4 +75,16 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     ],
     description: "A ranged weapon that damages enemies from afar.",
   },
+  {
+    id: "portal_frame",
+    title: "Portal Frame",
+    outputItemId: "portal_frame",
+    outputCount: 14,
+    ingredients: [
+      { itemId: "diamond", count: 7 },
+      { itemId: "gold", count: 14 },
+      { itemId: "cobble", count: 14 },
+    ],
+    description: "Dimension-bending blocks for building a portal.",
+  },
 ];

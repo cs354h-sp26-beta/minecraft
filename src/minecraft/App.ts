@@ -434,6 +434,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     putColor(Chunk.blockTypeNetherite, "443a3a");
     putColor(Chunk.blockTypeBedrock, "555555");
     putColor(Chunk.blockTypePortal, "8b00d4");
+    putColor(Chunk.blockTypePortalFrame, "3a1a4d");
 
     putColor(DecorationGenerator.blockTypeWood, "6b4226");
     putColor(DecorationGenerator.blockTypeLeaves, "2d5a1e");
@@ -2157,7 +2158,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       chunk.isWater(this.selectedCubePosition.x,
           this.selectedCubePosition.z,
           this.selectedCubePosition.y) ||
-      brokenCubeType === Chunk.blockTypePortal
+      brokenCubeType === Chunk.blockTypePortal ||
+      brokenCubeType === Chunk.blockTypePortalFrame
     ) {
       return;
     }
