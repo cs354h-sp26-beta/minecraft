@@ -1410,7 +1410,8 @@ export class Chunk {
       if (
         type === undefined ||
         type === Chunk.blockTypeAir ||
-        type === Chunk.blockTypeWater
+        type === Chunk.blockTypeWater ||
+        type === Chunk.blockTypeLava
       ) {
         continue;
       }
