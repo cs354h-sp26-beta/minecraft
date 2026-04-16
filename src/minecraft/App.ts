@@ -114,6 +114,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private blasterHits: number;
   private starvationDamageTaken: number;
   private jetpackUsed: boolean;
+  private enemiesKilled: number;
 
   /* Inventory */
   public inventory: Inventory;
@@ -217,6 +218,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blasterHits = 0;
     this.starvationDamageTaken = 0;
     this.jetpackUsed = false;
+    this.enemiesKilled = 0;
 
     this.isInInventory = false;
 
@@ -327,6 +329,13 @@ export class MinecraftAnimation extends CanvasAnimation {
         completed: false,
         completedAt: null,
       },
+      {
+        id: "kill",
+        title: "Murderous",
+        description: "Ruthlessly kill an enemy.",
+        completed: false,
+        completedAt: null,
+      },
     ];
   }
 
@@ -383,6 +392,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
     if (this.inventory.itemsCrafted > 0) {
       this.completeAchievement("craft");
+    }
+    if (this.enemiesKilled > 0) {
+      this.completeAchievement("kill");
     }
 
     if (this.achievementToast !== null) {
@@ -2117,13 +2129,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   public leftClick(cubeSelected: boolean): void {
     if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
       const enemy = this.selectedEnemy;
-      enemy.takeDamage(5);
-      if (enemy.isDead()) {
-        const idx = this.enemies.indexOf(enemy);
-        if (idx >= 0) {
-          this.enemies.splice(idx, 1);
-        }
-      }
+      this.attackEnemy(enemy, 5);
       this.selectedEnemy = null;
       return;
     }
@@ -2537,6 +2543,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
   }
 
+  public attackEnemy(enemy: Enemy, amount: number): void {
+    enemy.takeDamage(5);
+    if (enemy.isDead()) {
+      const idx = this.enemies.indexOf(enemy);
+      if (idx >= 0) {
+        this.enemies.splice(idx, 1);
+      }
+      this.inventory.insertItemById("food", 3);
+      this.enemiesKilled++;
+    }
+  }
+
   public fireBlaster(): void {
     if (this.blasterCooldown > 0) {
       return;
@@ -2547,11 +2565,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     if (this.selectedEnemy !== null) {
-      this.selectedEnemy.takeDamage(8);
-      if (this.selectedEnemy.isDead()) {
-        const idx = this.enemies.indexOf(this.selectedEnemy);
-        this.enemies.splice(idx, 1);
-      }
+      this.attackEnemy(this.selectedEnemy, 8);
       this.blasterHits++;
     }
 

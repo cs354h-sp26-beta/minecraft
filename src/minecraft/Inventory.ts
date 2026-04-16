@@ -132,6 +132,11 @@ export function registerItemTypes() {
       (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
         app.fireBlaster();
       });
+
+  registerItem("food", "Food").setAction(ItemAction.Use,
+      (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
+        p.eat(5);
+      });
 }
 
 export class ItemStack {
