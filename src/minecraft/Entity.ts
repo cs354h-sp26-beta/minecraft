@@ -8,7 +8,7 @@ import {
   enemyWalkPose1,
 } from "./Animations.js";
 import { findPath } from "./Pathfinding.js";
-import {MathUtils} from "../lib/threejs/build/three.module.js";
+import { MathUtils } from "../lib/threejs/build/three.module.js";
 
 export type Collision = {
   blockCenter: Vec3;
@@ -348,46 +348,59 @@ export class Enemy extends Entity {
       }
     }
 
-    if (this.attackTime <= 0 && Vec3.distance(this.position, player.position) < 2) {
-        this.setState(EnemyState.Attacking);
-        this.attackTime = 1;
-        this.path = null;
+    if (
+      this.attackTime <= 0 &&
+      Vec3.distance(this.position, player.position) < 2
+    ) {
+      this.setState(EnemyState.Attacking);
+      this.attackTime = 1;
+      this.path = null;
     }
 
-    if (this.state != EnemyState.Attacking && (this.pathTimer > 1.0 || this.path === null || this.path.length === 0)) {
+    if (
+      this.state != EnemyState.Attacking &&
+      (this.pathTimer > 1.0 || this.path === null || this.path.length === 0)
+    ) {
       this.pathTimer = 0;
-      const enemyFeet = new Vec3([this.position.x, this.position.y - 0.5, this.position.z]);
+      const enemyFeet = new Vec3([
+        this.position.x,
+        this.position.y - 0.5,
+        this.position.z,
+      ]);
 
       // compute the y below the player for the enemies to target
       let yBelowPlayer = player.position.y - player.hitboxHeight;
       const playerX = Math.round(player.position.x);
       const playerZ = Math.round(player.position.z);
       for (let dy = 0; dy >= -10; dy--) {
-          if (Chunk.isSolidBlockWorldWide(chunkProvider, playerX, Math.round(yBelowPlayer) + dy, playerZ)) {
-              yBelowPlayer = Math.round(yBelowPlayer) + dy + 1;
-              break;
-          }
+        if (
+          Chunk.isSolidBlockWorldWide(
+            chunkProvider,
+            playerX,
+            Math.round(yBelowPlayer) + dy,
+            playerZ,
+          )
+        ) {
+          yBelowPlayer = Math.round(yBelowPlayer) + dy + 1;
+          break;
+        }
       }
       // add some level of randomness so they dont overlap perfectly and look weird
       const jitterX = (Math.random() - 0.5) * 2;
       const jitterZ = (Math.random() - 0.5) * 2;
       const playerFeet = new Vec3([
-          player.position.x + jitterX,
-          yBelowPlayer,
-          player.position.z + jitterZ
+        player.position.x + jitterX,
+        yBelowPlayer,
+        player.position.z + jitterZ,
       ]);
-      this.path = findPath(
-        enemyFeet,
-        playerFeet,
-        chunkProvider
-      );
+      this.path = findPath(enemyFeet, playerFeet, chunkProvider);
       this.pathIndex = this.path.length > 1 ? 1 : 0; // try to skip 0 since that's the enemy's current position
     }
 
     if (this.path && this.pathIndex < this.path.length) {
       const target = this.path[this.pathIndex];
       const distance = Math.sqrt(
-        (target.x - this.position.x) ** 2 + (target.z - this.position.z) ** 2
+        (target.x - this.position.x) ** 2 + (target.z - this.position.z) ** 2,
       );
       if (distance < 0.5) {
         // we can advance to the next waypoint
@@ -405,7 +418,12 @@ export class Enemy extends Entity {
       super.stepPhysics(dir.normalize(), this.speed, chunkProvider, dt);
     } else {
       // no path or reached the end of path...stand still
-      super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), this.speed, chunkProvider, dt);
+      super.stepPhysics(
+        new Vec3([0.0, 0.0, 0.0]),
+        this.speed,
+        chunkProvider,
+        dt,
+      );
     }
 
     if (this.path && this.pathIndex < this.path.length) {
