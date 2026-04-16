@@ -1192,6 +1192,60 @@ export class Chunk {
     this.updateCubePositionsAndTypes();
     return this.deltaMap;
   }
+
+  /**
+   * Applies multiple block changes and rebuilds chunk render buffers once.
+   * By default, changes only fill air voxels.
+   */
+  public applyCubeTypeChanges(
+    blocks: BlockData[],
+    overwriteSolid: boolean = false,
+  ): Map<string, number> {
+    if (blocks.length === 0) {
+      return this.deltaMap;
+    }
+
+    const [topLeftX, topLeftZ] = this.origin();
+    let changed = false;
+
+    for (const block of blocks) {
+      const cubeChunkX = Math.round(block.x - topLeftX);
+      const cubeChunkZ = Math.round(block.z - topLeftZ);
+      const cubeChunkY = Math.round(block.y);
+
+      if (
+        cubeChunkX < 0 ||
+        cubeChunkX >= this.size ||
+        cubeChunkZ < 0 ||
+        cubeChunkZ >= this.size ||
+        cubeChunkY < 0
+      ) {
+        continue;
+      }
+
+      const currentType = this.getLocalCubeType(
+        cubeChunkZ,
+        cubeChunkX,
+        cubeChunkY,
+      );
+      if (!overwriteSolid && currentType !== Chunk.blockTypeAir) {
+        continue;
+      }
+
+      const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
+      if (currentType === block.type) {
+        continue;
+      }
+
+      this.deltaMap.set(key, block.type);
+      changed = true;
+    }
+
+    if (changed) {
+      this.updateCubePositionsAndTypes();
+    }
+    return this.deltaMap;
+  }
 }
 
 // Check if the chunk is defined

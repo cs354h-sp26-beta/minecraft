@@ -4,13 +4,17 @@ import { Debugger } from "../lib/webglutils/Debugging.js";
 import { RenderPass } from "../lib/webglutils/RenderPass.js";
 import { Chunk } from "./Chunk.js";
 import { Cube } from "./Cube.js";
+import { Billboard } from "./Billboard.js";
 import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
+import { DecorationGenerator, type DecorBuffer } from "./Decorations.js";
 import {
   blankCubeFSText,
   blankCubeVSText,
+  decorBillboardFSText,
+  decorBillboardVSText,
   skyboxFSText,
   skyboxVSText,
   enemyFSText,
@@ -44,6 +48,16 @@ type AchievementToast = {
   timeLeft: number;
 };
 
+type DecorBatch = {
+  offsets: Float32Array;
+  scales: Float32Array;
+  variants: Float32Array;
+  types: Float32Array;
+  angles: Float32Array;
+  tilts: Float32Array;
+  count: number;
+};
+
 export class MinecraftAnimation extends CanvasAnimation {
   public static readonly dayDuration = 1440.0;
   private static readonly safeFallDistance = 3;
@@ -61,6 +75,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   private cubeGeometry: Cube;
   private blankCubeRenderPass: RenderPass;
   private skyboxRenderPass: RenderPass;
+  private billboardGeometry: Billboard;
+  private decorationRenderPass: RenderPass;
 
   /*  Enemy Rendering */
   private enemyRenderPass: RenderPass;
@@ -82,6 +98,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private player: Player;
   private spawnPosition: Vec3;
+  private decorationGenerator: DecorationGenerator;
+  private decorationCache: Map<string, DecorBuffer>;
   private fallingBlocks: Block[];
   private isectNormal: Vec3;
   private wasPlayerGrounded: boolean;
@@ -97,12 +115,9 @@ export class MinecraftAnimation extends CanvasAnimation {
   private successfulJumps: number;
 
   /* Inventory */
-  private inventory: Inventory;
-  private selectedHotbarIdx: number;
+  public inventory: Inventory;
   private isInInventory: boolean;
 
-  private craftingRecipes: CraftingRecipe[];
-  private selectedCraftingRecipeIdx: number;
   private doubleJumpAvailable: boolean;
   private jetpackFuel: number;
   private blasterCooldown: number;
@@ -152,6 +167,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+    this.decorationGenerator = new DecorationGenerator();
+    this.decorationCache = new Map();
 
     const playerPosition = this.gui.getCamera().pos();
     this.player = new Player(playerPosition);
@@ -171,10 +188,17 @@ export class MinecraftAnimation extends CanvasAnimation {
       blankCubeFSText,
     );
     this.skyboxRenderPass = new RenderPass(gl, skyboxVSText, skyboxFSText);
+    this.decorationRenderPass = new RenderPass(
+      gl,
+      decorBillboardVSText,
+      decorBillboardFSText,
+    );
     this.cubeGeometry = new Cube();
+    this.billboardGeometry = new Billboard();
     this.enemyRenderPass = new RenderPass(gl, enemyVSText, enemyFSText);
     this.initSkybox();
     this.initBlankCube();
+    this.initDecorBillboards();
 
     this.enemies = [];
     this.achievements = this.createAchievements();
@@ -195,13 +219,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
 
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
-    this.craftingRecipes = CRAFTING_RECIPES;
-    this.selectedCraftingRecipeIdx = 0;
     this.doubleJumpAvailable = true;
     this.jetpackFuel = 100;
     this.blasterCooldown = 0;
-    this.seedStarterInventory();
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
@@ -348,6 +368,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     putColor(Chunk.blockTypeNetherite, "443a3a");
     putColor(Chunk.blockTypeBedrock, "555555");
     putColor(Chunk.blockTypePortal, "8b00d4");
+
+    putColor(DecorationGenerator.blockTypeWood, "6b4226");
+    putColor(DecorationGenerator.blockTypeLeaves, "2d5a1e");
+    putColor(DecorationGenerator.blockTypeBirchWood, "d6cdb2");
+    putColor(DecorationGenerator.blockTypeSpruceLeaves, "1a3a1a");
+    putColor(DecorationGenerator.blockTypeDecorRock, "7a7a7a");
   }
 
   /**
@@ -397,13 +423,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private resetInventoryState(): void {
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
-    this.selectedCraftingRecipeIdx = 0;
     this.doubleJumpAvailable = true;
     this.jetpackFuel = 100;
     this.blasterCooldown = 0;
     this.isInInventory = false;
-    this.seedStarterInventory();
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -474,6 +497,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     const randomItemType =
       allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
     this.inventory.insertStack(new ItemStack(randomItemType, 1));
+  }
+
+  public giveAllItems(): void {
+    for (const type of itemTypes.values()) {
+      this.inventory.insertStack(new ItemStack(type, type.maxStackSize));
+    }
   }
 
   /**
@@ -637,6 +666,146 @@ export class MinecraftAnimation extends CanvasAnimation {
       0,
     );
     this.blankCubeRenderPass.setup();
+  }
+
+  private initDecorBillboards(): void {
+    this.decorationRenderPass.setIndexBufferData(
+      this.billboardGeometry.indicesFlat(),
+    );
+    this.decorationRenderPass.addAttribute(
+      "aQuadPos",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.billboardGeometry.positionsFlat(),
+    );
+    this.decorationRenderPass.addAttribute(
+      "aQuadUV",
+      2,
+      this.ctx.FLOAT,
+      false,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      this.billboardGeometry.uvFlat(),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aInstancePos",
+      4,
+      this.ctx.FLOAT,
+      false,
+      4 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aScale",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aVariant",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aType",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aAngle",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addInstancedAttribute(
+      "aTilt",
+      1,
+      this.ctx.FLOAT,
+      false,
+      Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+    this.decorationRenderPass.addUniform(
+      "uProj",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.projMatrix().all()),
+        );
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uView",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(
+          loc,
+          false,
+          new Float32Array(this.gui.viewMatrix().all()),
+        );
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uCameraRight",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const right = this.gui.getCamera().right();
+        gl.uniform3fv(loc, new Float32Array(right.xyz));
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uCameraUp",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const up = this.gui.getCamera().up();
+        gl.uniform3fv(loc, new Float32Array(up.xyz));
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uCameraPos",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        const pos = this.gui.getCamera().pos();
+        gl.uniform3fv(loc, new Float32Array(pos.xyz));
+      },
+    );
+    this.decorationRenderPass.addUniform(
+      "uTime",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, this.getTimeValue());
+      },
+    );
+    this.decorationRenderPass.setDrawData(
+      this.ctx.TRIANGLES,
+      this.billboardGeometry.indicesFlat().length,
+      this.ctx.UNSIGNED_INT,
+      0,
+    );
+    this.decorationRenderPass.setup();
   }
 
   /**
@@ -1058,9 +1227,16 @@ export class MinecraftAnimation extends CanvasAnimation {
             ? this.deltaMaps.get(key)
             : new Map();
           this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
+          this.decorationCache.delete(key);
         }
         const cachedChunk = this.chunkCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
+        if (!this.decorationCache.has(key)) {
+          this.decorationCache.set(
+            key,
+            this.decorationGenerator.generateForChunk(key, cachedChunk),
+          );
+        }
       }
     }
 
@@ -1121,6 +1297,76 @@ export class MinecraftAnimation extends CanvasAnimation {
     return combined;
   }
 
+  private getDecorBatch(): DecorBatch {
+    let totalInstances = 0;
+    for (const key of this.renderedChunks.keys()) {
+      const buffer = this.decorationCache.get(key);
+      if (buffer) {
+        totalInstances += buffer.count;
+      }
+    }
+    if (totalInstances === 0) {
+      return {
+        offsets: new Float32Array(0),
+        scales: new Float32Array(0),
+        variants: new Float32Array(0),
+        types: new Float32Array(0),
+        angles: new Float32Array(0),
+        tilts: new Float32Array(0),
+        count: 0,
+      };
+    }
+
+    const offsets = new Float32Array(totalInstances * 4);
+    const scales = new Float32Array(totalInstances);
+    const variants = new Float32Array(totalInstances);
+    const types = new Float32Array(totalInstances);
+    const angles = new Float32Array(totalInstances);
+    const tilts = new Float32Array(totalInstances);
+
+    let cursor = 0;
+    for (const key of this.renderedChunks.keys()) {
+      const buffer = this.decorationCache.get(key);
+      if (!buffer || buffer.count === 0) {
+        continue;
+      }
+      offsets.set(buffer.offsets, cursor * 4);
+      scales.set(buffer.scales, cursor);
+      variants.set(buffer.variants, cursor);
+      types.set(buffer.types, cursor);
+      angles.set(buffer.angles, cursor);
+      tilts.set(buffer.tilts, cursor);
+      cursor += buffer.count;
+    }
+
+    return {
+      offsets,
+      scales,
+      variants,
+      types,
+      angles,
+      tilts,
+      count: totalInstances,
+    };
+  }
+
+  private drawDecorations(): void {
+    const batch = this.getDecorBatch();
+    if (batch.count === 0) {
+      return;
+    }
+    this.decorationRenderPass.updateAttributeBuffer(
+      "aInstancePos",
+      batch.offsets,
+    );
+    this.decorationRenderPass.updateAttributeBuffer("aScale", batch.scales);
+    this.decorationRenderPass.updateAttributeBuffer("aVariant", batch.variants);
+    this.decorationRenderPass.updateAttributeBuffer("aType", batch.types);
+    this.decorationRenderPass.updateAttributeBuffer("aAngle", batch.angles);
+    this.decorationRenderPass.updateAttributeBuffer("aTilt", batch.tilts);
+    this.decorationRenderPass.drawInstanced(batch.count);
+  }
+
   /**
    * Draws a single frame
    *
@@ -1136,9 +1382,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
 
     if (!this.player.isDead()) {
-      const heldId = this.heldItem()?.itemType.id ?? null;
+      const heldId = this.inventory.getHeldItem()?.itemType.id ?? null;
       if (
-        heldId === "jetpack" &&
+        this.inventory.hasEquipmentById("jetpack") &&
         this.gui.isSpaceDown &&
         this.jetpackFuel > 0 &&
         !this.isPlayerGrounded(prov)
@@ -1162,7 +1408,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.enemies.forEach((enemy) => {
       enemy.update(prov, this.player, dt);
     });
-    this.enemies = this.enemies.filter((enemy) => !enemy.isDead());
 
     // Update hunger
     this.hungerTimer += dt;
@@ -1237,6 +1482,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
 
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.disable(gl.CULL_FACE);
+    this.drawDecorations();
+    gl.disable(gl.BLEND);
+    gl.enable(gl.CULL_FACE);
+
     const allPositions = this.getAllCubePositions();
     const allTypes = this.getAllCubeTypes();
     const instanceCount = allTypes.length;
@@ -1252,7 +1504,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(instanceCount);
 
     // Enemies
-    if (this.enemyMesh !== null) {
+    if (this.enemyMesh !== null && this.enemies.length > 0) {
       const enemyInstanceCount = this.enemies.length;
       const enemyPositions = new Float32Array(enemyInstanceCount * 4);
       const enemyRotations = new Float32Array(enemyInstanceCount * 4);
@@ -1394,14 +1646,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     return new Mat4(viewValues);
   }
 
-
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
     if (this.player.isDead()) {
       return;
     }
 
-    const heldId = this.heldItem()?.itemType.id ?? null;
+    const heldId = this.inventory.getHeldItem()?.itemType.id ?? null;
     const grounded = this.isPlayerGrounded(prov);
     if (grounded) {
       const previousVelocityY = this.player.velocity.y;
@@ -1415,7 +1666,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     if (
       this.doubleJumpAvailable &&
-      (heldId === "boots" || heldId === "jetpack")
+        (this.inventory.hasEquipmentById("boots") || this.inventory.hasEquipmentById("jetpack"))
     ) {
       this.player.velocity.y = Math.max(this.player.velocity.y, 8.5);
       this.doubleJumpAvailable = false;
@@ -1425,6 +1676,20 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public toggleAchievements(): void {
     this.showAchievements = !this.showAchievements;
+  }
+
+  public isInventoryOpen(): boolean {
+    return this.isInInventory;
+  }
+
+  public toggleInventory(open?: boolean): void {
+    this.isInInventory = open ?? !this.isInInventory;
+    if (this.isInInventory) {
+      document.exitPointerLock();
+    } else {
+      this.canvas2d.requestPointerLock();
+      this.inventory.closeInventory();
+    }
   }
 
   public isPlayerDead(): boolean {
@@ -1618,32 +1883,27 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.inventory.insertStack(ItemStack.dropsFrom(brokenCubeType ?? -1));
   }
 
-
   public rightClick(cubeSelected: boolean) {
-    const item = this.heldItem();
+    const item = this.inventory.getHeldItem();
     if (item === null) {
       return;
     }
 
     const itemType = item.itemType!;
-    if (itemType.id === "blaster") {
-      this.fireBlaster();
-      return;
-    }
-    if (itemType.id === "jetpack") {
-      if (this.jetpackFuel > 0) {
-        this.player.velocity.y += 4.0;
-        this.jetpackFuel = Math.max(0, this.jetpackFuel - 10.0);
-      }
-      return;
-    }
+    // if (itemType.id === "jetpack") {
+    //   if (this.jetpackFuel > 0) {
+    //     this.player.velocity.y += 4.0;
+    //     this.jetpackFuel = Math.max(0, this.jetpackFuel - 10.0);
+    //   }
+    //   return;
+    // }
 
     switch (itemType.actionType) {
       case ItemAction.None: {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(item!, this.player);
+        itemType.useAction(this, item!, this.player);
         return;
       }
       case ItemAction.Place: {
@@ -1674,8 +1934,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.blocksPlaced++;
 
         this.inventory.editSlotCount(
-          this.selectedHotbarIdx,
-          0,
+          Inventory.slotIndex(this.inventory.selectedHotbarIdx, 0),
           item!.count - 1,
         );
       }
@@ -1703,20 +1962,30 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
-    this.drawHealthBar();
-    this.drawHungerBar();
     this.drawMinimap();
-    this.drawHotbar();
     this.drawAchievementToast();
-    if (!this.isInInventory) {
-      this.drawCrosshair();
-    }
-    if (this.player.isDead()) {
-      this.drawDeathOverlay();
-    }
 
     if (this.isInInventory) {
-      this.drawInventory();
+      this.inventory.drawInventoryScreen(
+        this.overlayCtx,
+        this.canvas2d.width,
+        this.canvas2d.height,
+        this.gui.mouseX,
+        this.gui.mouseY,
+      );
+    } else {
+      this.inventory.drawHotbar(
+        this.overlayCtx,
+        this.canvas2d.width,
+        this.canvas2d.height
+      );
+      this.drawHealthBar();
+      this.drawHungerBar();
+      this.drawCrosshair();
+    }
+
+    if (this.player.isDead()) {
+      this.drawDeathOverlay();
     }
 
     ctx.restore();
@@ -1931,443 +2200,17 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
-  private drawHotbar(): void {
-    const ctx = this.overlayCtx;
-    const hotbarSize = Inventory.width;
-    const slotSize = 60;
-    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
-    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
-
-    ctx.save();
-    ctx.translate(hotbarX, hotbarY);
-
-    // background
-    ctx.beginPath();
-    ctx.roundRect(-15, -15, hotbarWidth + 30, slotSize + 30, 6);
-    ctx.strokeStyle = "#737981";
-    ctx.lineWidth = 4;
-    ctx.fillStyle = "rgba(21,27,41,0.6)";
-    ctx.fill();
-    ctx.stroke();
-
-    // slots
-    ctx.font = "16px monospace";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "right";
-
-    for (let i = 0; i < hotbarSize; i++) {
-      ctx.beginPath();
-      ctx.roundRect(i * (slotSize + 10), 0, slotSize, slotSize, 4);
-      ctx.fillStyle = "rgba(15,15,25,0.6)";
-      ctx.fill();
-      ctx.strokeStyle = "#1b1717";
-      ctx.lineWidth = 2;
-      if (i === this.selectedHotbarIdx) {
-        ctx.strokeStyle = "#e1d8b7";
-        ctx.lineWidth = 4;
-      }
-      ctx.stroke();
-
-      // item icons
-      const item = this.inventory.getItemStack(i, 0);
-      if (item) {
-        const img = item.itemType.img!;
-        if (img) {
-          ctx.drawImage(
-            img,
-            i * (slotSize + 10) + 9,
-            9,
-            slotSize - 18,
-            slotSize - 18,
-          );
-        } else {
-          // draw a rectangle for items without icons
-          ctx.fillStyle = "#d81cd5";
-          ctx.fillRect(
-            i * (slotSize + 10) + 9,
-            9,
-            slotSize - 18,
-            slotSize - 18,
-          );
-        }
-
-        if (item.count > 1) {
-          ctx.fillStyle = "#fff6d7";
-          ctx.fillText(
-            String(item.count),
-            i * (slotSize + 10) + slotSize - 8,
-            slotSize - 6,
-          );
-        }
-      }
-    }
-
-    ctx.restore();
-  }
-
-
-  private drawInventory(): void {
-    const ctx = this.overlayCtx;
-    const layout = this.getInventoryLayout();
-
-    ctx.save();
-    ctx.fillStyle = "rgba(7, 11, 18, 0.82)";
-    ctx.fillRect(0, 0, this.canvas2d.width, this.canvas2d.height);
-
-    ctx.fillStyle = "rgba(15, 21, 32, 0.94)";
-    ctx.strokeStyle = "#8a8f9a";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.roundRect(
-      layout.panelX,
-      layout.panelY,
-      layout.panelW,
-      layout.panelH,
-      12,
-    );
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "#fff6d7";
-    ctx.font = "18px monospace";
-    ctx.textBaseline = "top";
-    ctx.fillText("Crafting & Inventory", layout.panelX + 24, layout.panelY + 18);
-
-    // Recipe list
-    ctx.font = "13px monospace";
-    for (let i = 0; i < this.craftingRecipes.length; i++) {
-      const recipe = this.craftingRecipes[i];
-      const rowY = layout.recipeListY + i * layout.recipeRowH;
-      const selected = i === this.selectedCraftingRecipeIdx;
-
-      ctx.fillStyle = selected ? "rgba(225,216,183,0.22)" : "rgba(255,255,255,0.05)";
-      ctx.beginPath();
-      ctx.roundRect(
-        layout.recipeListX,
-        rowY,
-        layout.recipeListW,
-        layout.recipeRowH - 6,
-        8,
-      );
-      ctx.fill();
-
-      ctx.fillStyle = selected ? "#fff6d7" : "#f0eee6";
-      ctx.fillText(recipe.title, layout.recipeListX + 10, rowY + 8);
-      ctx.fillStyle = "#c9d1d9";
-      ctx.font = "11px monospace";
-      ctx.fillText(recipe.description, layout.recipeListX + 10, rowY + 24);
-      ctx.font = "13px monospace";
-    }
-
-    // Detail panel
-    const recipe = this.currentCraftingRecipe();
-    ctx.fillStyle = "rgba(255,255,255,0.06)";
-    ctx.beginPath();
-    ctx.roundRect(
-      layout.detailX,
-      layout.detailY,
-      layout.detailW,
-      layout.detailH,
-      12,
-    );
-    ctx.fill();
-
-    ctx.fillStyle = "#fff6d7";
-    ctx.fillText(recipe.title, layout.detailX + 16, layout.detailY + 12);
-    ctx.fillStyle = "#d8dee9";
-    const inputs = recipe.ingredients
-      .map((ingredient) => {
-        const owned = this.inventory.countItem(ingredient.itemId);
-        return `${ingredient.itemId} x${ingredient.count} (${owned})`;
-      })
-      .join(", ");
-    ctx.fillText("Inputs:", layout.detailX + 16, layout.detailY + 44);
-    ctx.fillText(inputs, layout.detailX + 16, layout.detailY + 64);
-
-    ctx.fillText(
-      `Output: ${recipe.outputItemId} x${recipe.outputCount}`,
-      layout.detailX + 16,
-      layout.detailY + 100,
-    );
-
-    const canCraft = this.canCraftRecipe(recipe);
-    ctx.fillStyle = canCraft ? "rgba(84, 190, 120, 0.9)" : "rgba(190, 84, 84, 0.9)";
-    ctx.beginPath();
-    ctx.roundRect(
-      layout.craftButtonX,
-      layout.craftButtonY,
-      layout.craftButtonW,
-      layout.craftButtonH,
-      10,
-    );
-    ctx.fill();
-
-    ctx.fillStyle = "#fff6d7";
-    ctx.font = "15px monospace";
-    ctx.fillText(
-      canCraft ? "Craft (Enter)" : "Need more materials",
-      layout.craftButtonX + 16,
-      layout.craftButtonY + 11,
-    );
-
-    // Inventory grid
-    ctx.fillStyle = "rgba(255,255,255,0.06)";
-    ctx.beginPath();
-    ctx.roundRect(
-      layout.gridX - 10,
-      layout.gridY - 30,
-      Inventory.width * layout.slotSize +
-        (Inventory.width - 1) * layout.slotGap +
-        20,
-      Inventory.height * layout.slotSize +
-        (Inventory.height - 1) * layout.slotGap +
-        50,
-      12,
-    );
-    ctx.fill();
-
-    ctx.fillStyle = "#fff6d7";
-    ctx.font = "14px monospace";
-    ctx.fillText("Inventory / Hotbar", layout.gridX, layout.gridY - 24);
-
-    for (let row = 0; row < Inventory.height; row++) {
-      for (let col = 0; col < Inventory.width; col++) {
-        const x = layout.gridX + col * (layout.slotSize + layout.slotGap);
-        const y = layout.gridY + row * (layout.slotSize + layout.slotGap);
-        const stack = this.inventory.getItemStack(col, row);
-
-        ctx.fillStyle =
-          row === 0 && col === this.selectedHotbarIdx
-            ? "rgba(225,216,183,0.22)"
-            : "rgba(15,15,25,0.7)";
-        ctx.strokeStyle = "#1b1717";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(x, y, layout.slotSize, layout.slotSize, 6);
-        ctx.fill();
-        ctx.stroke();
-
-        if (stack !== null) {
-          const img = stack.itemType.img;
-          if (img !== null) {
-            ctx.drawImage(img, x + 8, y + 8, layout.slotSize - 16, layout.slotSize - 16);
-          } else {
-            ctx.fillStyle = "#d81cd5";
-            ctx.fillRect(x + 8, y + 8, layout.slotSize - 16, layout.slotSize - 16);
-          }
-
-          if (stack.count > 1) {
-            ctx.fillStyle = "#fff6d7";
-            ctx.font = "12px monospace";
-            ctx.fillText(String(stack.count), x + layout.slotSize - 8, y + layout.slotSize - 16);
-            ctx.font = "14px monospace";
-          }
-        }
-
-        if (row === 0) {
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "11px monospace";
-          ctx.fillText(String(col + 1), x + 4, y + 4);
-          ctx.font = "14px monospace";
-        }
-      }
-    }
-
-    ctx.restore();
-  }
-
-
-  public isCraftingOpen(): boolean {
-    return this.isInInventory;
-  }
-
-  public toggleInventory(): void {
-    this.isInInventory = !this.isInInventory;
-    if (this.isInInventory) {
-      this.gui.releasePointerLock();
-    }
-  }
-
-  public selectCraftingRecipe(delta: number): void {
-    const len = this.craftingRecipes.length;
-    if (len === 0) {
-      this.selectedCraftingRecipeIdx = 0;
-      return;
-    }
-    this.selectedCraftingRecipeIdx =
-      (this.selectedCraftingRecipeIdx + delta + len) % len;
-  }
-
-  private currentCraftingRecipe(): CraftingRecipe {
-    if (this.craftingRecipes.length === 0) {
-      throw new Error("No crafting recipes registered.");
-    }
-    return this.craftingRecipes[this.selectedCraftingRecipeIdx];
-  }
-
-  private canCraftRecipe(recipe: CraftingRecipe): boolean {
-    for (const ingredient of recipe.ingredients) {
-      if (!this.inventory.hasItem(ingredient.itemId, ingredient.count)) {
-        return false;
-      }
-    }
-
-    return this.inventory.canFitItemById(
-      recipe.outputItemId,
-      recipe.outputCount,
+  public inventoryClick(mouseX: number, mouseY: number, button: number): void {
+    this.inventory.handleClick(
+      mouseX,
+      mouseY,
+      this.canvas2d.width,
+      this.canvas2d.height,
+      button,
     );
   }
 
-  public craftSelectedRecipe(): boolean {
-    const recipe = this.currentCraftingRecipe();
-    if (!this.canCraftRecipe(recipe)) {
-      return false;
-    }
-
-    for (const ingredient of recipe.ingredients) {
-      if (!this.inventory.removeItemById(ingredient.itemId, ingredient.count)) {
-        return false;
-      }
-    }
-
-    return this.inventory.addItemById(
-      recipe.outputItemId,
-      recipe.outputCount,
-    );
-  }
-
-  public handleInventoryClick(x: number, y: number): void {
-    if (!this.isInInventory) {
-      return;
-    }
-
-    const layout = this.getInventoryLayout();
-
-    // Recipe list selection.
-    if (
-      x >= layout.recipeListX &&
-      x <= layout.recipeListX + layout.recipeListW &&
-      y >= layout.recipeListY &&
-      y <= layout.recipeListY + layout.recipeRowH * this.craftingRecipes.length
-    ) {
-      const idx = Math.floor((y - layout.recipeListY) / layout.recipeRowH);
-      if (idx >= 0 && idx < this.craftingRecipes.length) {
-        this.selectedCraftingRecipeIdx = idx;
-      }
-      return;
-    }
-
-    // Craft button
-    if (
-      x >= layout.craftButtonX &&
-      x <= layout.craftButtonX + layout.craftButtonW &&
-      y >= layout.craftButtonY &&
-      y <= layout.craftButtonY + layout.craftButtonH
-    ) {
-      this.craftSelectedRecipe();
-      return;
-    }
-
-    // Inventory grid: clicking the top row selects hotbar slots.
-    if (
-      x >= layout.gridX &&
-      x <= layout.gridX + Inventory.width * layout.slotSize + (Inventory.width - 1) * layout.slotGap &&
-      y >= layout.gridY &&
-      y <= layout.gridY + Inventory.height * layout.slotSize + (Inventory.height - 1) * layout.slotGap
-    ) {
-      const col = Math.floor(
-        (x - layout.gridX) / (layout.slotSize + layout.slotGap),
-      );
-      const row = Math.floor(
-        (y - layout.gridY) / (layout.slotSize + layout.slotGap),
-      );
-      const withinSlotX =
-        (x - layout.gridX) % (layout.slotSize + layout.slotGap) <=
-        layout.slotSize;
-      const withinSlotY =
-        (y - layout.gridY) % (layout.slotSize + layout.slotGap) <=
-        layout.slotSize;
-
-      if (withinSlotX && withinSlotY && row >= 0 && row < Inventory.height) {
-        if (row === 0 && col >= 0 && col < Inventory.width) {
-          this.setHotbarSlot(col);
-        }
-      }
-    }
-  }
-
-  private getInventoryLayout() {
-    const canvasW = this.canvas2d.width;
-    const canvasH = this.canvas2d.height;
-    const panelX = 48;
-    const panelY = 50;
-    const panelW = canvasW - 96;
-    const panelH = canvasH - 100;
-
-    const recipeListX = panelX + 20;
-    const recipeListY = panelY + 64;
-    const recipeListW = 300;
-    const recipeRowH = 48;
-
-    const detailX = recipeListX + recipeListW + 24;
-    const detailY = recipeListY;
-    const detailW = 340;
-    const detailH = 270;
-
-    const gridX = recipeListX;
-    const gridY = panelY + panelH - 300;
-    const slotSize = 56;
-    const slotGap = 8;
-
-    const craftButtonX = detailX + 20;
-    const craftButtonY = detailY + detailH - 56;
-    const craftButtonW = detailW - 40;
-    const craftButtonH = 40;
-
-    return {
-      panelX,
-      panelY,
-      panelW,
-      panelH,
-      recipeListX,
-      recipeListY,
-      recipeListW,
-      recipeRowH,
-      detailX,
-      detailY,
-      detailW,
-      detailH,
-      gridX,
-      gridY,
-      slotSize,
-      slotGap,
-      craftButtonX,
-      craftButtonY,
-      craftButtonW,
-      craftButtonH,
-    };
-  }
-
-  private seedStarterInventory(): void {
-    const starters: Array<[string, number]> = [
-      ["dirt", 16],
-      ["grass", 16],
-      ["cobble", 16],
-      ["sand", 16],
-      ["coal", 16],
-      ["iron", 16],
-      ["stick", 8],
-      ["ammo", 16],
-      ["water_bucket", 1],
-    ];
-
-    for (const [itemId, count] of starters) {
-      this.inventory.addItemById(itemId, count);
-    }
-  }
-
-  private fireBlaster(): void {
+  public fireBlaster(): void {
     if (this.blasterCooldown > 0) {
       return;
     }
@@ -2396,9 +2239,9 @@ export class MinecraftAnimation extends CanvasAnimation {
         enemy.position.z - origin.z,
       ]);
       const t =
-        rel.x * dir.x +
-        rel.y * dir.y +
-        rel.z * dir.z;
+          rel.x * dir.x +
+          rel.y * dir.y +
+          rel.z * dir.z;
       if (t <= 0 || t > 20) {
         continue;
       }
@@ -2417,13 +2260,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blasterCooldown = 0.35;
   }
 
-  public setHotbarSlot(number: number) {
-    this.selectedHotbarIdx = number;
-  }
-
-  public heldItem(): ItemStack | null {
-    return this.inventory.getItemStack(this.selectedHotbarIdx, 0);
-  }
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;
 
@@ -2442,7 +2278,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
+    const hotbarY = this.canvas2d.height - slotSize - 55;
 
     const startX = hotbarX - 15;
     const startY = hotbarY - 15 - heartSize - 4;
@@ -2530,7 +2366,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
+    const hotbarY = this.canvas2d.height - slotSize - 55;
 
     const totalBarWidth = totalFood * foodSize + (totalFood - 1) * spacing;
     const startX = hotbarX + hotbarWidth + 15 - totalBarWidth;

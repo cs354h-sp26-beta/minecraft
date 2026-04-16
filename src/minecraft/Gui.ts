@@ -46,6 +46,8 @@ export class GUI implements IGUI {
 
   private _pointerLocked: boolean;
   private canvas: HTMLCanvasElement;
+  private _mouseX: number;
+  private _mouseY: number;
 
   /**
    *
@@ -66,6 +68,8 @@ export class GUI implements IGUI {
     this.Ddown = false;
     this.spaceDown = false;
     this._pointerLocked = false;
+    this._mouseX = 0;
+    this._mouseY = 0;
 
     this.animation = animation;
 
@@ -138,10 +142,12 @@ export class GUI implements IGUI {
     return this.spaceDown;
   }
 
-  public releasePointerLock(): void {
-    if (document.pointerLockElement === this.canvas) {
-      document.exitPointerLock();
-    }
+  public get mouseX(): number {
+    return this._mouseX;
+  }
+
+  public get mouseY(): number {
+    return this._mouseY;
   }
 
   public dragStart(mouse: MouseEvent): void {
@@ -149,8 +155,8 @@ export class GUI implements IGUI {
       return;
     }
 
-    if (this.animation.isCraftingOpen()) {
-      this.animation.handleInventoryClick(mouse.offsetX, mouse.offsetY);
+    if (this.animation.isInventoryOpen()) {
+      this.animation.inventoryClick(mouse.offsetX, mouse.offsetY, mouse.button);
       return;
     }
 
@@ -179,7 +185,10 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
-    if (this.animation.isPlayerDead() || this.animation.isCraftingOpen()) {
+    this._mouseX = mouse.offsetX;
+    this._mouseY = mouse.offsetY;
+
+    if (this.animation.isPlayerDead()) {
       return;
     }
     if (this._pointerLocked) {
@@ -258,34 +267,21 @@ export class GUI implements IGUI {
       return;
     }
 
-    if (key.code === "KeyC") {
-      this.animation.toggleInventory();
-      if (this.animation.isCraftingOpen()) {
-        this.releasePointerLock();
-      }
-      return;
-    }
-
-    if (this.animation.isCraftingOpen()) {
+    if (this.animation.isInventoryOpen()) {
       switch (key.code) {
         case "ArrowUp": {
-          this.animation.selectCraftingRecipe(-1);
+          this.animation.inventory.selectCraftingRecipe(-1);
           return;
         }
         case "ArrowDown": {
-          this.animation.selectCraftingRecipe(1);
+          this.animation.inventory.selectCraftingRecipe(1);
           return;
         }
         case "Enter": {
-          this.animation.craftSelectedRecipe();
+          this.animation.inventory.craftSelectedRecipe();
           return;
         }
-        case "Escape": {
-          this.animation.toggleInventory();
-          return;
-        }
-        default:
-          return;
+        default: {}
       }
     }
 
@@ -307,39 +303,39 @@ export class GUI implements IGUI {
         break;
       }
       case "Digit1": {
-        this.animation.setHotbarSlot(0);
+        this.animation.inventory.selectedHotbarIdx = 0;
         break;
       }
       case "Digit2": {
-        this.animation.setHotbarSlot(1);
+        this.animation.inventory.selectedHotbarIdx = 1;
         break;
       }
       case "Digit3": {
-        this.animation.setHotbarSlot(2);
+        this.animation.inventory.selectedHotbarIdx = 2;
         break;
       }
       case "Digit4": {
-        this.animation.setHotbarSlot(3);
+        this.animation.inventory.selectedHotbarIdx = 3;
         break;
       }
       case "Digit5": {
-        this.animation.setHotbarSlot(4);
+        this.animation.inventory.selectedHotbarIdx = 4;
         break;
       }
       case "Digit6": {
-        this.animation.setHotbarSlot(5);
+        this.animation.inventory.selectedHotbarIdx = 5;
         break;
       }
       case "Digit7": {
-        this.animation.setHotbarSlot(6);
+        this.animation.inventory.selectedHotbarIdx = 6;
         break;
       }
       case "Digit8": {
-        this.animation.setHotbarSlot(7);
+        this.animation.inventory.selectedHotbarIdx = 7;
         break;
       }
       case "Digit9": {
-        this.animation.setHotbarSlot(8);
+        this.animation.inventory.selectedHotbarIdx = 8;
         break;
       }
       case "KeyR": {
@@ -348,6 +344,22 @@ export class GUI implements IGUI {
       }
       case "Semicolon": {
         this.animation.giveRandomItem();
+        break;
+      }
+      case "KeyE": {
+        this.animation.toggleInventory();
+        break;
+      }
+      case "Escape": {
+        this.animation.toggleInventory(false);
+        return;
+      }
+      case "KeyQ": {
+        this.animation.inventory.dropHeldItem();
+        break;
+      }
+      case "KeyP": {
+        this.animation.giveAllItems();
         break;
       }
       case "KeyG": {
@@ -416,10 +428,8 @@ export class GUI implements IGUI {
       this.dragEnd(mouse),
     );
 
-    // TODO: document.exitPointerLock() on inventory open or anything else you need mouse for
-
     canvas.addEventListener("click", () => {
-      if (!this._pointerLocked && !this.animation.isCraftingOpen()) {
+      if (!this._pointerLocked && !this.animation.isInventoryOpen()) {
         canvas.requestPointerLock();
       }
     });

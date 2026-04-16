@@ -2,11 +2,13 @@ import { Quat, Vec3 } from "../lib/TSM.js";
 import { Chunk } from "./Chunk.js";
 import { Mesh } from "./Mesh.js";
 import {
+  enemyAttackAnimation,
   enemyIdlePose,
   enemyWalkAnimation,
   enemyWalkPose1,
 } from "./Animations.js";
 import { findPath } from "./Pathfinding.js";
+import { MathUtils } from "../lib/threejs/build/three.module.js";
 
 export type Collision = {
   blockCenter: Vec3;
@@ -270,11 +272,13 @@ export class Enemy extends Entity {
 
   private state: EnemyState;
   private animationTime: number;
+  private idleTime: number;
 
   // Pathfinding states
   private path: Vec3[] | null = null; // the current A* path to follow (list of waypoints)
   private pathIndex: number; // which waypoint we're walking towards
   private pathTimer: number; // time since last path refresh
+  private attackTime: number;
 
   constructor(mesh: Mesh, position: Vec3) {
     // HACK: Enemy centered at CoM rather than head.
@@ -287,6 +291,9 @@ export class Enemy extends Entity {
     this.pathIndex = 0;
     this.pathTimer = 0;
     this.speed = 0.1;
+    this.animationTime = 0;
+    this.idleTime = 0;
+    this.attackTime = 0;
   }
 
   private setState(state: EnemyState) {
@@ -303,18 +310,14 @@ export class Enemy extends Entity {
       case EnemyState.Walking:
         return enemyWalkAnimation(this.animationTime);
       case EnemyState.Attacking:
-        return enemyIdlePose;
+        return enemyAttackAnimation(this.animationTime);
     }
   }
 
-  public faceTowards(pos: Vec3): void {
+  public faceTowards(pos: Vec3, dt: number): void {
     const dir = Vec3.difference(pos, this.position);
-    this.yaw = Math.atan2(-dir.z, dir.x);
-  }
-
-  public lookDir(): Vec3 {
-    // Assuming this is how you calculate `lookDir` based on `yaw` set in `faceTowards`.
-    return new Vec3([Math.cos(this.yaw), 0.0, -Math.sin(this.yaw)]);
+    let t = MathUtils.clamp(4 * dt, 0, 1);
+    this.yaw = MathUtils.lerp(this.yaw, Math.atan2(-dir.z, dir.x), t);
   }
 
   public getRotation(): Quat {
@@ -333,62 +336,103 @@ export class Enemy extends Entity {
     this.animationTime += dt;
     this.pathTimer += dt;
 
-    if (this.pathTimer > 1.0 || this.path === null || this.path.length === 0) {
+    if (this.attackTime > 0) {
+      this.faceTowards(player.position, dt);
+      this.attackTime -= dt;
+      if (this.attackTime <= 0) {
+        if (Vec3.distance(this.position, player.position) < 5) {
+          player.takeDamage(3);
+        }
+        this.setState(EnemyState.Idle);
+      }
+    }
+
+    if (
+      this.attackTime <= 0 &&
+      Vec3.distance(this.position, player.position) < 2
+    ) {
+      this.setState(EnemyState.Attacking);
+      this.attackTime = 1;
+      this.path = null;
+    }
+
+    if (
+      this.state != EnemyState.Attacking &&
+      (this.pathTimer > 1.0 || this.path === null || this.path.length === 0)
+    ) {
       this.pathTimer = 0;
-      const enemyFeet = new Vec3([this.position.x, this.position.y - 0.5, this.position.z]);
+      const enemyFeet = new Vec3([
+        this.position.x,
+        this.position.y - 0.5,
+        this.position.z,
+      ]);
 
       // compute the y below the player for the enemies to target
       let yBelowPlayer = player.position.y - player.hitboxHeight;
       const playerX = Math.round(player.position.x);
       const playerZ = Math.round(player.position.z);
       for (let dy = 0; dy >= -10; dy--) {
-          if (Chunk.isSolidBlockWorldWide(chunkProvider, playerX, Math.round(yBelowPlayer) + dy, playerZ)) {
-              yBelowPlayer = Math.round(yBelowPlayer) + dy + 1;
-              break;
-          }
+        if (
+          Chunk.isSolidBlockWorldWide(
+            chunkProvider,
+            playerX,
+            Math.round(yBelowPlayer) + dy,
+            playerZ,
+          )
+        ) {
+          yBelowPlayer = Math.round(yBelowPlayer) + dy + 1;
+          break;
+        }
       }
       // add some level of randomness so they dont overlap perfectly and look weird
       const jitterX = (Math.random() - 0.5) * 2;
       const jitterZ = (Math.random() - 0.5) * 2;
       const playerFeet = new Vec3([
-          player.position.x + jitterX,
-          yBelowPlayer,
-          player.position.z + jitterZ
+        player.position.x + jitterX,
+        yBelowPlayer,
+        player.position.z + jitterZ,
       ]);
-      this.path = findPath(
-        enemyFeet,
-        playerFeet,
-        chunkProvider
-      );
+      this.path = findPath(enemyFeet, playerFeet, chunkProvider);
       this.pathIndex = this.path.length > 1 ? 1 : 0; // try to skip 0 since that's the enemy's current position
     }
 
     if (this.path && this.pathIndex < this.path.length) {
       const target = this.path[this.pathIndex];
       const distance = Math.sqrt(
-        (target.x - this.position.x) ** 2 + (target.z - this.position.z) ** 2
+        (target.x - this.position.x) ** 2 + (target.z - this.position.z) ** 2,
       );
       if (distance < 0.5) {
         // we can advance to the next waypoint
         this.pathIndex++;
       }
 
-      this.faceTowards(target);
+      this.faceTowards(target, dt);
 
       if (target.y > this.position.y) {
         this.jump(chunkProvider);
       }
 
-      super.stepPhysics(this.lookDir(), this.speed, chunkProvider, dt);
+      const dir = Vec3.difference(target, this.position);
+      dir.y = 0;
+      super.stepPhysics(dir.normalize(), this.speed, chunkProvider, dt);
     } else {
       // no path or reached the end of path...stand still
-      super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), this.speed, chunkProvider, dt);
+      super.stepPhysics(
+        new Vec3([0.0, 0.0, 0.0]),
+        this.speed,
+        chunkProvider,
+        dt,
+      );
     }
 
     if (this.path && this.pathIndex < this.path.length) {
       this.setState(EnemyState.Walking);
-    } else {
-      this.setState(EnemyState.Idle);
+      this.idleTime = 0;
+    } else if (this.attackTime <= 0) {
+      this.idleTime += dt;
+      if (this.idleTime > 0.3) {
+        this.setState(EnemyState.Idle);
+      }
     }
 
     this.mesh.setPose(this.targetPose(), Math.pow(0.01, dt));
