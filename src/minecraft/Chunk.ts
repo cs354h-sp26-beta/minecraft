@@ -689,6 +689,7 @@ export class Chunk {
 
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
+    this.aoF32 = new Float32Array(this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
@@ -708,6 +709,7 @@ export class Chunk {
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
           this.cubeTypesF32[cubeIdx] = blockType;
+          this.aoF32[cubeIdx] = this.computeAO(i, j, y);
           cubeIdx++;
         }
       }
@@ -728,6 +730,7 @@ export class Chunk {
       this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
       this.cubeTypesF32[cubeIdx] = blockType;
+      this.aoF32[cubeIdx] = this.computeAO(i, j, y);
       cubeIdx++;
     }
   }
@@ -738,6 +741,10 @@ export class Chunk {
 
   public cubeTypes(): Float32Array {
     return this.cubeTypesF32;
+  }
+
+  public cubeAO(): Float32Array {
+    return this.aoF32;
   }
 
   public numCubes(): number {
