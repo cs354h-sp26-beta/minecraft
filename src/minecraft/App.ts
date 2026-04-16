@@ -64,12 +64,12 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
-  private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
+  private deltaMaps: Map<string, Map<number, number>>; // save map of changes for modified chunks
 
   // Nether dimension state — separate caches so overworld and nether chunks don't collide
   public playerInNether: boolean = false;
   private netherChunkCache: LruCache<string, Chunk>;
-  private netherDeltaMaps: Map<string, Map<string, number>>;
+  private netherDeltaMaps: Map<string, Map<number, number>>;
 
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
@@ -2101,6 +2101,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const queue = [[cubeX, cubeY, cubeZ]];
     const blocksToUpdate = [];
     let foundGround = false;
+    let queueHead = 0;
 
     const directions = [
       [1, 0, 0],
@@ -2111,8 +2112,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       [0, 0, -1],
     ];
 
-    while (queue.length > 0) {
-      const currBlockPos = queue.shift();
+    while (queueHead < queue.length) {
+      const currBlockPos = queue[queueHead++];
       blocksToUpdate.push(currBlockPos);
 
       // Check if current block is touching "ground" by checking y = 0
@@ -2363,7 +2364,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       return;
     }
 
-    let chunkDeltaMap = chunk.changeCubeType(
+    let chunkDeltaMap = chunk.changeCubeTypeNoUpdate(
       cubeX,
       cubeZ,
       cubeY,
@@ -2380,6 +2381,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.setFallingBlocksBFS(cubeX, cubeZ - 1, cubeY);
     this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
     this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
+
+    // Single rebuild after all modifications (avoids duplicate rebuild from changeCubeType)
+    chunk.updateCubePositionsAndTypes();
 
     (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
       key,

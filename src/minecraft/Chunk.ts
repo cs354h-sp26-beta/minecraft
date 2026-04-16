@@ -55,14 +55,27 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static seedHash: number = 2166136261 >>> 0;
 
-  private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
+  private deltaMap: Map<number, number>; // Stores the modified cubes in the chunk (position -> block type)
   private isNether: boolean; // Whether this chunk is in the Nether dimension
+
+  // Encode local chunk coords (j, i, y) into a single numeric key for deltaMap.
+  private deltaKey(j: number, i: number, y: number): number {
+    return j + i * this.size + y * this.size * this.size;
+  }
+
+  // Decode a numeric deltaMap key back to [j, i, y].
+  private decodeDeltaKey(key: number): [number, number, number] {
+    const j = key % this.size;
+    const i = Math.floor(key / this.size) % this.size;
+    const y = Math.floor(key / (this.size * this.size));
+    return [j, i, y];
+  }
 
   constructor(
     centerX: number,
     centerZ: number,
     size: number,
-    deltaMap = new Map(),
+    deltaMap: Map<number, number> = new Map(),
     isNether = false,
   ) {
     this.x = centerX;
@@ -511,7 +524,7 @@ export class Chunk {
     // Count player-placed blocks above the generated column height
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
-      const [j, i, y] = key.split(",").map(Number);
+      const [j, i, y] = this.decodeDeltaKey(key);
       const colMaxY = this.getColMaxY(i, j);
       if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
     }
@@ -543,7 +556,7 @@ export class Chunk {
     // Fill player-placed blocks above the generated column height
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
-      const [j, i, y] = key.split(",").map(Number);
+      const [j, i, y] = this.decodeDeltaKey(key);
       const colMaxY = this.getColMaxY(i, j);
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
@@ -687,7 +700,7 @@ export class Chunk {
   // Skips string key allocation entirely for unedited chunks.
   private getLocalCubeType(i: number, j: number, y: number): number {
     if (this.deltaMap.size > 0) {
-      const override = this.deltaMap.get(`${j},${i},${y}`);
+      const override = this.deltaMap.get(this.deltaKey(j, i, y));
       if (override !== undefined) return override;
     }
     return this.getGeneratedBlockType(i, j, y);
@@ -907,7 +920,7 @@ export class Chunk {
     // Fill player-placed blocks above the generated column height
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
-      const [j, i, y] = key.split(",").map(Number);
+      const [j, i, y] = this.decodeDeltaKey(key);
       const colMaxY = this.getColMaxY(i, j);
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
@@ -1413,15 +1426,16 @@ export class Chunk {
     worldZ: number,
     worldY: number,
     newType: number,
-  ): Map<string, number> {
+  ): Map<number, number> {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
     const cubeChunkY = Math.round(worldY);
 
-    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-
-    this.deltaMap.set(key, newType);
+    this.deltaMap.set(
+      this.deltaKey(cubeChunkX, cubeChunkZ, cubeChunkY),
+      newType,
+    );
     this.updateCubePositionsAndTypes();
     return this.deltaMap;
   }
@@ -1431,15 +1445,16 @@ export class Chunk {
     worldZ: number,
     worldY: number,
     newType: number,
-  ): Map<string, number> {
+  ): Map<number, number> {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
     const cubeChunkY = Math.round(worldY);
 
-    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-
-    this.deltaMap.set(key, newType);
+    this.deltaMap.set(
+      this.deltaKey(cubeChunkX, cubeChunkZ, cubeChunkY),
+      newType,
+    );
     return this.deltaMap;
   }
 
@@ -1472,7 +1487,7 @@ export class Chunk {
   public applyCubeTypeChanges(
     blocks: BlockData[],
     overwriteSolid: boolean = false,
-  ): Map<string, number> {
+  ): Map<number, number> {
     if (blocks.length === 0) {
       return this.deltaMap;
     }
@@ -1504,12 +1519,14 @@ export class Chunk {
         continue;
       }
 
-      const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
       if (currentType === block.type) {
         continue;
       }
 
-      this.deltaMap.set(key, block.type);
+      this.deltaMap.set(
+        this.deltaKey(cubeChunkX, cubeChunkZ, cubeChunkY),
+        block.type,
+      );
       changed = true;
     }
 
