@@ -158,10 +158,12 @@ const treeTextures = `
     }
 
     vec3 makeBirchWood(vec2 uv, vec3 world) {
-        vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float spot = step(0.76, hash(floor(pixelUV * 10.0) + vec2(world.y, world.x)));
-        vec3 bark = mix(vec3(0.72, 0.66, 0.52), vec3(0.92, 0.86, 0.68), pixelUV.y);
-        return mix(bark, vec3(0.08, 0.07, 0.06), spot);
+        vec3 base = makeWood(uv, world);
+        vec2 pixelUv = floor(uv * 16.0) / 16.0;
+        vec2 worldSeed = hash2(floor(world.xz) * 8.0);
+        float spot = fbm(uv * 10.0 + worldSeed, 2);
+        spot = 1.0 - pow(spot, 3.0); // mostly 1, with some darker spots
+        return base + vec3(0.2, 0.2, 0.2) * spot;
     }
 
     vec3 makeLeaves(vec2 uv, vec3 world) {
