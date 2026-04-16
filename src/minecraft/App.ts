@@ -1652,8 +1652,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
-    this.drawHealthBar();
-    this.drawHungerBar();
     this.drawMinimap();
     this.drawAchievementToast();
     this.drawCrosshair();
@@ -1665,6 +1663,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.inventory.drawInventoryScreen(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx, this.gui.mouseX, this.gui.mouseY);
     } else {
       this.inventory.drawHotbar(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx);
+      this.drawHealthBar();
+      this.drawHungerBar();
     }
 
     ctx.restore();
