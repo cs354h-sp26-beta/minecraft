@@ -125,17 +125,24 @@ export class Portal {
     // Vector from eye to bottom-left corner
     const va = new Vec3([bl.x - eyePos.x, bl.y - eyePos.y, bl.z - eyePos.z]);
 
-    // Distance from eye to portal plane
-    const d = -Vec3.dot(va, dst.normal);
-    if (d <= 0.01) return null;
+    // Distance from eye to portal plane. If negative, eye is on the back side —
+    // flip the view normal so we look through from the other direction.
+    let d = -Vec3.dot(va, dst.normal);
+    let viewNormal = dst.normal.copy();
+    let viewRight = dstRight.copy();
+    if (d < 0.01) {
+      d = -d;
+      viewNormal = new Vec3([-dst.normal.x, -dst.normal.y, -dst.normal.z]);
+      viewRight = new Vec3([-dstRight.x, -dstRight.y, -dstRight.z]);
+      if (d < 0.01) return null;
+    }
 
-    // Near plane at the portal surface, far plane distant
     const near = d;
     const far = 1000.0;
 
     // Frustum extents: project portal corners onto the near plane
     // Since near == d, scale factor is 1.0
-    const l = Vec3.dot(va, dstRight);
+    const l = Vec3.dot(va, viewRight);
     const r = l + dst.width;
     const b = Vec3.dot(va, dst.up);
     const t = b + dst.height;
@@ -152,23 +159,23 @@ export class Portal {
     const proj = new Mat4(Array.from(p));
 
     // Build view matrix: camera axes aligned with portal frame
-    // x = dstRight, y = dst.up, z = dst.normal (toward viewer)
+    // x = right, y = up, z = normal (toward viewer)
     const view = new Mat4([
-      dstRight.x,
+      viewRight.x,
       dst.up.x,
-      dst.normal.x,
+      viewNormal.x,
       0,
-      dstRight.y,
+      viewRight.y,
       dst.up.y,
-      dst.normal.y,
+      viewNormal.y,
       0,
-      dstRight.z,
+      viewRight.z,
       dst.up.z,
-      dst.normal.z,
+      viewNormal.z,
       0,
-      -Vec3.dot(dstRight, eyePos),
+      -Vec3.dot(viewRight, eyePos),
       -Vec3.dot(dst.up, eyePos),
-      -Vec3.dot(dst.normal, eyePos),
+      -Vec3.dot(viewNormal, eyePos),
       1,
     ]);
 
