@@ -133,12 +133,14 @@ export class Portal {
     let d = -Vec3.dot(va, dst.normal);
     let viewNormal = dst.normal.copy();
     let viewRight = dstRight.copy();
-    if (d < 0.01) {
+    if (d < 0) {
       d = -d;
       viewNormal = new Vec3([-dst.normal.x, -dst.normal.y, -dst.normal.z]);
       viewRight = new Vec3([-dstRight.x, -dstRight.y, -dstRight.z]);
-      if (d < 0.01) return null;
     }
+
+    // Clamp minimum distance to avoid extreme wide-angle distortion up close
+    d = Math.max(d, 1.0);
 
     const near = d;
     const far = 1000.0;
