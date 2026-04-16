@@ -16,10 +16,7 @@ export class ItemType {
   public name: string;
   public maxStackSize: number;
   public actionType: ItemAction;
-  private action:
-    | null
-    | number
-    | ((app: MinecraftAnimation) => void);
+  private action: null | number | ((app: MinecraftAnimation) => void);
   public img: ImageBitmap | null;
 
   constructor(id: string, name: string, image: string, maxStackSize: number) {
@@ -57,9 +54,7 @@ export class ItemType {
   public setAction(actionType: ItemAction.Place, blockType: number): ItemType;
   public setAction(
     actionType: ItemAction,
-    action?:
-      | number
-      | ((app: MinecraftAnimation) => void),
+    action?: number | ((app: MinecraftAnimation) => void),
   ): ItemType {
     this.actionType = actionType;
     if (action !== undefined) {
