@@ -10,6 +10,7 @@ import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
 import { PortalRenderer } from "./PortalRenderer.js";
+import { Portal } from "./Portal.js";
 import { DecorationGenerator, type DecorBuffer } from "./Decorations.js";
 import {
   blankCubeFSText,
@@ -84,6 +85,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /* Portal Rendering */
   private portalRenderer: PortalRenderer;
+  private portals: Portal[];
 
   /* Global Rendering Info */
   private lightPosition: Vec4;
@@ -213,6 +215,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Portal rendering setup
     this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
+    this.portals = [];
     this.enemies = [];
     this.selectedEnemy = null;
     this.achievements = this.createAchievements();
@@ -2349,6 +2352,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.deltaMaps.set(key, chunkDeltaMap);
         this.blocksPlaced++;
 
+        if (blockType === Chunk.blockTypePortalFrame) {
+          this.checkPortal(cubeX, cubeZ, cubeY);
+        }
+
         // The placed block and all its neighbors may now trigger water flow updates
         for (const [dx, dy, dz] of [
           [0, 0, 0],
@@ -2368,6 +2375,70 @@ export class MinecraftAnimation extends CanvasAnimation {
         );
       }
     }
+  }
+
+  private checkPortal(blockX: number, blockZ: number, blockY: number) {
+    for (let x = blockX - 3; x <= blockX; x++) {
+      for (let z = blockZ - 3; z <= blockZ; z++) {
+        for (let y = blockY - 4; y <= blockY; y++) {
+          if (this.checkPortalSpot(x, z, y)) {
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  private checkPortalSpot(minX: number, minZ: number, minY: number): boolean {
+    const blockIsPortalX = (x: number, y: number): boolean => {
+      x += minX;
+      const z = minZ;
+      y += minY;
+      const chunk = this.chunkAt(x, z);
+      return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
+    }
+
+    const blockIsPortalZ = (z: number, y: number): boolean => {
+      const x = minX;
+      z += minZ;
+      y += minY;
+      const chunk = this.chunkAt(x, z);
+      return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
+    }
+
+    const check = (blockIsPortal) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
+        && blockIsPortal(0, 4) && blockIsPortal(1, 4) && blockIsPortal(2, 4) && blockIsPortal(3, 4)
+        && blockIsPortal(0, 1) && blockIsPortal(0, 2) && blockIsPortal(0, 3)
+        && blockIsPortal(3, 1) && blockIsPortal(3, 2) && blockIsPortal(3, 3);
+
+    if (check(blockIsPortalX)) {
+      this.portals.push(new Portal(
+          new Vec3([minX + 1, minY + 1, minZ]),
+          new Vec3([0, 0, 1]),
+          new Vec3([0, 1, 0]),
+          2,
+          3,
+      ));
+      if (this.portals.length % 2 === 0) {
+        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
+      }
+      return true;
+    }
+    if (check(blockIsPortalZ)) {
+      this.portals.push(new Portal(
+          new Vec3([minX, minY + 1, minZ + 2]),
+          new Vec3([1, 0, 0]),
+          new Vec3([0, 1, 0]),
+          2,
+          3,
+      ));
+      if (this.portals.length % 2 === 0) {
+        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
+      }
+      return true;
+    }
+
+    return false;
   }
 
   private drawOverlay(): void {
