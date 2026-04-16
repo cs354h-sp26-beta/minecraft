@@ -278,7 +278,7 @@ export class Enemy extends Entity {
 
   constructor(mesh: Mesh, position: Vec3) {
     // HACK: Enemy centered at CoM rather than head.
-    super(position, 0.4, 1.5, 20, 20);
+    super(position, 0.4, 1.0, 20, 20);
     this.yaw = 0.0;
     this.mesh = new Mesh(mesh);
     this.mesh.setPose(enemyIdlePose);

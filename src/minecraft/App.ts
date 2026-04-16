@@ -1211,7 +1211,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       for (let i = 0; i < this.enemies.length; i++) {
         enemyIdxs[i] = i;
         const pos = this.enemies[i].position;
-        enemyPositions.set([pos.x, pos.y, pos.z, 0], i * 4);
+        enemyPositions.set([pos.x, pos.y + 0.35, pos.z, 0], i * 4);
         const rot = this.enemies[i].getRotation();
         enemyRotations.set([rot.x, rot.y, rot.z, rot.w], i * 4);
       }
