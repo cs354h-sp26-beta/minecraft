@@ -104,6 +104,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private enemies: Enemy[];
   private selectedEnemy: Enemy | null;
+  private selectedEnemyDistance: number;
   private achievements: Achievement[];
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
@@ -1734,13 +1735,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     // --- Enemies ---
-    const maxEnemyReach = 6;
     let bestEnemyT = Infinity;
     let bestEnemy: Enemy | null = null;
     for (const enemy of this.enemies) {
       if (enemy.isDead()) continue;
       const t = this.intersectEnemyAABB(rayPos, rayDir, enemy);
-      if (t < bestEnemyT && t <= maxEnemyReach) {
+      if (t < bestEnemyT) {
         bestEnemyT = t;
         bestEnemy = enemy;
       }
@@ -1749,6 +1749,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Prefer enemies
     if (bestEnemy !== null && bestEnemyT < bestCubeT) {
       this.selectedEnemy = bestEnemy;
+      this.selectedEnemyDistance = bestEnemyT;
       this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 0]);
       this.isectNormal = new Vec3();
       return true;
@@ -1895,7 +1896,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public leftClick(cubeSelected: boolean): void {
-    if (this.selectedEnemy !== null) {
+    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
       const enemy = this.selectedEnemy;
       enemy.takeDamage(5);
       if (enemy.isDead()) {
@@ -2292,42 +2293,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       return;
     }
 
-    const camera = this.gui.getCamera();
-    const cameraPos = camera.pos();
-    const origin = new Vec3([cameraPos.x, cameraPos.y, cameraPos.z]);
-    const dirRaw = camera.forward();
-    const dirLen = Math.hypot(dirRaw.x, dirRaw.y, dirRaw.z) || 1;
-    const dir = new Vec3([dirRaw.x / dirLen, dirRaw.y / dirLen, dirRaw.z / dirLen]);
-
-    let bestEnemy: Enemy | null = null;
-    let bestT = Infinity;
-
-    for (const enemy of this.enemies) {
-      if (enemy.isDead()) {
-        continue;
+    if (this.selectedEnemy !== null) {
+      this.selectedEnemy.takeDamage(8);
+      if (this.selectedEnemy.isDead()) {
+        const idx = this.enemies.indexOf(this.selectedEnemy);
+        this.enemies.splice(idx, 1);
       }
-      const rel = new Vec3([
-        enemy.position.x - origin.x,
-        enemy.position.y - origin.y,
-        enemy.position.z - origin.z,
-      ]);
-      const t =
-          rel.x * dir.x +
-          rel.y * dir.y +
-          rel.z * dir.z;
-      if (t <= 0 || t > 20) {
-        continue;
-      }
-      const relSq = rel.x * rel.x + rel.y * rel.y + rel.z * rel.z;
-      const perpSq = Math.max(0, relSq - t * t);
-      if (perpSq <= 1.5 * 1.5 && t < bestT) {
-        bestT = t;
-        bestEnemy = enemy;
-      }
-    }
-
-    if (bestEnemy !== null) {
-      bestEnemy.takeDamage(6);
     }
 
     this.blasterCooldown = 0.35;
@@ -2409,7 +2380,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const x = centerX - size / 2;
     const y = centerY - size / 2;
 
-    const targetingEnemy = this.selectedEnemy !== null;
+    const targetingEnemy = this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
 
     ctx.save();
     ctx.globalAlpha = 0.75;
