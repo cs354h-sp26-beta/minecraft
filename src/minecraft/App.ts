@@ -567,7 +567,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           0,
           fallDistance - MinecraftAnimation.safeFallDistance,
         );
-        if (damage > 0) {
+        if (damage > 0 && !this.inventory.hasEquipmentById("jetpack")) {
           this.player.takeDamage(damage);
         }
       }
