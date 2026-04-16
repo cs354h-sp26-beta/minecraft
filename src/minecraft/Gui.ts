@@ -45,6 +45,8 @@ export class GUI implements IGUI {
 
   private _pointerLocked: boolean;
   private canvas: HTMLCanvasElement;
+  private _mouseX: number;
+  private _mouseY: number;
 
   /**
    *
@@ -64,6 +66,8 @@ export class GUI implements IGUI {
     this.Sdown = false;
     this.Ddown = false;
     this._pointerLocked = false;
+    this._mouseX = 0;
+    this._mouseY = 0;
 
     this.animation = animation;
 
@@ -131,8 +135,25 @@ export class GUI implements IGUI {
     return this._pointerLocked;
   }
 
+  public get mouseX(): number {
+    return this._mouseX;
+  }
+
+  public get mouseY(): number {
+    return this._mouseY;
+  }
+
   public dragStart(mouse: MouseEvent): void {
-    if (this.animation.isPlayerDead() || !this._pointerLocked) {
+    if (this.animation.isPlayerDead()) {
+      return;
+    }
+
+    if (this.animation.isInventoryOpen()) {
+      this.animation.inventoryClick(mouse.offsetX, mouse.offsetY, mouse.button);
+      return;
+    }
+
+    if (!this._pointerLocked) {
       return;
     }
 
@@ -157,6 +178,9 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
+    this._mouseX = mouse.offsetX;
+    this._mouseY = mouse.offsetY;
+
     if (this.animation.isPlayerDead()) {
       return;
     }
@@ -207,12 +231,22 @@ export class GUI implements IGUI {
   }
 
   public walkDir(): Vec3 {
+    const right = this.camera.right();
+    right.y = 0;
+    if (right.length() > 0) {
+      right.normalize();
+    }
+
+    // Movement should follow camera yaw only, not pitch.
+    const forward = Vec3.cross(Vec3.up, right, new Vec3());
+    if (forward.length() > 0) {
+      forward.normalize();
+    }
     let answer = new Vec3();
-    if (this.Wdown) answer.add(this.camera.forward().negate());
-    if (this.Adown) answer.add(this.camera.right().negate());
-    if (this.Sdown) answer.add(this.camera.forward());
-    if (this.Ddown) answer.add(this.camera.right());
-    answer.y = 0;
+    if (this.Wdown) answer.add(forward);
+    if (this.Adown) answer.add(right.negate());
+    if (this.Sdown) answer.add(forward.negate());
+    if (this.Ddown) answer.add(right);
     answer.normalize();
     return answer;
   }
@@ -286,8 +320,24 @@ export class GUI implements IGUI {
         this.animation.giveRandomItem();
         break;
       }
+      case "KeyE": {
+        this.animation.toggleInventory();
+        break;
+      }
+      case "KeyQ": {
+        this.animation.dropHeldItem();
+        break;
+      }
+      case "KeyP": {
+        this.animation.giveAllItems();
+        break;
+      }
       case "KeyG": {
         this.animation.toggleAchievements();
+        break;
+      }
+      case "Escape": {
+        this.animation.toggleInventory(false);
         break;
       }
       case "Space": {
@@ -347,10 +397,8 @@ export class GUI implements IGUI {
       this.dragEnd(mouse),
     );
 
-    // TODO: document.exitPointerLock() on inventory open or anything else you need mouse for
-
     canvas.addEventListener("click", () => {
-      if (!this._pointerLocked) {
+      if (!this._pointerLocked && !this.animation.isInventoryOpen()) {
         canvas.requestPointerLock();
       }
     });

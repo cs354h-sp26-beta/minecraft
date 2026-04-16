@@ -23,7 +23,7 @@ import {
   ItemAction,
   ItemStack,
   itemTypes,
-  registerItemTypes,
+  registerItemTypes, registerRecipes,
 } from "./Inventory.js";
 
 type Achievement = {
@@ -135,6 +135,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     registerItemTypes();
+    registerRecipes();
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
@@ -352,6 +353,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.position = this.spawnPosition.copy();
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
+    this.player.food = this.player.maxFood;
+    this.resetInventoryState();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
@@ -379,10 +382,16 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
     this.player.food = this.player.maxFood;
+    this.resetInventoryState();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
     this.gui.getCamera().setPos(this.player.position);
+  }
+
+  private resetInventoryState(): void {
+    this.inventory = new Inventory();
+    this.selectedHotbarIdx = 0;
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -451,6 +460,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     const randomItemType =
       allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
     this.inventory.insertStack(new ItemStack(randomItemType, 1));
+  }
+
+  public giveAllItems(): void {
+    for (const type of itemTypes.values()) {
+      this.inventory.insertStack(new ItemStack(type, type.maxStackSize));
+    }
   }
 
   /**
@@ -624,7 +639,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       throw new Error("Failed to load enemy mesh.");
     }
     this.enemyMesh = this.enemyMeshLoader.meshes[0];
-    this.enemyMesh!.scale(0.5);
+    this.enemyMesh!.scale(0.85);
 
     let faceCount = this.enemyMesh!.geometry.position.count / 3;
     let fIndices = new Uint32Array(faceCount * 3);
@@ -820,7 +835,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x + 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z + 2,
         ]),
       ),
@@ -830,7 +845,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x - 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z + 2,
         ]),
       ),
@@ -840,7 +855,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x + 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z - 2,
         ]),
       ),
@@ -850,7 +865,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x - 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z - 2,
         ]),
       ),
@@ -1216,7 +1231,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(instanceCount);
 
     // Enemies
-    if (this.enemyMesh !== null) {
+    if (this.enemyMesh !== null && this.enemies.length > 0) {
       const enemyInstanceCount = this.enemies.length;
       const enemyPositions = new Float32Array(enemyInstanceCount * 4);
       const enemyRotations = new Float32Array(enemyInstanceCount * 4);
@@ -1224,7 +1239,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       for (let i = 0; i < this.enemies.length; i++) {
         enemyIdxs[i] = i;
         const pos = this.enemies[i].position;
-        enemyPositions.set([pos.x, pos.y, pos.z, 0], i * 4);
+        enemyPositions.set([pos.x, pos.y + 0.35, pos.z, 0], i * 4);
         const rot = this.enemies[i].getRotation();
         enemyRotations.set([rot.x, rot.y, rot.z, rot.w], i * 4);
       }
@@ -1372,6 +1387,20 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   public toggleAchievements(): void {
     this.showAchievements = !this.showAchievements;
+  }
+
+  public isInventoryOpen(): boolean {
+    return this.isInInventory;
+  }
+
+  public toggleInventory(open?: boolean): void {
+    this.isInInventory = open ?? !this.isInInventory;
+    if (this.isInInventory) {
+      document.exitPointerLock();
+    } else {
+      this.canvas2d.requestPointerLock();
+      this.inventory.closeInventory();
+    }
   }
 
   public isPlayerDead(): boolean {
@@ -1786,8 +1815,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
 
         this.inventory.editSlotCount(
-          this.selectedHotbarIdx,
-          0,
+          Inventory.slotIndex(this.selectedHotbarIdx, 0),
           item!.count - 1,
         );
       }
@@ -1815,10 +1843,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
-    this.drawHealthBar();
-    this.drawHungerBar();
     this.drawMinimap();
-    this.drawHotbar();
     this.drawAchievementToast();
     this.drawCrosshair();
     if (this.player.isDead()) {
@@ -1826,7 +1851,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     if (this.isInInventory) {
-      this.drawInventory();
+      this.inventory.drawInventoryScreen(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx, this.gui.mouseX, this.gui.mouseY);
+    } else {
+      this.inventory.drawHotbar(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx);
+      this.drawHealthBar();
+      this.drawHungerBar();
     }
 
     ctx.restore();
@@ -2041,89 +2070,24 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
-  private drawHotbar(): void {
-    const ctx = this.overlayCtx;
-    const hotbarSize = Inventory.width;
-    const slotSize = 60;
-    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
-    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
-
-    ctx.save();
-    ctx.translate(hotbarX, hotbarY);
-
-    // background
-    ctx.beginPath();
-    ctx.roundRect(-15, -15, hotbarWidth + 30, slotSize + 30, 6);
-    ctx.strokeStyle = "#737981";
-    ctx.lineWidth = 4;
-    ctx.fillStyle = "rgba(21,27,41,0.6)";
-    ctx.fill();
-    ctx.stroke();
-
-    // slots
-    ctx.font = "16px monospace";
-    ctx.textBaseline = "bottom";
-    ctx.textAlign = "right";
-
-    for (let i = 0; i < hotbarSize; i++) {
-      ctx.beginPath();
-      ctx.roundRect(i * (slotSize + 10), 0, slotSize, slotSize, 4);
-      ctx.fillStyle = "rgba(15,15,25,0.6)";
-      ctx.fill();
-      ctx.strokeStyle = "#1b1717";
-      ctx.lineWidth = 2;
-      if (i === this.selectedHotbarIdx) {
-        ctx.strokeStyle = "#e1d8b7";
-        ctx.lineWidth = 4;
-      }
-      ctx.stroke();
-
-      // item icons
-      const item = this.inventory.getItemStack(i, 0);
-      if (item) {
-        const img = item.itemType.img!;
-        if (img) {
-          ctx.drawImage(
-            img,
-            i * (slotSize + 10) + 9,
-            9,
-            slotSize - 18,
-            slotSize - 18,
-          );
-        } else {
-          // draw a rectangle for items without icons
-          ctx.fillStyle = "#d81cd5";
-          ctx.fillRect(
-            i * (slotSize + 10) + 9,
-            9,
-            slotSize - 18,
-            slotSize - 18,
-          );
-        }
-
-        if (item.count > 1) {
-          ctx.fillStyle = "#fff6d7";
-          ctx.fillText(
-            String(item.count),
-            i * (slotSize + 10) + slotSize - 8,
-            slotSize - 6,
-          );
-        }
-      }
-    }
-
-    ctx.restore();
+  public inventoryClick(mouseX: number, mouseY: number, button: number): void {
+    this.inventory.handleClick(mouseX, mouseY, this.canvas2d.width, this.canvas2d.height, button);
   }
-
-  private drawInventory(): void {}
 
   public setHotbarSlot(number: number) {
     this.selectedHotbarIdx = number;
   }
 
   public heldItem(): ItemStack | null {
-    return this.inventory.getItemStack(this.selectedHotbarIdx, 0);
+    return this.inventory.getItemStack(Inventory.slotIndex(this.selectedHotbarIdx, 0));
+  }
+
+  public dropHeldItem(): void {
+    const index = Inventory.slotIndex(this.selectedHotbarIdx, 0);
+    const item = this.inventory.getItemStack(index);
+    if (item) {
+      this.inventory.editSlotCount(index, item.count - 1);
+    }
   }
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;
@@ -2143,7 +2107,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
+    const hotbarY = this.canvas2d.height - slotSize - 55;
 
     const startX = hotbarX - 15;
     const startY = hotbarY - 15 - heartSize - 4;
@@ -2231,7 +2195,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
+    const hotbarY = this.canvas2d.height - slotSize - 55;
 
     const totalBarWidth = totalFood * foodSize + (totalFood - 1) * spacing;
     const startX = hotbarX + hotbarWidth + 15 - totalBarWidth;
