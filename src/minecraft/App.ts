@@ -2412,9 +2412,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
     // Add all visited blocks to connected blocks set if ground is found
     else {
-      //for (const visitedBlock of visited) {
-      //  connectedBlocks.add(visitedBlock);
-      //}
+      for (const visitedBlock of visited) {
+        connectedBlocks.add(visitedBlock);
+      }
     }
   }
 
