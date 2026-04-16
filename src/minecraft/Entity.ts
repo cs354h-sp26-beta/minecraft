@@ -7,6 +7,7 @@ import {
   enemyWalkPose1,
 } from "./Animations.js";
 import { findPath } from "./Pathfinding.js";
+import {MathUtils} from "../lib/threejs/build/three.module.js";
 
 export type Collision = {
   blockCenter: Vec3;
@@ -270,6 +271,7 @@ export class Enemy extends Entity {
 
   private state: EnemyState;
   private animationTime: number;
+  private idleTime: number;
 
   // Pathfinding states
   private path: Vec3[] | null = null; // the current A* path to follow (list of waypoints)
@@ -287,6 +289,8 @@ export class Enemy extends Entity {
     this.pathIndex = 0;
     this.pathTimer = 0;
     this.speed = 0.1;
+    this.animationTime = 0;
+    this.idleTime = 0;
   }
 
   private setState(state: EnemyState) {
@@ -307,9 +311,10 @@ export class Enemy extends Entity {
     }
   }
 
-  public faceTowards(pos: Vec3): void {
+  public faceTowards(pos: Vec3, dt: number): void {
     const dir = Vec3.difference(pos, this.position);
-    this.yaw = Math.atan2(-dir.z, dir.x);
+    let t = MathUtils.clamp(4 * dt, 0, 1);
+    this.yaw = MathUtils.lerp(this.yaw, Math.atan2(-dir.z, dir.x), t);
   }
 
   public lookDir(): Vec3 {
@@ -373,13 +378,15 @@ export class Enemy extends Entity {
         this.pathIndex++;
       }
 
-      this.faceTowards(target);
+      this.faceTowards(target, dt);
 
       if (target.y > this.position.y) {
         this.jump(chunkProvider);
       }
 
-      super.stepPhysics(this.lookDir(), this.speed, chunkProvider, dt);
+      const dir = Vec3.difference(target, this.position);
+      dir.y = 0;
+      super.stepPhysics(dir.normalize(), this.speed, chunkProvider, dt);
     } else {
       // no path or reached the end of path...stand still
       super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), this.speed, chunkProvider, dt);
@@ -387,8 +394,12 @@ export class Enemy extends Entity {
 
     if (this.path && this.pathIndex < this.path.length) {
       this.setState(EnemyState.Walking);
+      this.idleTime = 0;
     } else {
-      this.setState(EnemyState.Idle);
+      this.idleTime += dt;
+      if (this.idleTime > 0.3) {
+        this.setState(EnemyState.Idle);
+      }
     }
 
     this.mesh.setPose(this.targetPose(), Math.pow(0.01, dt));
