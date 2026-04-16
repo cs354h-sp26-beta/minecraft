@@ -92,9 +92,7 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     title: "Nether Star",
     outputItemId: "nether_star",
     outputCount: 1,
-    ingredients: [
-      { itemId: "diamond", count: 16 }
-    ],
+    ingredients: [{ itemId: "diamond", count: 16 }],
     description: "A mythical artifact that can pierce the realms.",
   },
 ];

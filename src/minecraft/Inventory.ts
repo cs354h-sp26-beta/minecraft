@@ -3,7 +3,7 @@ import { Chunk } from "./Chunk.js";
 import { DecorationGenerator } from "./Decorations.js";
 import { CRAFTING_RECIPES, CraftingRecipe } from "./Crafting.js";
 import { MinecraftAnimation } from "./App.js";
-import {Vec3} from "../lib/tsm/Vec3.js";
+import { Vec3 } from "../lib/tsm/Vec3.js";
 
 export enum ItemAction {
   None,
@@ -17,7 +17,10 @@ export class ItemType {
   public name: string;
   public maxStackSize: number;
   public actionType: ItemAction;
-  private action: null | number | ((app: MinecraftAnimation, pos: Vec3) => void);
+  private action:
+    | null
+    | number
+    | ((app: MinecraftAnimation, pos: Vec3) => void);
   public img: ImageBitmap | null;
 
   constructor(id: string, name: string, image: string, maxStackSize: number) {
@@ -68,7 +71,10 @@ export class ItemType {
 
   public useAction(app: MinecraftAnimation, pos: Vec3) {
     if (this.actionType === ItemAction.Use) {
-      const actionFunc = this.action as (app: MinecraftAnimation, pos: Vec3) => void;
+      const actionFunc = this.action as (
+        app: MinecraftAnimation,
+        pos: Vec3,
+      ) => void;
       actionFunc(app, pos);
     }
   }
@@ -140,12 +146,15 @@ export function registerItemTypes() {
     },
   );
 
-  registerItem("nether_star", "Nether Star", 1).setAction(ItemAction.Use, (app: MinecraftAnimation, pos: Vec3) => {
-    if (app.checkCreateDimensionPortal(pos)) {
-      const count = app.inventory.getHeldItem()!.count;
-      app.inventory.editSlotCount(app.inventory.selectedHotbarIdx, count - 1);
-    }
-  });
+  registerItem("nether_star", "Nether Star", 1).setAction(
+    ItemAction.Use,
+    (app: MinecraftAnimation, pos: Vec3) => {
+      if (app.checkCreateDimensionPortal(pos)) {
+        const count = app.inventory.getHeldItem()!.count;
+        app.inventory.editSlotCount(app.inventory.selectedHotbarIdx, count - 1);
+      }
+    },
+  );
 
   registerItem("food", "Food").setAction(
     ItemAction.Use,

@@ -2887,15 +2887,19 @@ export class MinecraftAnimation extends CanvasAnimation {
       return false;
     }
 
-    if (Math.abs(Vec3.dot(pos, this.tempPortal.normal) - Vec3.dot(this.tempPortal.position, this.tempPortal.normal)) < 0.5
-        && Vec3.distance(pos, this.tempPortal.position) <= 5.1) {
-
+    if (
+      Math.abs(
+        Vec3.dot(pos, this.tempPortal.normal) -
+          Vec3.dot(this.tempPortal.position, this.tempPortal.normal),
+      ) < 0.5 &&
+      Vec3.distance(pos, this.tempPortal.position) <= 5.1
+    ) {
       const destPortal = this.writeDestinationPortal(
-          this.tempPortal,
-          this.tempPortal.position.x,
-          this.tempPortal.position.z,
-          this.tempPortal.position.y,
-          this.tempPortal.normal.x === 0,
+        this.tempPortal,
+        this.tempPortal.position.x,
+        this.tempPortal.position.z,
+        this.tempPortal.position.y,
+        this.tempPortal.normal.x === 0,
       );
       this.portalRenderer.addPortalPair(this.tempPortal, destPortal);
       this.tempPortal = null;
