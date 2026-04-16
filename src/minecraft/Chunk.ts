@@ -47,6 +47,7 @@ export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
   private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
+  private aoF32!: Float32Array; // (2 x cubes) packed per-vertex AO. Sent to GPU, only visible cubes
   private heightMapData!: Float32Array; // Ground truth of what blocks exist.
   private blockTypeData!: Int8Array; // 3D cache of block types for cave-aware rendering
   private x: number; // Center of the chunk
@@ -54,14 +55,27 @@ export class Chunk {
   private size: number; // Number of cubes along each side of the chunk
   private static seedHash: number = 2166136261 >>> 0;
 
-  private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
+  private deltaMap: Map<number, number>; // Stores the modified cubes in the chunk (position -> block type)
   private isNether: boolean; // Whether this chunk is in the Nether dimension
+
+  // Encode local chunk coords (j, i, y) into a single numeric key for deltaMap.
+  private deltaKey(j: number, i: number, y: number): number {
+    return j + i * this.size + y * this.size * this.size;
+  }
+
+  // Decode a numeric deltaMap key back to [j, i, y].
+  private decodeDeltaKey(key: number): [number, number, number] {
+    const j = key % this.size;
+    const i = Math.floor(key / this.size) % this.size;
+    const y = Math.floor(key / (this.size * this.size));
+    return [j, i, y];
+  }
 
   constructor(
     centerX: number,
     centerZ: number,
     size: number,
-    deltaMap = new Map(),
+    deltaMap: Map<number, number> = new Map(),
     isNether = false,
   ) {
     this.x = centerX;
@@ -510,13 +524,14 @@ export class Chunk {
     // Count player-placed blocks above the generated column height
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
-      const [j, i, y] = key.split(",").map(Number);
+      const [j, i, y] = this.decodeDeltaKey(key);
       const colMaxY = this.getColMaxY(i, j);
       if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
     }
 
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
+    this.aoF32 = new Float32Array(this.cubes * 2);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
@@ -533,6 +548,7 @@ export class Chunk {
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
           this.cubeTypesF32[cubeIdx] = blockType;
+          this.computeVertexAO(i, j, y, this.aoF32, cubeIdx * 2);
           cubeIdx++;
         }
       }
@@ -540,7 +556,7 @@ export class Chunk {
     // Fill player-placed blocks above the generated column height
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
-      const [j, i, y] = key.split(",").map(Number);
+      const [j, i, y] = this.decodeDeltaKey(key);
       const colMaxY = this.getColMaxY(i, j);
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
@@ -550,6 +566,7 @@ export class Chunk {
       this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
       this.cubeTypesF32[cubeIdx] = blockType;
+      this.computeVertexAO(i, j, y, this.aoF32, cubeIdx * 2);
       cubeIdx++;
     }
   }
@@ -683,10 +700,149 @@ export class Chunk {
   // Skips string key allocation entirely for unedited chunks.
   private getLocalCubeType(i: number, j: number, y: number): number {
     if (this.deltaMap.size > 0) {
-      const override = this.deltaMap.get(`${j},${i},${y}`);
+      const override = this.deltaMap.get(this.deltaKey(j, i, y));
       if (override !== undefined) return override;
     }
     return this.getGeneratedBlockType(i, j, y);
+  }
+
+  // Compute per-vertex AO for the block at local coords (i, j, y).
+  // Returns two packed floats. Each float encodes 3 faces × 4 corners × 2 bits.
+  // Float 0: faces Top(+Y), Left(-X), Right(+X)
+  // Float 1: faces Front(+Z), Back(-Z), Bottom(-Y)
+  // Each face byte: corners (--),(+-),(-+),(++) each 2 bits, AO value 0-3.
+  private computeVertexAO(
+    i: number,
+    j: number,
+    y: number,
+    out: Float32Array,
+    idx: number,
+  ): void {
+    const opaqueAt = (ci: number, cj: number, cy: number): boolean =>
+      this.isOpaqueAt(ci, cj, cy);
+
+    // Classic Minecraft AO formula for one corner:
+    // side1, side2 = two edge neighbors; diag = diagonal neighbor
+    // If both sides are solid, AO=0 (fully occluded, corner is hidden).
+    // Otherwise AO = 3 - (side1 + side2 + diag).
+    const aoCorner = (s1: boolean, s2: boolean, d: boolean): number => {
+      if (s1 && s2) return 0;
+      return 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (d ? 1 : 0));
+    };
+
+    let float0 = 0;
+    let float1 = 0;
+
+    // Face 0: Top (+Y) — normal dy=+1, t1=j(X), t2=i(Z)
+    {
+      const ny = y + 1;
+      let fb = 0;
+      for (let c = 0; c < 4; c++) {
+        const s1 = c & 1 ? 1 : -1;
+        const s2 = c & 2 ? 1 : -1;
+        fb |=
+          aoCorner(
+            opaqueAt(i, j + s1, ny),
+            opaqueAt(i + s2, j, ny),
+            opaqueAt(i + s2, j + s1, ny),
+          ) <<
+          (c * 2);
+      }
+      float0 += fb;
+    }
+
+    // Face 1: Left (-X) — normal dj=-1, t1=i(Z), t2=y(Y)
+    {
+      const nj = j - 1;
+      let fb = 0;
+      for (let c = 0; c < 4; c++) {
+        const s1 = c & 1 ? 1 : -1;
+        const s2 = c & 2 ? 1 : -1;
+        fb |=
+          aoCorner(
+            opaqueAt(i + s1, nj, y),
+            opaqueAt(i, nj, y + s2),
+            opaqueAt(i + s1, nj, y + s2),
+          ) <<
+          (c * 2);
+      }
+      float0 += fb * 256;
+    }
+
+    // Face 2: Right (+X) — normal dj=+1, t1=i(Z), t2=y(Y)
+    {
+      const nj = j + 1;
+      let fb = 0;
+      for (let c = 0; c < 4; c++) {
+        const s1 = c & 1 ? 1 : -1;
+        const s2 = c & 2 ? 1 : -1;
+        fb |=
+          aoCorner(
+            opaqueAt(i + s1, nj, y),
+            opaqueAt(i, nj, y + s2),
+            opaqueAt(i + s1, nj, y + s2),
+          ) <<
+          (c * 2);
+      }
+      float0 += fb * 65536;
+    }
+
+    // Face 3: Front (+Z) — normal di=+1, t1=j(X), t2=y(Y)
+    {
+      const ni = i + 1;
+      let fb = 0;
+      for (let c = 0; c < 4; c++) {
+        const s1 = c & 1 ? 1 : -1;
+        const s2 = c & 2 ? 1 : -1;
+        fb |=
+          aoCorner(
+            opaqueAt(ni, j + s1, y),
+            opaqueAt(ni, j, y + s2),
+            opaqueAt(ni, j + s1, y + s2),
+          ) <<
+          (c * 2);
+      }
+      float1 += fb;
+    }
+
+    // Face 4: Back (-Z) — normal di=-1, t1=j(X), t2=y(Y)
+    {
+      const ni = i - 1;
+      let fb = 0;
+      for (let c = 0; c < 4; c++) {
+        const s1 = c & 1 ? 1 : -1;
+        const s2 = c & 2 ? 1 : -1;
+        fb |=
+          aoCorner(
+            opaqueAt(ni, j + s1, y),
+            opaqueAt(ni, j, y + s2),
+            opaqueAt(ni, j + s1, y + s2),
+          ) <<
+          (c * 2);
+      }
+      float1 += fb * 256;
+    }
+
+    // Face 5: Bottom (-Y) — normal dy=-1, t1=j(X), t2=i(Z)
+    {
+      const ny = y - 1;
+      let fb = 0;
+      for (let c = 0; c < 4; c++) {
+        const s1 = c & 1 ? 1 : -1;
+        const s2 = c & 2 ? 1 : -1;
+        fb |=
+          aoCorner(
+            opaqueAt(i, j + s1, ny),
+            opaqueAt(i + s2, j, ny),
+            opaqueAt(i + s2, j + s1, ny),
+          ) <<
+          (c * 2);
+      }
+      float1 += fb * 65536;
+    }
+
+    out[idx] = float0;
+    out[idx + 1] = float1;
   }
 
   // Returns true if the block at (i, j, y) is non-air (solid terrain or water).
@@ -721,30 +877,12 @@ export class Chunk {
   public updateCubePositionsAndTypes() {
     const [topLeftX, topLeftZ] = this.origin();
 
-    // Count all visible cubes up to column max Y (water fills overworld, lava is in blockTypeData for nether)
-    this.cubes = 0;
-    for (let i = 0; i < this.size; i++) {
-      for (let j = 0; j < this.size; j++) {
-        const colMaxY = this.getColMaxY(i, j);
-        for (let y = 0; y < colMaxY; y++) {
-          if (
-            this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
-            this.isExposed(i, j, y)
-          )
-            this.cubes++;
-        }
-      }
-    }
-    // Count player-placed blocks above the generated column height
-    for (const [key, blockType] of this.deltaMap) {
-      if (blockType === Chunk.blockTypeAir) continue;
-      const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = this.getColMaxY(i, j);
-      if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
-    }
-
-    this.cubePositionsF32 = new Float32Array(4 * this.cubes);
-    this.cubeTypesF32 = new Float32Array(this.cubes);
+    // Single-pass: use oversized buffers then trim, avoiding a double iteration
+    const maxPossible = this.cubes + 7; // at most 7 new cubes exposed by a single edit
+    let capacity = Math.max(maxPossible, 1024);
+    let positions = new Float32Array(4 * capacity);
+    let types = new Float32Array(capacity);
+    let aoArr = new Float32Array(capacity * 2);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
@@ -755,12 +893,26 @@ export class Chunk {
           if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
             continue;
 
-          this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
-          this.cubePositionsF32[4 * cubeIdx + 1] = y;
-          this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
-          this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+          if (cubeIdx >= capacity) {
+            capacity = capacity * 2;
+            const newPos = new Float32Array(4 * capacity);
+            newPos.set(positions);
+            positions = newPos;
+            const newTypes = new Float32Array(capacity);
+            newTypes.set(types);
+            types = newTypes;
+            const newAO = new Float32Array(capacity * 2);
+            newAO.set(aoArr);
+            aoArr = newAO;
+          }
 
-          this.cubeTypesF32[cubeIdx] = blockType;
+          positions[4 * cubeIdx + 0] = topLeftX + j;
+          positions[4 * cubeIdx + 1] = y;
+          positions[4 * cubeIdx + 2] = topLeftZ + i;
+          positions[4 * cubeIdx + 3] = 0;
+
+          types[cubeIdx] = blockType;
+          this.computeVertexAO(i, j, y, aoArr, cubeIdx * 2);
           cubeIdx++;
         }
       }
@@ -768,18 +920,37 @@ export class Chunk {
     // Fill player-placed blocks above the generated column height
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
-      const [j, i, y] = key.split(",").map(Number);
+      const [j, i, y] = this.decodeDeltaKey(key);
       const colMaxY = this.getColMaxY(i, j);
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
-      this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
-      this.cubePositionsF32[4 * cubeIdx + 1] = y;
-      this.cubePositionsF32[4 * cubeIdx + 2] = topLeftZ + i;
-      this.cubePositionsF32[4 * cubeIdx + 3] = 0;
+      if (cubeIdx >= capacity) {
+        capacity = capacity * 2;
+        const newPos = new Float32Array(4 * capacity);
+        newPos.set(positions);
+        positions = newPos;
+        const newTypes = new Float32Array(capacity);
+        newTypes.set(types);
+        types = newTypes;
+        const newAO = new Float32Array(capacity * 2);
+        newAO.set(aoArr);
+        aoArr = newAO;
+      }
 
-      this.cubeTypesF32[cubeIdx] = blockType;
+      positions[4 * cubeIdx + 0] = topLeftX + j;
+      positions[4 * cubeIdx + 1] = y;
+      positions[4 * cubeIdx + 2] = topLeftZ + i;
+      positions[4 * cubeIdx + 3] = 0;
+
+      types[cubeIdx] = blockType;
+      this.computeVertexAO(i, j, y, aoArr, cubeIdx * 2);
       cubeIdx++;
     }
+
+    this.cubes = cubeIdx;
+    this.cubePositionsF32 = positions.subarray(0, 4 * cubeIdx);
+    this.cubeTypesF32 = types.subarray(0, cubeIdx);
+    this.aoF32 = aoArr.subarray(0, cubeIdx * 2);
   }
 
   public cubePositions(): Float32Array {
@@ -788,6 +959,10 @@ export class Chunk {
 
   public cubeTypes(): Float32Array {
     return this.cubeTypesF32;
+  }
+
+  public cubeAO(): Float32Array {
+    return this.aoF32;
   }
 
   public numCubes(): number {
@@ -1255,15 +1430,16 @@ export class Chunk {
     worldZ: number,
     worldY: number,
     newType: number,
-  ): Map<string, number> {
+  ): Map<number, number> {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
     const cubeChunkY = Math.round(worldY);
 
-    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-
-    this.deltaMap.set(key, newType);
+    this.deltaMap.set(
+      this.deltaKey(cubeChunkX, cubeChunkZ, cubeChunkY),
+      newType,
+    );
     this.updateCubePositionsAndTypes();
     return this.deltaMap;
   }
@@ -1273,15 +1449,16 @@ export class Chunk {
     worldZ: number,
     worldY: number,
     newType: number,
-  ): Map<string, number> {
+  ): Map<number, number> {
     const [topLeftX, topLeftZ] = this.origin();
     const cubeChunkX = Math.round(worldX - topLeftX);
     const cubeChunkZ = Math.round(worldZ - topLeftZ);
     const cubeChunkY = Math.round(worldY);
 
-    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
-
-    this.deltaMap.set(key, newType);
+    this.deltaMap.set(
+      this.deltaKey(cubeChunkX, cubeChunkZ, cubeChunkY),
+      newType,
+    );
     return this.deltaMap;
   }
 
@@ -1314,7 +1491,7 @@ export class Chunk {
   public applyCubeTypeChanges(
     blocks: BlockData[],
     overwriteSolid: boolean = false,
-  ): Map<string, number> {
+  ): Map<number, number> {
     if (blocks.length === 0) {
       return this.deltaMap;
     }
@@ -1346,12 +1523,14 @@ export class Chunk {
         continue;
       }
 
-      const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
       if (currentType === block.type) {
         continue;
       }
 
-      this.deltaMap.set(key, block.type);
+      this.deltaMap.set(
+        this.deltaKey(cubeChunkX, cubeChunkZ, cubeChunkY),
+        block.type,
+      );
       changed = true;
     }
 

@@ -64,12 +64,12 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
-  private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
+  private deltaMaps: Map<string, Map<number, number>>; // save map of changes for modified chunks
 
   // Nether dimension state — separate caches so overworld and nether chunks don't collide
   public playerInNether: boolean = false;
   private netherChunkCache: LruCache<string, Chunk>;
-  private netherDeltaMaps: Map<string, Map<string, number>>;
+  private netherDeltaMaps: Map<string, Map<number, number>>;
 
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
@@ -858,6 +858,17 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     this.blankCubeRenderPass.addInstancedAttribute(
+      "aAO",
+      2,
+      this.ctx.FLOAT,
+      false,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+      0,
+      undefined,
+      new Float32Array(0),
+    );
+
+    this.blankCubeRenderPass.addInstancedAttribute(
       "aOffset",
       4,
       this.ctx.FLOAT,
@@ -1563,6 +1574,30 @@ export class MinecraftAnimation extends CanvasAnimation {
     return combined;
   }
 
+  private getAllCubeAO(): Float32Array {
+    let totalCubes = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      totalCubes += chunk.numCubes();
+    }
+    totalCubes += this.fallingBlocks.length;
+
+    const combined = new Float32Array(totalCubes * 2);
+    let offset = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      const ao = chunk.cubeAO();
+      combined.set(ao, offset);
+      offset += ao.length;
+    }
+    // Falling blocks: fully lit (AO=3 at every corner).
+    // Each face byte = 0xFF (all 4 corners at value 3), 3 faces per float = 0xFFFFFF = 16777215.
+    const fullyLit = 16777215.0;
+    for (let i = 0; i < this.fallingBlocks.length; i++) {
+      combined[offset++] = fullyLit;
+      combined[offset++] = fullyLit;
+    }
+    return combined;
+  }
+
   private getDecorBatch(): DecorBatch {
     let totalInstances = 0;
     for (const key of this.renderedChunks.keys()) {
@@ -1828,8 +1863,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     const allPositions = this.getAllCubePositions();
     const allTypes = this.getAllCubeTypes();
+    const allAO = this.getAllCubeAO();
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
     this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.updateAttributeBuffer("aAO", allAO);
     this.blankCubeRenderPass.drawInstanced(allTypes.length);
 
     // Restore player camera uniforms
@@ -1886,8 +1923,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       );
     }
 
+    const allAO = this.getAllCubeAO();
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
     this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.updateAttributeBuffer("aAO", allAO);
     this.blankCubeRenderPass.drawInstanced(instanceCount);
 
     // Enemies
@@ -2217,6 +2256,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const queue = [[cubeX, cubeY, cubeZ]];
     const blocksToUpdate = [];
     let foundGround = false;
+    let queueHead = 0;
 
     const directions = [
       [1, 0, 0],
@@ -2227,8 +2267,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       [0, 0, -1],
     ];
 
-    while (queue.length > 0) {
-      const currBlockPos = queue.shift();
+    while (queueHead < queue.length) {
+      const currBlockPos = queue[queueHead++];
       blocksToUpdate.push(currBlockPos);
 
       // Check if current block is touching "ground" by checking y = 0
@@ -2479,7 +2519,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       return;
     }
 
-    let chunkDeltaMap = chunk.changeCubeType(
+    let chunkDeltaMap = chunk.changeCubeTypeNoUpdate(
       cubeX,
       cubeZ,
       cubeY,
@@ -2496,6 +2536,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.setFallingBlocksBFS(cubeX, cubeZ - 1, cubeY);
     this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
     this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
+
+    // Single rebuild after all modifications (avoids duplicate rebuild from changeCubeType)
+    chunk.updateCubePositionsAndTypes();
 
     (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
       key,
@@ -2722,6 +2765,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       blockIsPortal(3, 1) &&
       blockIsPortal(3, 2) &&
       blockIsPortal(3, 3);
+
 
     const srcDimension: "overworld" | "nether" = this.playerInNether
       ? "nether"
