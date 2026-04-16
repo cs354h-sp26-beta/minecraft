@@ -110,7 +110,7 @@ class Entity {
     const grounded = floorHead !== -Infinity && py <= floorHead + 0.02;
 
     if (!grounded) {
-      this.velocity.add(new Vec3([0.0, -9.8 * dt, 0.0]));
+      this.velocity.add(new Vec3([0.0, -30 * dt, 0.0]));
     } else {
       const v = this.velocity.copy();
       if (v.y < 0) v.y = 0;
@@ -195,7 +195,7 @@ class Entity {
     ) {
       return;
     }
-    this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
+    this.velocity.add(new Vec3([0.0, 15.0, 0.0]));
   }
 
   public takeDamage(amount: number = 1) {
@@ -503,7 +503,9 @@ export class Block {
   public collidesWithChunk(c: Chunk): Collision[] {
     if (
       c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
-      Chunk.blockTypeAir
+        Chunk.blockTypeAir &&
+      c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
+        Chunk.blockTypeWater
     ) {
       return [
         {
