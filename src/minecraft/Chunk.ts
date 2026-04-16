@@ -1491,6 +1491,11 @@ export class Chunk {
     );
   }
 
+  // Returns true if the block at the given world coords is lava.
+  public isLava(worldX: number, worldZ: number, worldY: number): boolean {
+    return this.cubeType(worldX, worldZ, worldY) === Chunk.blockTypeLava;
+  }
+
   // Returns true if the block at the given world coords is a non-source (falling or flowing) water block.
   public isFlowWater(worldX: number, worldZ: number, worldY: number): boolean {
     const t = this.cubeType(worldX, worldZ, worldY);
