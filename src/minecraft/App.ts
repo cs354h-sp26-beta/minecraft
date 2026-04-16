@@ -1751,9 +1751,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.cullFace(gl.BACK);
 
     // --- Portal FBO pass: render destination scene from portal camera ---
+    const currentDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
     this.portalRenderer.renderPortalFBOs(
       this.gui.getCamera().pos(),
       (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
+      currentDimension,
     );
 
     // --- Main pass: render overworld to screen ---
@@ -1766,6 +1770,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.portalRenderer.drawPortalBlocks(
       this.gui.viewMatrix(),
       this.gui.projMatrix(),
+      currentDimension,
     );
 
     this.drawOverlay();
