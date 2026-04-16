@@ -75,6 +75,13 @@ export class MinecraftAnimation extends CanvasAnimation {
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
   private showInventory: boolean;
+  private inventoryPanelRect: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null;
+  private equipmentSlotFilled: boolean;
   private blocksBroken: number;
   private blocksPlaced: number;
   private successfulJumps: number;
@@ -162,6 +169,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.achievementToast = null;
     this.showAchievements = false;
     this.showInventory = false;
+    this.inventoryPanelRect = null;
+    this.equipmentSlotFilled = false;
     this.blocksBroken = 0;
     this.blocksPlaced = 0;
     this.successfulJumps = 0;
@@ -215,6 +224,13 @@ export class MinecraftAnimation extends CanvasAnimation {
         id: "inventory",
         title: "Taking Inventory",
         description: "Open your inventory.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "suitup",
+        title: "Suit Up",
+        description: "Equip a piece of equipment.",
         completed: false,
         completedAt: null,
       },
@@ -1096,6 +1112,45 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
+  /**
+   * Called by the inventory/equipment UI when an equipment slot is filled.
+   */
+  public notifyEquipped(): void {
+    this.completeAchievement("suitup");
+  }
+
+  /**
+   * Handle canvas mouse down events forwarded from the GUI.
+   * Returns true if the event was consumed by the UI.
+   */
+  public handleCanvasMouseDown(
+    mx: number,
+    my: number,
+    buttons: number,
+  ): boolean {
+    if (!this.showInventory || !this.inventoryPanelRect) return false;
+
+    const equip = (this.inventoryPanelRect as any).equipment;
+    if (
+      equip &&
+      mx >= equip.x &&
+      mx <= equip.x + equip.w &&
+      my >= equip.y &&
+      my <= equip.y + equip.h
+    ) {
+      if (!this.equipmentSlotFilled) {
+        // simulate equipping an item into the equipment slot
+        this.equipmentSlotFilled = true;
+        this.notifyEquipped();
+      } else {
+        // unequip
+        this.equipmentSlotFilled = false;
+      }
+      return true;
+    }
+    return false;
+  }
+
   public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
     let bestT = Infinity;
     let bestPos = [-1000, -1000, -1000];
@@ -1253,6 +1308,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     const panelHeight = 120;
     const x = (this.canvas2d.width - panelWidth) / 2;
     const y = this.canvas2d.height - panelHeight - 26;
+    // store panel rect for click handling
+    this.inventoryPanelRect = { x: x, y: y, w: panelWidth, h: panelHeight };
 
     ctx.save();
     ctx.fillStyle = "rgba(10, 14, 22, 0.82)";
@@ -1267,6 +1324,32 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.fillStyle = "#c9d1d9";
     ctx.fillText("Inventory UI coming soon.", x + 12, y + 34);
     ctx.fillText("Press E to close.", x + 12, y + 56);
+
+    // Minimal equipment slot (single slot) at top-right of panel
+    const slotSize = 40;
+    const slotX = x + panelWidth - slotSize - 12;
+    const slotY = y + 12;
+    ctx.fillStyle = "#1a1f26";
+    ctx.fillRect(slotX, slotY, slotSize, slotSize);
+    ctx.strokeStyle = "#f0eee6";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(slotX, slotY, slotSize, slotSize);
+    ctx.font = "11px monospace";
+    ctx.fillStyle = this.equipmentSlotFilled ? "#9be59b" : "#c9d1d9";
+    ctx.fillText(
+      this.equipmentSlotFilled ? "Equipped" : "Equip",
+      slotX + 6,
+      slotY + 14,
+    );
+
+    // store slot rect for click detection
+    // reuse inventoryPanelRect.x/y as base
+    (this.inventoryPanelRect as any).equipment = {
+      x: slotX,
+      y: slotY,
+      w: slotSize,
+      h: slotSize,
+    };
     ctx.restore();
   }
 

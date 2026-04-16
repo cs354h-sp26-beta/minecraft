@@ -121,6 +121,14 @@ export class GUI implements IGUI {
     this.prevY = mouse.screenY;
     this.dragging = true;
 
+    // Let the animation handle UI clicks first (inventory/equipment)
+    const consumed = this.animation.handleCanvasMouseDown(
+      mouse.offsetX,
+      mouse.offsetY,
+      mouse.buttons,
+    );
+    if (consumed) return;
+
     if (this.cubeSelected && mouse.buttons == 1) {
       this.animation.breakSelectedBlock();
     } else if (this.cubeSelected && mouse.buttons == 2) {
