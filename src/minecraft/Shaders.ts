@@ -20,9 +20,18 @@ export const blankCubeVSText = `
     varying vec3 vLocalPos; // 3d block-local position
 
     void main () {
+        // Horizontal flow blocks are shorter than a full cube, bottom-aligned.
+        // scaledY = y * scale - (1 - scale) * 0.5 keeps the bottom at -0.5 while shrinking the top.
+        float yScale = 1.0;
+        if      (aBlockType == 100.0) yScale = 0.75; // FlowLevel3
+        else if (aBlockType == 101.0) yScale = 0.50; // FlowLevel2
+        else if (aBlockType == 102.0) yScale = 0.25; // FlowLevel1
 
-        gl_Position = uProj * uView * (aVertPos + aOffset);
-        wsPos = aVertPos + aOffset;
+        vec4 pos = aVertPos;
+        pos.y = pos.y * yScale - (1.0 - yScale) * 0.5;
+
+        gl_Position = uProj * uView * (pos + aOffset);
+        wsPos = pos + aOffset;
         normal = normalize(aNorm);
         uv = aUV;
         selected = uSelectedCubePos == aOffset ? 1.0 : 0.0;
@@ -367,7 +376,7 @@ export const blankCubeFSText = `
             textureColor = makeDirt(uv);
         } else if (vBlockType == 1.0) {
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
-        } else if (vBlockType == 2.0) {
+        } else if (vBlockType == 2.0 || (vBlockType >= 99.0 && vBlockType <= 102.0)) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 3.0) {
             textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.12, 0.12, 0.12));

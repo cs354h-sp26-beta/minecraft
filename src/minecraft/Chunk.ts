@@ -20,6 +20,12 @@ export class Chunk {
   public static readonly blockTypeDirt: number = 0;
   public static readonly blockTypeCobble: number = 1;
   public static readonly blockTypeWater: number = 2;
+
+  public static readonly blockTypeWaterFalling: number = 99; // water rushing straight down
+  public static readonly blockTypeWaterFlowLevel3: number = 100; // most water, 1 step from source/falling
+  public static readonly blockTypeWaterFlowLevel2: number = 101; // 2 steps out
+  public static readonly blockTypeWaterFlowLevel1: number = 102; // least water, max spread (does not spread further)
+
   public static readonly blockTypeCoalOre: number = 3;
   public static readonly blockTypeIronOre: number = 4;
   public static readonly blockTypeGoldOre: number = 5;
@@ -620,25 +626,35 @@ export class Chunk {
   }
 
   // Returns true if the block at (i, j, y) is non-air (solid terrain or water).
-  private isSolidAt(i: number, j: number, y: number): boolean {
+  // Returns true if the block at local chunk coords fully fills its voxel for rendering purposes.
+  // Opaque blocks hide the faces of their neighbors; non-opaque blocks do not.
+  // Source water and falling water are full-height blocks → opaque.
+  // Leveled flow water (FlowLevel1–3) are partial-height blocks → non-opaque.
+  private isOpaqueAt(i: number, j: number, y: number): boolean {
     if (i < 0 || i >= this.size || j < 0 || j >= this.size) return false;
-    if (y < 0) return true; // below world is solid
-    return this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir;
+    if (y < 0) return true; // below world is always opaque
+    const t = this.getLocalCubeType(i, j, y);
+    if (t === Chunk.blockTypeAir) return false;
+    if (
+      t >= Chunk.blockTypeWaterFlowLevel3 &&
+      t <= Chunk.blockTypeWaterFlowLevel1
+    )
+      return false;
+    return true;
   }
 
-  // A solid block is exposed if any of its 6 neighbors is non-solid
-  // (air, water, cave, or out of chunk bounds).
+  // A block is exposed (and should be rendered) if any of its 6 neighbors is non-opaque.
   private isExposed(i: number, j: number, y: number): boolean {
-    if (!this.isSolidAt(i, j, y + 1)) return true; // above
-    if (y === 0 || !this.isSolidAt(i, j, y - 1)) return true; // below
-    if (!this.isSolidAt(i - 1, j, y)) return true;
-    if (!this.isSolidAt(i + 1, j, y)) return true;
-    if (!this.isSolidAt(i, j - 1, y)) return true;
-    if (!this.isSolidAt(i, j + 1, y)) return true;
+    if (!this.isOpaqueAt(i, j, y + 1)) return true; // above
+    if (y === 0 || !this.isOpaqueAt(i, j, y - 1)) return true; // below
+    if (!this.isOpaqueAt(i - 1, j, y)) return true;
+    if (!this.isOpaqueAt(i + 1, j, y)) return true;
+    if (!this.isOpaqueAt(i, j - 1, y)) return true;
+    if (!this.isOpaqueAt(i, j + 1, y)) return true;
     return false;
   }
 
-  private updateCubePositionsAndTypes() {
+  public updateCubePositionsAndTypes() {
     const [topLeftX, topLeftZ] = this.origin();
 
     // Count all visible cubes up to generated column height (including water)
@@ -1126,7 +1142,10 @@ export class Chunk {
    */
   public isSolidBlockAtWorld(wx: number, wy: number, wz: number): boolean {
     const type = this.cubeType(wx, wz, wy);
-    return type !== undefined && type !== Chunk.blockTypeAir;
+    if (type === undefined || type === Chunk.blockTypeAir) return false;
+    // Water is non-solid — the player walks and swims through it.
+    if (this.isWater(wx, wz, wy)) return false;
+    return true;
   }
 
   /**
@@ -1193,6 +1212,45 @@ export class Chunk {
     return this.deltaMap;
   }
 
+  public changeCubeTypeNoUpdate(
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+    newType: number,
+  ): Map<string, number> {
+    const [topLeftX, topLeftZ] = this.origin();
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    const cubeChunkY = Math.round(worldY);
+
+    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
+
+    this.deltaMap.set(key, newType);
+    return this.deltaMap;
+  }
+
+  // Returns true if the block at the given world coords is any water (source, falling, or flowing).
+  public isWater(worldX: number, worldZ: number, worldY: number): boolean {
+    const t = this.cubeType(worldX, worldZ, worldY);
+    return (
+      t === Chunk.blockTypeWater ||
+      t === Chunk.blockTypeWaterFalling ||
+      (t !== undefined &&
+        t >= Chunk.blockTypeWaterFlowLevel3 &&
+        t <= Chunk.blockTypeWaterFlowLevel1)
+    );
+  }
+
+  // Returns true if the block at the given world coords is a non-source (falling or flowing) water block.
+  public isFlowWater(worldX: number, worldZ: number, worldY: number): boolean {
+    const t = this.cubeType(worldX, worldZ, worldY);
+    return (
+      t === Chunk.blockTypeWaterFalling ||
+      (t !== undefined &&
+        t >= Chunk.blockTypeWaterFlowLevel3 &&
+        t <= Chunk.blockTypeWaterFlowLevel1)
+    );
+  }
   /**
    * Applies multiple block changes and rebuilds chunk render buffers once.
    * By default, changes only fill air voxels.
