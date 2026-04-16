@@ -147,7 +147,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /** Chunk keys for which initial enemies have already been spawned. */
   private spawnedChunkKeys: Set<string> = new Set();
-  private static readonly enemiesPerChunk: number = 2;
+  private static readonly enemiesPerChunk: number = 1;
 
   /* Water simulation */
   private static readonly waterTickInterval: number = 30;
@@ -495,6 +495,148 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.playerInNether = !this.playerInNether;
     this.renderedChunks.clear();
     this.decorationCache.clear();
+  }
+
+  /** Write a single block into a dimension's delta maps without requiring a loaded chunk. */
+  private writeDeltaBlock(
+    dimension: "overworld" | "nether",
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+    blockType: number,
+  ): void {
+    const step = MinecraftAnimation.chunkSize;
+    const chunkX = Chunk.worldToChunkAxis(worldX, step);
+    const chunkZ = Chunk.worldToChunkAxis(worldZ, step);
+    const chunkKey = `${chunkX},${chunkZ}`;
+
+    const targetDeltaMaps =
+      dimension === "nether" ? this.netherDeltaMaps : this.deltaMaps;
+    if (!targetDeltaMaps.has(chunkKey)) {
+      targetDeltaMaps.set(chunkKey, new Map());
+    }
+    const deltaMap = targetDeltaMaps.get(chunkKey)!;
+
+    const originX = chunkX - step / 2;
+    const originZ = chunkZ - step / 2;
+    const localJ = Math.round(worldX - originX);
+    const localI = Math.round(worldZ - originZ);
+    const localY = Math.round(worldY);
+
+    deltaMap.set(`${localJ},${localI},${localY}`, blockType);
+  }
+
+  /** Write a portal frame, interior blocks, and surrounding air pocket
+   *  into the target dimension's delta maps. Returns the destination Portal. */
+  private writeDestinationPortal(
+    srcPortal: Portal,
+    srcMinX: number,
+    srcMinZ: number,
+    srcMinY: number,
+    isXAligned: boolean,
+  ): Portal {
+    const destDimension: "overworld" | "nether" = this.playerInNether
+      ? "overworld"
+      : "nether";
+    const destY = this.playerInNether ? srcMinY : 20;
+
+    // Carve air pocket: extends 1 block beyond frame on each side, 2 blocks deep
+    // on both sides of the portal plane so the player can approach from either direction
+    for (let dy = 0; dy < 7; dy++) {
+      for (let along = -1; along < 5; along++) {
+        for (let perp = -2; perp <= 2; perp++) {
+          const wx = isXAligned ? srcMinX + along : srcMinX + perp;
+          const wz = isXAligned ? srcMinZ + perp : srcMinZ + along;
+          this.writeDeltaBlock(
+            destDimension,
+            wx,
+            destY + dy,
+            wz,
+            Chunk.blockTypeAir,
+          );
+        }
+      }
+    }
+
+    // Write portal frame (4 wide x 5 tall) and interior (2 wide x 3 tall)
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 5; j++) {
+        const isFrame = i === 0 || i === 3 || j === 0 || j === 4;
+        const isInterior = i >= 1 && i <= 2 && j >= 1 && j <= 3;
+        if (!isFrame && !isInterior) continue;
+
+        const blockType = isFrame
+          ? Chunk.blockTypePortalFrame
+          : Chunk.blockTypePortal;
+
+        if (isXAligned) {
+          this.writeDeltaBlock(
+            destDimension,
+            srcMinX + i,
+            destY + j,
+            srcMinZ,
+            blockType,
+          );
+        } else {
+          this.writeDeltaBlock(
+            destDimension,
+            srcMinX,
+            destY + j,
+            srcMinZ + i,
+            blockType,
+          );
+        }
+      }
+    }
+
+    // Add a floor under the portal
+    const floorType =
+      destDimension === "nether"
+        ? Chunk.blockTypeNetherRack
+        : Chunk.blockTypeCobble;
+    for (let i = 0; i < 4; i++) {
+      if (isXAligned) {
+        this.writeDeltaBlock(
+          destDimension,
+          srcMinX + i,
+          destY - 1,
+          srcMinZ,
+          floorType,
+        );
+      } else {
+        this.writeDeltaBlock(
+          destDimension,
+          srcMinX,
+          destY - 1,
+          srcMinZ + i,
+          floorType,
+        );
+      }
+    }
+
+    // Create destination Portal object
+    let destPortal: Portal;
+    if (isXAligned) {
+      destPortal = new Portal(
+        new Vec3([srcMinX + 1, destY + 1, srcMinZ]),
+        new Vec3([0, 0, 1]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        destDimension,
+      );
+    } else {
+      destPortal = new Portal(
+        new Vec3([srcMinX, destY + 1, srcMinZ + 2]),
+        new Vec3([1, 0, 0]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        destDimension,
+      );
+    }
+
+    return destPortal;
   }
 
   private isPlayerGrounded(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -1617,9 +1759,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.cullFace(gl.BACK);
 
     // --- Portal FBO pass: render destination scene from portal camera ---
+    const currentDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
     this.portalRenderer.renderPortalFBOs(
       this.gui.getCamera().pos(),
       (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
+      currentDimension,
     );
 
     // --- Main pass: render overworld to screen ---
@@ -1632,6 +1778,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.portalRenderer.drawPortalBlocks(
       this.gui.viewMatrix(),
       this.gui.projMatrix(),
+      currentDimension,
     );
 
     this.drawOverlay();
@@ -2453,11 +2600,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
-  /** If the player is inside a portal's interior, teleport them to the linked portal
-   * by adding the offset between the portal positions to the player's position. */
+  /** If the player is inside a portal's interior, teleport them to the linked portal.
+   *  If the portals are in different dimensions, switch dimensions first. */
   private checkPortalTeleport(): void {
+    const currentDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
     let currentPortal: Portal | null = null;
     for (const portal of this.portals) {
+      if (portal.dimension !== currentDimension) continue;
       if (this.isPlayerInPortal(portal)) {
         currentPortal = portal;
         break;
@@ -2478,6 +2629,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (linked === null) {
       this.playerInPortal = currentPortal;
       return;
+    }
+
+    // Switch dimension if crossing between overworld and nether
+    if (linked.dimension !== currentPortal.dimension) {
+      this.toggleNether();
     }
 
     // Add the offset between the two portals to the player's position
@@ -2567,40 +2723,52 @@ export class MinecraftAnimation extends CanvasAnimation {
       blockIsPortal(3, 2) &&
       blockIsPortal(3, 3);
 
+    const srcDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
+
     if (check(blockIsPortalX)) {
-      this.portals.push(
-        new Portal(
-          new Vec3([minX + 1, minY + 1, minZ]),
-          new Vec3([0, 0, 1]),
-          new Vec3([0, 1, 0]),
-          2,
-          3,
-        ),
+      const srcPortal = new Portal(
+        new Vec3([minX + 1, minY + 1, minZ]),
+        new Vec3([0, 0, 1]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        srcDimension,
       );
-      if (this.portals.length % 2 === 0) {
-        this.portalRenderer.addPortalPair(
-          this.portals[this.portals.length - 2],
-          this.portals[this.portals.length - 1],
-        );
-      }
+      const destPortal = this.writeDestinationPortal(
+        srcPortal,
+        minX,
+        minZ,
+        minY,
+        true,
+      );
+      srcPortal.link(destPortal);
+      this.portals.push(srcPortal);
+      this.portals.push(destPortal);
+      this.portalRenderer.addPortalPair(srcPortal, destPortal);
       return true;
     }
     if (check(blockIsPortalZ)) {
-      this.portals.push(
-        new Portal(
-          new Vec3([minX, minY + 1, minZ + 2]),
-          new Vec3([1, 0, 0]),
-          new Vec3([0, 1, 0]),
-          2,
-          3,
-        ),
+      const srcPortal = new Portal(
+        new Vec3([minX, minY + 1, minZ + 2]),
+        new Vec3([1, 0, 0]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        srcDimension,
       );
-      if (this.portals.length % 2 === 0) {
-        this.portalRenderer.addPortalPair(
-          this.portals[this.portals.length - 2],
-          this.portals[this.portals.length - 1],
-        );
-      }
+      const destPortal = this.writeDestinationPortal(
+        srcPortal,
+        minX,
+        minZ,
+        minY,
+        false,
+      );
+      srcPortal.link(destPortal);
+      this.portals.push(srcPortal);
+      this.portals.push(destPortal);
+      this.portalRenderer.addPortalPair(srcPortal, destPortal);
       return true;
     }
 

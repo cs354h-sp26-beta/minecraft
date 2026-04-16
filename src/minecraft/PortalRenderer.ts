@@ -164,11 +164,16 @@ export class PortalRenderer {
    * Render all portal FBOs. Call this BEFORE the main scene draw.
    * drawScene is called once per portal with the portal's view/proj matrices.
    */
-  public renderPortalFBOs(playerPos: Vec3, drawScene: SceneDrawFn): void {
+  public renderPortalFBOs(
+    playerPos: Vec3,
+    drawScene: SceneDrawFn,
+    dimension?: "overworld" | "nether",
+  ): void {
     const gl = this.gl;
 
     for (let i = 0; i < this.portals.length; i++) {
       const portal = this.portals[i];
+      if (dimension && portal.dimension !== dimension) continue;
       const cam = portal.computeFramingCamera(playerPos);
       if (!cam) continue;
 
@@ -186,11 +191,16 @@ export class PortalRenderer {
    * Draw all portal block surfaces, sampling their respective FBO textures.
    * Call this AFTER the main scene draw.
    */
-  public drawPortalBlocks(viewMatrix: Mat4, projMatrix: Mat4): void {
+  public drawPortalBlocks(
+    viewMatrix: Mat4,
+    projMatrix: Mat4,
+    dimension?: "overworld" | "nether",
+  ): void {
     const gl = this.gl;
 
     for (let i = 0; i < this.portals.length; i++) {
       const portal = this.portals[i];
+      if (dimension && portal.dimension !== dimension) continue;
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[i]);
