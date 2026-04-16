@@ -17,6 +17,7 @@ export const blankCubeVSText = `
     varying vec4 wsPos;
     varying vec2 uv;
     varying float selected;
+    varying vec3 vLocalPos; // 3d block-local position
 
     void main () {
 
@@ -26,6 +27,8 @@ export const blankCubeVSText = `
         uv = aUV;
         selected = uSelectedCubePos == aOffset ? 1.0 : 0.0;
         vBlockType = aBlockType;
+
+        vLocalPos = aVertPos.xyz + vec3(0.5); // convert from [-0.5, 0.5] to [0, 1] for easier texturing
     }
 `;
 
@@ -114,6 +117,7 @@ const noiseUtils = `
 const dirtTexture = `
     vec3 makeDirt(vec2 uv) {
         // dirt block: add some noise to brown
+        // TODO: make it tile better with world coordinates
 
         vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
 
@@ -127,18 +131,6 @@ const dirtTexture = `
 `;
 
 const terrainDetailTextures = `
-    vec3 makeGrassBlock(vec2 uv) {
-        vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float noise = fbm(pixelUV * 6.0 + vec2(1.7), 2) + hash(pixelUV + vec2(3.0)) * 0.2;
-        return mix(vec3(0.12, 0.46, 0.12), vec3(0.28, 0.68, 0.20), noise);
-    }
-
-    vec3 makeSand(vec2 uv) {
-        vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float noise = fbm(pixelUV * 7.0 + vec2(9.2), 2);
-        return mix(vec3(0.77, 0.70, 0.48), vec3(0.93, 0.86, 0.62), noise);
-    }
-
     vec3 makeSandstone(vec2 uv) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
         float band = step(0.5, fract(pixelUV.y * 8.0 + fbm(pixelUV * 4.0, 2) * 0.5));
@@ -195,6 +187,18 @@ const treeTextures = `
     }
 `;
 
+const sandTexture = `
+    vec3 makeSand(vec2 uv, vec3 local, vec3 world) {
+        uv = floor(uv * 16.0) / 16.0;
+        vec2 worldSeed = hash2(floor(world.xz));
+        vec2 p = uv * 2.0;
+        float wave = perlin(p * 4.0);
+        float noise = fbm(p * 32.0 + worldSeed, 2);
+        vec3 baseColor = vec3(0.84, 0.76, 0.59);
+        return baseColor * 0.8 + wave * 0.18 + noise * 0.24;
+    }
+`;
+
 const waterTexture = `
     vec3 makeWater(vec2 uv, vec3 world, float scale) {
 
@@ -225,6 +229,28 @@ const waterTexture = `
     }
 `;
 
+const grassTexture = `
+    vec3 makeGrass(vec2 uv, vec3 local, vec3 world, float scale) {
+
+    vec3 pixelCubeLocal = floor(local * 16.0) / 16.0; // snap block-local coords to a grid for pixelated texture
+    vec3 pixelWorld = floor(world * 16.0) / 16.0; // same with world
+
+    float nearTop = pixelCubeLocal.y;
+
+    float noise = fbm(pixelCubeLocal.xz * 12.0 + pixelWorld.xz * 11.0, 2);
+
+    nearTop = clamp(nearTop + noise * 0.4, 0.0, 1.0);
+
+    nearTop = pow(nearTop, 10.0);   
+
+    vec3 dirtColor = makeDirt(uv);
+
+    vec3 grassColor = makeDirt(uv) * vec3(0.3, 0.8, 0.3) + vec3(0.02, 0.1, 0.02); // base dirt color tinted green
+
+    return mix(dirtColor, grassColor, nearTop);
+}
+`;
+
 const cobbleTexture = `
     vec3 makeCobble(vec2 uv, vec3 world, float scale) {
       vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
@@ -233,8 +259,8 @@ const cobbleTexture = `
       float groove = smoothstep(0.35, -0.55, v * 0.5);  // dark at edges
       float noise = fbm(pixelatedWorld.xz * 8.0, 2);     // surface variation
       vec3 baseColor = vec3(0.65, 0.63, 0.6);
-      return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
-    }
+    return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
+}
 `;
 
 const oreTexture = `
@@ -249,14 +275,14 @@ const oreTexture = `
         
         float noise = fbm(uv * 8.0, 2);
 
-        coloredGroove = pow(coloredGroove, 3.0);
+    coloredGroove = pow(coloredGroove, 3.0);
 
         vec3 noColor = baseColor * (0.14 + 0.12 * noise) + groove * 0.8;
 
         vec3 colored = color * (0.7 - groove + 0.2 * noise);
 
-        return mix(noColor, colored, coloredGroove);
-    }
+    return mix(noColor, colored, coloredGroove);
+}
 `;
 
 // const cellsTexture = `
@@ -302,6 +328,7 @@ export const blankCubeFSText = `
     
     varying vec4 normal;
     varying vec4 wsPos;
+    varying vec3 vLocalPos;
     varying vec2 uv;
     varying float selected;
     varying float vBlockType;
@@ -313,6 +340,10 @@ export const blankCubeFSText = `
     ${terrainDetailTextures}
 
     ${treeTextures}
+
+    ${sandTexture}
+
+    ${grassTexture}
 
     ${cobbleTexture}
 
@@ -347,13 +378,9 @@ export const blankCubeFSText = `
         } else if (vBlockType == 6.0) {
             textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.18, 0.86, 0.92));
         } else if (vBlockType == 7.0) {
-            if (normal.y > 0.5) {
-                textureColor = makeGrassBlock(uv);
-            } else {
-                textureColor = makeDirt(uv);
-            }
+            textureColor = makeGrass(uv, vLocalPos, wsPos.xyz, 3.0);
         } else if (vBlockType == 8.0) {
-            textureColor = makeSand(uv);
+            textureColor = makeSand(uv, vLocalPos, wsPos.xyz);
         } else if (vBlockType == 9.0) {
             textureColor = makeSandstone(uv);
         } else if (vBlockType == 10.0) {
@@ -374,9 +401,6 @@ export const blankCubeFSText = `
             textureColor = makeSpruceLeaves(uv, wsPos.xyz);
         } else if (vBlockType == 24.0) {
             textureColor = makeDecorRock(uv, wsPos.xyz);
-        } else {
-            vec3 oreColor = vec3(0.9, 0.1, 0.2);
-            textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
         }
 
         gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
