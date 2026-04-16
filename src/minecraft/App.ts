@@ -1506,12 +1506,19 @@ export class MinecraftAnimation extends CanvasAnimation {
           Chunk.blockTypeAir,
         );
       }
+    }
   }
 
   private tickWater(): void {
     if (this.waterDirty.size === 0) return;
 
-    const toPlace: { sourceKey: string; x: number; y: number; z: number; blockType: number }[] = [];
+    const toPlace: {
+      sourceKey: string;
+      x: number;
+      y: number;
+      z: number;
+      blockType: number;
+    }[] = [];
     const nextDirty = new Set<string>();
 
     for (const posKey of this.waterDirty) {
@@ -1519,7 +1526,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
       const chunkKey = `${this.worldToChunkCoord(x)},${this.worldToChunkCoord(z)}`;
       const chunk = this.renderedChunks.get(chunkKey);
-      if (!chunk) { nextDirty.add(posKey); continue; } // chunk unloaded — retry later
+      if (!chunk) {
+        nextDirty.add(posKey);
+        continue;
+      } // chunk unloaded — retry later
 
       const blockType = chunk.cubeType(x, z, y);
       if (!chunk.isWater(x, z, y)) continue;
@@ -1535,7 +1545,13 @@ export class MinecraftAnimation extends CanvasAnimation {
 
       if (belowIsOpen || belowIsHorizontalFlow) {
         // Falling takes priority over spreading — handle it and move on.
-        toPlace.push({ sourceKey: posKey, x, y: y - 1, z, blockType: Chunk.blockTypeWaterFalling });
+        toPlace.push({
+          sourceKey: posKey,
+          x,
+          y: y - 1,
+          z,
+          blockType: Chunk.blockTypeWaterFalling,
+        });
         continue;
       }
 
@@ -1547,7 +1563,8 @@ export class MinecraftAnimation extends CanvasAnimation {
         // Source water doesn't need to spread horizontally if it already has a
         // waterfall below — the base of the fall handles the spread.
         const belowIsSourceOrFalling =
-          below === Chunk.blockTypeWater || below === Chunk.blockTypeWaterFalling;
+          below === Chunk.blockTypeWater ||
+          below === Chunk.blockTypeWaterFalling;
         if (!belowIsSourceOrFalling) {
           spreadAs = Chunk.blockTypeWaterFlowLevel3;
         }
@@ -1565,14 +1582,24 @@ export class MinecraftAnimation extends CanvasAnimation {
 
       if (spreadAs === null) continue;
 
-      for (const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
-        const nx = x + dx, nz = z + dz;
+      for (const [dx, dz] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as [number, number][]) {
+        const nx = x + dx,
+          nz = z + dz;
         const nChunkKey = `${this.worldToChunkCoord(nx)},${this.worldToChunkCoord(nz)}`;
         const nChunk = this.renderedChunks.get(nChunkKey);
-        if (!nChunk) { nextDirty.add(posKey); continue; } // retry when neighbor chunk loads
+        if (!nChunk) {
+          nextDirty.add(posKey);
+          continue;
+        } // retry when neighbor chunk loads
 
         const neighbor = nChunk.cubeType(nx, nz, y);
-        const neighborIsOpen = neighbor === undefined || neighbor === Chunk.blockTypeAir;
+        const neighborIsOpen =
+          neighbor === undefined || neighbor === Chunk.blockTypeAir;
 
         // Also overwrite a weaker flow block if we can improve it.
         // Lower ID = more water (Level3=100 > Level2=101 > Level1=102), so spreadAs < neighbor means stronger.
@@ -1583,7 +1610,13 @@ export class MinecraftAnimation extends CanvasAnimation {
           spreadAs < neighbor;
 
         if (neighborIsOpen || neighborIsWeakerFlow) {
-          toPlace.push({ sourceKey: posKey, x: nx, y, z: nz, blockType: spreadAs });
+          toPlace.push({
+            sourceKey: posKey,
+            x: nx,
+            y,
+            z: nz,
+            blockType: spreadAs,
+          });
         }
       }
     }
@@ -1614,6 +1647,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.deltaMaps.set(chunkKey, deltaMap);
       writtenThisTick.set(posKey, blockType);
       this.waterDirty.add(posKey);
+    }
+  }
 
   public leftClick(cubeSelected: boolean): void {
     if (!cubeSelected) {
@@ -1664,7 +1699,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (
       brokenCubeType !== undefined &&
       brokenCubeType !== Chunk.blockTypeAir &&
-      !chunk.isWater(this.selectedCubePosition.x, this.selectedCubePosition.z, this.selectedCubePosition.y)
+      !chunk.isWater(
+        this.selectedCubePosition.x,
+        this.selectedCubePosition.z,
+        this.selectedCubePosition.y,
+      )
     ) {
       this.blocksBroken++;
     }
@@ -1674,8 +1713,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     const bx = this.selectedCubePosition.x;
     const by = this.selectedCubePosition.y;
     const bz = this.selectedCubePosition.z;
-    for (const [dx, dy, dz] of [[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]] as [number,number,number][]) {
-      this.waterDirty.add(`${bx+dx},${by+dy},${bz+dz}`);
+    for (const [dx, dy, dz] of [
+      [0, 1, 0],
+      [0, -1, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ] as [number, number, number][]) {
+      this.waterDirty.add(`${bx + dx},${by + dy},${bz + dz}`);
     }
   }
 
@@ -1719,7 +1765,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         );
 
         // Test falling blocks (water manages its own gravity via tickWater)
-        if (!chunk.isWater(cubeX, cubeZ, cubeY) && chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
+        if (
+          !chunk.isWater(cubeX, cubeZ, cubeY) &&
+          chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir
+        ) {
           const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
           this.fallingBlocks.push(
             new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
@@ -1731,8 +1780,16 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.blocksPlaced++;
 
         // The placed block and all its neighbors may now trigger water flow updates
-        for (const [dx, dy, dz] of [[0,0,0],[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]] as [number,number,number][]) {
-          this.waterDirty.add(`${cubeX+dx},${cubeY+dy},${cubeZ+dz}`);
+        for (const [dx, dy, dz] of [
+          [0, 0, 0],
+          [0, 1, 0],
+          [0, -1, 0],
+          [1, 0, 0],
+          [-1, 0, 0],
+          [0, 0, 1],
+          [0, 0, -1],
+        ] as [number, number, number][]) {
+          this.waterDirty.add(`${cubeX + dx},${cubeY + dy},${cubeZ + dz}`);
         }
 
         this.inventory.editSlotCount(

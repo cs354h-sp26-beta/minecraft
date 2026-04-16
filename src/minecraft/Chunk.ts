@@ -25,7 +25,7 @@ export class Chunk {
   public static readonly blockTypeWaterFlowLevel3: number = 100; // most water, 1 step from source/falling
   public static readonly blockTypeWaterFlowLevel2: number = 101; // 2 steps out
   public static readonly blockTypeWaterFlowLevel1: number = 102; // least water, max spread (does not spread further)
-  
+
   public static readonly blockTypeCoalOre: number = 3;
   public static readonly blockTypeIronOre: number = 4;
   public static readonly blockTypeGoldOre: number = 5;
@@ -635,7 +635,11 @@ export class Chunk {
     if (y < 0) return true; // below world is always opaque
     const t = this.getLocalCubeType(i, j, y);
     if (t === Chunk.blockTypeAir) return false;
-    if (t >= Chunk.blockTypeWaterFlowLevel3 && t <= Chunk.blockTypeWaterFlowLevel1) return false;
+    if (
+      t >= Chunk.blockTypeWaterFlowLevel3 &&
+      t <= Chunk.blockTypeWaterFlowLevel1
+    )
+      return false;
     return true;
   }
 
@@ -1214,7 +1218,9 @@ export class Chunk {
     return (
       t === Chunk.blockTypeWater ||
       t === Chunk.blockTypeWaterFalling ||
-      (t !== undefined && t >= Chunk.blockTypeWaterFlowLevel3 && t <= Chunk.blockTypeWaterFlowLevel1)
+      (t !== undefined &&
+        t >= Chunk.blockTypeWaterFlowLevel3 &&
+        t <= Chunk.blockTypeWaterFlowLevel1)
     );
   }
 
@@ -1223,7 +1229,9 @@ export class Chunk {
     const t = this.cubeType(worldX, worldZ, worldY);
     return (
       t === Chunk.blockTypeWaterFalling ||
-      (t !== undefined && t >= Chunk.blockTypeWaterFlowLevel3 && t <= Chunk.blockTypeWaterFlowLevel1)
+      (t !== undefined &&
+        t >= Chunk.blockTypeWaterFlowLevel3 &&
+        t <= Chunk.blockTypeWaterFlowLevel1)
     );
   }
 }
