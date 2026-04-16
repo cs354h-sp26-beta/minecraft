@@ -118,6 +118,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private enemies: Enemy[];
   private selectedEnemy: Enemy | null;
   private selectedEnemyDistance: number;
+  private readonly meleeAttackRange: number = 5;
   private achievements: Achievement[];
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
@@ -163,10 +164,13 @@ export class MinecraftAnimation extends CanvasAnimation {
   private hungerTimer: number;
   private starvationTimer: number;
   private regenHealthTimer: number;
-  private readonly regenHealthFoodThreshold: number = 0.9; // player must have at least 90% food to regen health
+  private lavaDamageTimer: number;
+  private readonly regenHealthFoodThreshold: number = 0.7; // player must have at least 70% food to regen health
   private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
   private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
-  private readonly regenHealthInterval: number = 4; // player regenerates health at this interval when the threshold is met
+  private readonly regenHealthInterval: number = 2; // player regenerates health at this interval when the threshold is met
+  private readonly lavaDamageInterval: number = 1; // player takes damage this often while standing in lava
+  private readonly lavaDamageAmount: number = 1; // damage dealt per lava tick
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -267,6 +271,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.hungerTimer = 0;
     this.starvationTimer = 0;
     this.regenHealthTimer = 0;
+    this.lavaDamageTimer = 0;
 
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
@@ -696,6 +701,35 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
       for (const sampleY of sampleHeights) {
         if (chunk.isWater(sampleX, sampleZ, sampleY)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private doesPlayerTouchLava(chunkProvider: Chunk.ColumnProvider): boolean {
+    const feetY = this.player.position.y - this.player.hitboxHeight;
+    const sampleHeights = [feetY - 0.6, feetY - 0.1, feetY + 0.4, feetY + 0.9];
+    const offset = this.player.hitboxRadius * 0.7;
+    const sampleOffsets = [
+      [0, 0],
+      [offset, 0],
+      [-offset, 0],
+      [0, offset],
+      [0, -offset],
+    ];
+
+    for (const [dx, dz] of sampleOffsets) {
+      const sampleX = this.player.position.x + dx;
+      const sampleZ = this.player.position.z + dz;
+      const chunk = chunkProvider(Math.round(sampleX), Math.round(sampleZ));
+      if (!chunk) {
+        continue;
+      }
+      for (const sampleY of sampleHeights) {
+        if (chunk.isLava(sampleX, sampleZ, sampleY)) {
           return true;
         }
       }
@@ -1800,6 +1834,17 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.starvationTimer = 0;
     }
 
+    // Lava damage
+    if (!this.player.isDead() && this.doesPlayerTouchLava(prov)) {
+      this.lavaDamageTimer += dt;
+      if (this.lavaDamageTimer >= this.lavaDamageInterval) {
+        this.lavaDamageTimer = 0;
+        this.player.takeDamage(this.lavaDamageAmount);
+      }
+    } else {
+      this.lavaDamageTimer = 0;
+    }
+
     // Update health
     if (
       this.player.food >=
@@ -2346,8 +2391,19 @@ export class MinecraftAnimation extends CanvasAnimation {
       const currBlockPos = queue[queueHead++];
       blocksToUpdate.push(currBlockPos);
 
-      // Check if current block is touching "ground" by checking y = 0
-      if (currBlockPos![1] === 0) {
+      let isPortal = false;
+      if (this.portals.length > 0) {
+        let chunk = this.getChunkAtWorld(currBlockPos[0], currBlockPos[2])!;
+        const blockType = chunk.cubeType(
+            currBlockPos[0],
+            currBlockPos[2],
+            currBlockPos[1],
+        )!;
+        isPortal = blockType === Chunk.blockTypePortal || blockType == Chunk.blockTypePortalFrame;
+      }
+
+      // Check if current block is touching "ground" by checking y = 0 or if it's a portal
+      if (currBlockPos![1] === 0 || isPortal) {
         foundGround = true;
         break;
       }
@@ -2567,7 +2623,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public leftClick(cubeSelected: boolean): void {
-    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
+    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= this.meleeAttackRange) {
       const enemy = this.selectedEnemy;
       this.attackEnemy(enemy, 5);
       this.selectedEnemy = null;
@@ -2600,7 +2656,8 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.selectedCubePosition.y,
       ) ||
       brokenCubeType === Chunk.blockTypePortal ||
-      brokenCubeType === Chunk.blockTypePortalFrame
+      brokenCubeType === Chunk.blockTypePortalFrame ||
+      brokenCubeType === Chunk.blockTypeLava
     ) {
       return;
     }
@@ -3196,8 +3253,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
   }
 
-  public attackEnemy(enemy: Enemy, amount: number): void {
-    enemy.takeDamage(5);
+  public attackEnemy(enemy: Enemy, amount: number = 5): void {
+    enemy.takeDamage(amount);
     if (enemy.isDead()) {
       const idx = this.enemies.indexOf(enemy);
       if (idx >= 0) {
@@ -3302,7 +3359,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     const y = centerY - size / 2;
 
     const targetingEnemy =
-      this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
+      this.selectedEnemy !== null &&
+        ((this.selectedEnemyDistance <= this.meleeAttackRange)
+        || (this.inventory.getHeldItem()?.itemType?.id === "blaster")); // blaster range is infinite
 
     ctx.save();
     ctx.globalAlpha = 0.75;
@@ -3390,7 +3449,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // visibility factors
     const MAX_DIST = 15;
-    const FADE_START = 7; // fully opaque within this radius; fades from here to MAX_DIST
+    const INJURED_MAX_DIST = 2 * MAX_DIST;
+    //const FADE_START = 7; // fully opaque within this radius; fades from here to MAX_DIST
 
     // Bar dimensions in canvas pixels.
     const BAR_W = 50;
@@ -3417,15 +3477,18 @@ export class MinecraftAnimation extends CanvasAnimation {
       const dy = enemy.position.y - playerPos.y;
       const dz = enemy.position.z - playerPos.z;
       const distSq = dx * dx + dy * dy + dz * dz;
-      if (distSq > MAX_DIST * MAX_DIST) continue;
+      const shouldRender = distSq <= MAX_DIST * MAX_DIST
+        || (enemy.health < enemy.maxHealth && distSq <= INJURED_MAX_DIST * INJURED_MAX_DIST)
+        || (enemy === this.selectedEnemy && this.inventory.getHeldItem()?.itemType?.id === "blaster"); // always show health bar for targeted enemy with blaster
+      if (!shouldRender) continue;
 
       const dist = Math.sqrt(distSq);
       let alpha = 1.0;
-      if (dist > FADE_START) {
-        // Linear fade from 1.0 at FADE_START to 0.0 at MAX_DIST.
-        alpha = 1.0 - (dist - FADE_START) / (MAX_DIST - FADE_START);
-      }
-      if (alpha <= 0) continue;
+      // if (dist > FADE_START) {
+      //   // Linear fade from 1.0 at FADE_START to 0.0 at MAX_DIST.
+      //   alpha = 1.0 - (dist - FADE_START) / (MAX_DIST - FADE_START);
+      // }
+      // if (alpha <= 0) continue;
 
       // --- world -> clip space ---
       const worldPos = new Vec4([
