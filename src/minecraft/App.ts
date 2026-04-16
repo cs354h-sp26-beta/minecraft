@@ -28,7 +28,6 @@ import {
   ItemStack,
   itemTypes,
   registerItemTypes,
-  registerRecipes,
 } from "./Inventory.js";
 
 type Achievement = {
@@ -105,6 +104,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private enemies: Enemy[];
   private selectedEnemy: Enemy | null;
+  private selectedEnemyDistance: number;
   private achievements: Achievement[];
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
@@ -113,9 +113,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   private successfulJumps: number;
 
   /* Inventory */
-  private inventory: Inventory;
-  private selectedHotbarIdx: number;
+  public inventory: Inventory;
   private isInInventory: boolean;
+
+  private doubleJumpAvailable: boolean;
+  private jetpackFuel: number;
+  private blasterCooldown: number;
 
   /**
    * Entities whose chunk is not in `renderedChunks` are parked here by chunk key.
@@ -150,7 +153,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     registerItemTypes();
-    registerRecipes();
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
@@ -216,7 +218,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
 
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
@@ -418,7 +422,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private resetInventoryState(): void {
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
+    this.isInInventory = false;
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -1369,11 +1376,29 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
+    this.blasterCooldown = Math.max(0, this.blasterCooldown - dt);
 
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+
     if (!this.player.isDead()) {
+      const heldId = this.inventory.getHeldItem()?.itemType.id ?? null;
+      if (
+        this.inventory.hasEquipmentById("jetpack") &&
+        this.gui.isSpaceDown &&
+        this.jetpackFuel > 0 &&
+        !this.isPlayerGrounded(prov)
+      ) {
+        this.player.velocity.y += 18.0 * dt;
+        this.jetpackFuel = Math.max(0, this.jetpackFuel - 20.0 * dt);
+      } else {
+        this.jetpackFuel = Math.min(100, this.jetpackFuel + 12.0 * dt);
+      }
+
       this.player.update(this.gui.walkDir(), prov, dt);
       this.updatePlayerFallDamage(prov);
+      if (this.isPlayerGrounded(prov)) {
+        this.doubleJumpAvailable = true;
+      }
     } else {
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
@@ -1625,9 +1650,24 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.player.isDead()) {
       return;
     }
-    const previousVelocityY = this.player.velocity.y;
-    this.player.jump(prov);
-    if (this.player.velocity.y > previousVelocityY) {
+
+    const grounded = this.isPlayerGrounded(prov);
+    if (grounded) {
+      const previousVelocityY = this.player.velocity.y;
+      this.player.jump(prov);
+      if (this.player.velocity.y > previousVelocityY) {
+        this.successfulJumps++;
+      }
+      this.doubleJumpAvailable = true;
+      return;
+    }
+
+    if (
+      this.doubleJumpAvailable &&
+        (this.inventory.hasEquipmentById("boots") || this.inventory.hasEquipmentById("jetpack"))
+    ) {
+      this.player.velocity.y = Math.max(this.player.velocity.y, 8.5);
+      this.doubleJumpAvailable = false;
       this.successfulJumps++;
     }
   }
@@ -1695,13 +1735,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     // --- Enemies ---
-    const maxEnemyReach = 6;
     let bestEnemyT = Infinity;
     let bestEnemy: Enemy | null = null;
     for (const enemy of this.enemies) {
       if (enemy.isDead()) continue;
       const t = this.intersectEnemyAABB(rayPos, rayDir, enemy);
-      if (t < bestEnemyT && t <= maxEnemyReach) {
+      if (t < bestEnemyT) {
         bestEnemyT = t;
         bestEnemy = enemy;
       }
@@ -1710,6 +1749,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Prefer enemies
     if (bestEnemy !== null && bestEnemyT < bestCubeT) {
       this.selectedEnemy = bestEnemy;
+      this.selectedEnemyDistance = bestEnemyT;
       this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 0]);
       this.isectNormal = new Vec3();
       return true;
@@ -1856,7 +1896,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public leftClick(cubeSelected: boolean): void {
-    if (this.selectedEnemy !== null) {
+    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
       const enemy = this.selectedEnemy;
       enemy.takeDamage(5);
       if (enemy.isDead()) {
@@ -1925,7 +1965,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public rightClick(cubeSelected: boolean) {
-    const item = this.heldItem();
+    const item = this.inventory.getHeldItem();
     if (item === null) {
       return;
     }
@@ -1936,7 +1976,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(item!, this.player);
+        itemType.useAction(this, item!, this.player);
         return;
       }
       case ItemAction.Place: {
@@ -1967,7 +2007,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.blocksPlaced++;
 
         this.inventory.editSlotCount(
-          Inventory.slotIndex(this.selectedHotbarIdx, 0),
+          Inventory.slotIndex(this.inventory.selectedHotbarIdx, 0),
           item!.count - 1,
         );
       }
@@ -1998,17 +2038,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.drawEnemyHealthbars();
     this.drawMinimap();
     this.drawAchievementToast();
-    this.drawCrosshair();
-    if (this.player.isDead()) {
-      this.drawDeathOverlay();
-    }
 
     if (this.isInInventory) {
       this.inventory.drawInventoryScreen(
         this.overlayCtx,
         this.canvas2d.width,
         this.canvas2d.height,
-        this.selectedHotbarIdx,
         this.gui.mouseX,
         this.gui.mouseY,
       );
@@ -2016,11 +2051,15 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.inventory.drawHotbar(
         this.overlayCtx,
         this.canvas2d.width,
-        this.canvas2d.height,
-        this.selectedHotbarIdx,
+        this.canvas2d.height
       );
       this.drawHealthBar();
       this.drawHungerBar();
+      this.drawCrosshair();
+    }
+
+    if (this.player.isDead()) {
+      this.drawDeathOverlay();
     }
 
     ctx.restore();
@@ -2245,23 +2284,26 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
   }
 
-  public setHotbarSlot(number: number) {
-    this.selectedHotbarIdx = number;
-  }
-
-  public heldItem(): ItemStack | null {
-    return this.inventory.getItemStack(
-      Inventory.slotIndex(this.selectedHotbarIdx, 0),
-    );
-  }
-
-  public dropHeldItem(): void {
-    const index = Inventory.slotIndex(this.selectedHotbarIdx, 0);
-    const item = this.inventory.getItemStack(index);
-    if (item) {
-      this.inventory.editSlotCount(index, item.count - 1);
+  public fireBlaster(): void {
+    if (this.blasterCooldown > 0) {
+      return;
     }
+
+    if (!this.inventory.removeItemById("ammo", 1)) {
+      return;
+    }
+
+    if (this.selectedEnemy !== null) {
+      this.selectedEnemy.takeDamage(8);
+      if (this.selectedEnemy.isDead()) {
+        const idx = this.enemies.indexOf(this.selectedEnemy);
+        this.enemies.splice(idx, 1);
+      }
+    }
+
+    this.blasterCooldown = 0.35;
   }
+
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;
 
@@ -2338,7 +2380,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const x = centerX - size / 2;
     const y = centerY - size / 2;
 
-    const targetingEnemy = this.selectedEnemy !== null;
+    const targetingEnemy = this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
 
     ctx.save();
     ctx.globalAlpha = 0.75;

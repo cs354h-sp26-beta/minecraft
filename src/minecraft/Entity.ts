@@ -344,7 +344,6 @@ export class Enemy extends Entity {
       this.faceTowards(player.position, dt);
       this.attackTime -= dt;
       if (this.attackTime <= 0) {
-        console.log(`Dist: ${Vec3.distance(this.position, player.position)}`);
         if (Vec3.distance(this.position, player.position) < 5) {
           player.takeDamage(3);
         }
