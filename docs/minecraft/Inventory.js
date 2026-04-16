@@ -66,6 +66,7 @@ export function registerItemTypes() {
     registerItem("sand", "Sand").setAction(ItemAction.Place, Chunk.blockTypeSand);
     registerItem("sandstone", "Sandstone").setAction(ItemAction.Place, Chunk.blockTypeSandstone);
     registerItem("snow", "Snow").setAction(ItemAction.Place, Chunk.blockTypeSnow);
+    registerItem("netherrack", "Netherrack").setAction(ItemAction.Place, Chunk.blockTypeNetherRack);
     registerItem("netherite", "Netherite").setAction(ItemAction.Place, Chunk.blockTypeNetherite);
     registerItem("portal_frame", "Portal Frame", 32).setAction(ItemAction.Place, Chunk.blockTypePortalFrame);
     registerItem("water_bucket", "Water Bucket", 1).setAction(ItemAction.Place, Chunk.blockTypeWater);
@@ -122,6 +123,8 @@ export class ItemStack {
                 return new ItemStack(itemTypes.get("sandstone"), 1);
             case Chunk.blockTypeSnow:
                 return new ItemStack(itemTypes.get("snow"), 1);
+            case Chunk.blockTypeNetherRack:
+                return new ItemStack(itemTypes.get("netherrack"), 1);
             case Chunk.blockTypeNetherite:
                 return new ItemStack(itemTypes.get("netherite"), 1);
             case DecorationGenerator.blockTypeWood:

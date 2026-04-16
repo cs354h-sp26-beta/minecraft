@@ -116,6 +116,10 @@ export function registerItemTypes() {
     Chunk.blockTypeSandstone,
   );
   registerItem("snow", "Snow").setAction(ItemAction.Place, Chunk.blockTypeSnow);
+  registerItem("netherrack", "Netherrack").setAction(
+      ItemAction.Place,
+      Chunk.blockTypeNetherRack,
+  );
   registerItem("netherite", "Netherite").setAction(
     ItemAction.Place,
     Chunk.blockTypeNetherite,
@@ -200,7 +204,9 @@ export class ItemStack {
         return new ItemStack(itemTypes.get("sandstone")!, 1);
       case Chunk.blockTypeSnow:
         return new ItemStack(itemTypes.get("snow")!, 1);
-      case Chunk.blockTypeNetherite:
+      case Chunk.blockTypeNetherRack:
+        return new ItemStack(itemTypes.get("netherrack")!, 1);
+        case Chunk.blockTypeNetherite:
         return new ItemStack(itemTypes.get("netherite")!, 1);
       case DecorationGenerator.blockTypeWood:
       case DecorationGenerator.blockTypeBirchWood:
