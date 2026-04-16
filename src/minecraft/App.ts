@@ -1409,6 +1409,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Update falling blocks
     let newFallingBlocks: Block[] = [];
+    let chunksToUpdate = new Set<Chunk>();
     this.fallingBlocks.forEach((fallingBlock) => {
       const blockChunk = this.getChunkAtWorld(
         fallingBlock.position.x,
@@ -1422,15 +1423,19 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (fallingBlock.update(dt, blockChunk)) {
         newFallingBlocks.push(fallingBlock);
       } else {
-        blockChunk.changeCubeType(
+        blockChunk.changeCubeTypeNoUpdate(
           fallingBlock.position.x,
           fallingBlock.position.z,
           fallingBlock.position.y,
           fallingBlock.type,
         );
+        chunksToUpdate.add(blockChunk);
       }
     });
     this.fallingBlocks = newFallingBlocks;
+    for (const chunk of chunksToUpdate) {
+      chunk.updateCubePositionsAndTypes();
+    }
 
     // Water simulation tick
     this.frameCount++;
@@ -1772,9 +1777,12 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
       }
     }
+
     // Do nothing if ground is found, but mark all blocks searched as falling if ground is not found
     if (foundGround === false) {
+      let chunksToUpdate = new Set<Chunk>();
       for (const blockPos of blocksToUpdate) {
+        let chunk = this.getChunkAtWorld(blockPos![0], blockPos![2])!;
         const fallingBlockType = chunk.cubeType(
           blockPos![0],
           blockPos![2],
@@ -1786,12 +1794,16 @@ export class MinecraftAnimation extends CanvasAnimation {
             fallingBlockType,
           ),
         );
-        chunk.changeCubeType(
+        chunk.changeCubeTypeNoUpdate(
           blockPos![0],
           blockPos![2],
           blockPos![1],
           Chunk.blockTypeAir,
         );
+        chunksToUpdate.add(chunk);
+      }
+      for (const chunk of chunksToUpdate) {
+        chunk.updateCubePositionsAndTypes();
       }
     }
   }
