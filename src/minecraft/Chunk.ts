@@ -598,8 +598,25 @@ export class Chunk {
       return biome.subsurfaceBlock;
     }
 
-    // Cave carving
+    // Ravine carving — two 2D noise channels intersect
+    // A ravine exists only where both noise values are near 0.5 simultaneously,
+    // producing eelongated cuts through the terrain with a V-shaped cross-section
     const depth = columnHeight - y;
+    if (depth >= 2 && y > 1) {
+      const r1 = this.sampleValueNoise(worldX, worldZ, 170, 0.012) - 0.5;
+      const r2 = this.sampleValueNoise(worldX, worldZ, 171, 0.018) - 0.5;
+
+      // V-shape: wider near surface, narrower deeper down
+      const maxRavineDepth = Math.min(columnHeight - 3, 30);
+      const depthFrac = Math.min(1, (depth - 2) / maxRavineDepth);
+      const widthThreshold = 0.035 * (1.0 - depthFrac * 0.8);
+
+      if (Math.abs(r1) < widthThreshold && Math.abs(r2) < 0.09) {
+        return Chunk.blockTypeAir;
+      }
+    }
+
+    // Cave carving
     if (depth >= 5) {
       if (this.perlinNoise3D(worldX, y, worldZ, 160, 0.05) > 0.3) {
         return Chunk.blockTypeAir;
