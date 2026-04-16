@@ -352,12 +352,16 @@ export class Enemy extends Entity {
     }
 
     if (this.attackTime <= 0 && distToPlayer < 2) {
-        this.setState(EnemyState.Attacking);
-        this.attackTime = 1;
-        this.path = null;
+      this.setState(EnemyState.Attacking);
+      this.attackTime = 1;
+      this.path = null;
     }
 
-    if (this.state != EnemyState.Attacking && !insideStandoff && (this.pathTimer > 1.0 || this.path === null || this.path.length === 0)) {
+    if (
+      this.state != EnemyState.Attacking &&
+      !insideStandoff &&
+      (this.pathTimer > 1.0 || this.path === null || this.path.length === 0)
+    ) {
       this.pathTimer = 0;
       const enemyFeet = new Vec3([
         this.position.x,
@@ -397,7 +401,12 @@ export class Enemy extends Entity {
     if (insideStandoff) {
       // Already close enough to the player — hold position (but keep facing them).
       this.faceTowards(player.position, dt);
-      super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), this.speed, chunkProvider, dt);
+      super.stepPhysics(
+        new Vec3([0.0, 0.0, 0.0]),
+        this.speed,
+        chunkProvider,
+        dt,
+      );
     } else if (this.path && this.pathIndex < this.path.length) {
       const target = this.path[this.pathIndex];
       const distance = Math.sqrt(
