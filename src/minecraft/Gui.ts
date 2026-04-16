@@ -45,6 +45,8 @@ export class GUI implements IGUI {
 
   private _pointerLocked: boolean;
   private canvas: HTMLCanvasElement;
+  private _mouseX: number;
+  private _mouseY: number;
 
   /**
    *
@@ -64,6 +66,8 @@ export class GUI implements IGUI {
     this.Sdown = false;
     this.Ddown = false;
     this._pointerLocked = false;
+    this._mouseX = 0;
+    this._mouseY = 0;
 
     this.animation = animation;
 
@@ -131,8 +135,25 @@ export class GUI implements IGUI {
     return this._pointerLocked;
   }
 
+  public get mouseX(): number {
+    return this._mouseX;
+  }
+
+  public get mouseY(): number {
+    return this._mouseY;
+  }
+
   public dragStart(mouse: MouseEvent): void {
-    if (this.animation.isPlayerDead() || !this._pointerLocked) {
+    if (this.animation.isPlayerDead()) {
+      return;
+    }
+
+    if (this.animation.isInventoryOpen()) {
+      this.animation.inventoryClick(mouse.offsetX, mouse.offsetY, mouse.button);
+      return;
+    }
+
+    if (!this._pointerLocked) {
       return;
     }
 
@@ -157,6 +178,9 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
+    this._mouseX = mouse.offsetX;
+    this._mouseY = mouse.offsetY;
+
     if (this.animation.isPlayerDead()) {
       return;
     }
@@ -296,8 +320,24 @@ export class GUI implements IGUI {
         this.animation.giveRandomItem();
         break;
       }
+      case "KeyE": {
+        this.animation.toggleInventory();
+        break;
+      }
+      case "KeyQ": {
+        this.animation.dropHeldItem();
+        break;
+      }
+      case "KeyP": {
+        this.animation.giveAllItems();
+        break;
+      }
       case "KeyG": {
         this.animation.toggleAchievements();
+        break;
+      }
+      case "Escape": {
+        this.animation.toggleInventory(false);
         break;
       }
       case "Space": {
@@ -357,10 +397,8 @@ export class GUI implements IGUI {
       this.dragEnd(mouse),
     );
 
-    // TODO: document.exitPointerLock() on inventory open or anything else you need mouse for
-
     canvas.addEventListener("click", () => {
-      if (!this._pointerLocked) {
+      if (!this._pointerLocked && !this.animation.isInventoryOpen()) {
         canvas.requestPointerLock();
       }
     });
