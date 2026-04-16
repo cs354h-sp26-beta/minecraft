@@ -2833,6 +2833,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.position.y += linked.position.y - currentPortal.position.y;
     this.player.position.z += linked.position.z - currentPortal.position.z;
 
+    this.fallDamageArmed = false;
+
     // Rotate the camera based on the two portal normals.
     const srcAngle = Math.atan2(currentPortal.normal.x, currentPortal.normal.z);
     const dstAngle = Math.atan2(linked.normal.x, linked.normal.z);
