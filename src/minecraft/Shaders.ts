@@ -918,6 +918,7 @@ export const skyboxFSText = `
     precision highp float;
 
     uniform float uTime;
+    uniform float uIsNether;
 
     varying vec3 vDirection;
 
@@ -1239,6 +1240,14 @@ export const skyboxFSText = `
 
             float starTransmittance = mix(transmittance, pow(transmittance, 0.45), nightMix);
             color = cloudAccum + transmittance * skyBackground + starTransmittance * starBackground;
+        }
+
+        // Nether
+        if (uIsNether > 0.5) {
+            vec3 netherHorizon = vec3(0.35, 0.04, 0.02);
+            vec3 netherZenith  = vec3(0.5, 0.0, 0.0);
+            float nh = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+            color = mix(netherHorizon, netherZenith, pow(nh, 0.6));
         }
 
         gl_FragColor = vec4(color, 1.0);

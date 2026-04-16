@@ -15,6 +15,8 @@ export type Collision = {
   belowEntity: boolean;
 };
 
+const GRAVITY = -30;
+
 class Entity {
   // The entity's head position in world coordinates.
   public position: Vec3;
@@ -110,7 +112,7 @@ class Entity {
     const grounded = floorHead !== -Infinity && py <= floorHead + 0.02;
 
     if (!grounded) {
-      this.velocity.add(new Vec3([0.0, -9.8 * dt, 0.0]));
+      this.velocity.add(new Vec3([0.0, GRAVITY * dt, 0.0]));
     } else {
       const v = this.velocity.copy();
       if (v.y < 0) v.y = 0;
@@ -172,7 +174,10 @@ class Entity {
     }
   }
 
-  public jump(chunkProvider: Chunk.ColumnProvider) {
+  public jump(
+    chunkProvider: Chunk.ColumnProvider,
+    velocity: number = GRAVITY * -0.25,
+  ) {
     const r = this.hitboxRadius;
     const h = this.hitboxHeight;
     const footSlack = 0.55;
@@ -195,7 +200,7 @@ class Entity {
     ) {
       return;
     }
-    this.velocity.add(new Vec3([0.0, 10.0, 0.0]));
+    this.velocity.add(new Vec3([0.0, velocity, 0.0]));
   }
 
   public takeDamage(amount: number = 1) {
@@ -234,8 +239,11 @@ class Entity {
 }
 
 export class Player extends Entity {
+  private speed: number;
+
   constructor(position: Vec3) {
     super(position, 0.4, 2.0, 20, 20);
+    this.speed = 0.2;
   }
 
   public update(
@@ -243,11 +251,11 @@ export class Player extends Entity {
     chunkProvider: Chunk.ColumnProvider,
     dt: number,
   ) {
-    super.stepPhysics(lookDir, 0.4, chunkProvider, dt);
+    super.stepPhysics(lookDir, this.speed, chunkProvider, dt);
   }
 
   public jump(chunkProvider: Chunk.ColumnProvider) {
-    super.jump(chunkProvider);
+    super.jump(chunkProvider, GRAVITY * -0.5);
   }
 
   // Detects if the player collides with any blocks in the given chunk.
@@ -491,7 +499,7 @@ export class Block {
     }
 
     // Apply gravity acceleration.
-    const gDelta = -9.8 * 2 * dt;
+    const gDelta = GRAVITY * 2 * dt;
     const gDv = new Vec3([0.0, gDelta, 0.0]);
     this.velocity.add(gDv);
     return true;
@@ -503,7 +511,9 @@ export class Block {
   public collidesWithChunk(c: Chunk): Collision[] {
     if (
       c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
-      Chunk.blockTypeAir
+        Chunk.blockTypeAir &&
+      c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
+        Chunk.blockTypeWater
     ) {
       return [
         {

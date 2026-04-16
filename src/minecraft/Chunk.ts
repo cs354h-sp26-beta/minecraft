@@ -1390,7 +1390,11 @@ export class Chunk {
     let colMax = -Infinity;
     for (let iy = 0; iy <= yMaxInclusive; iy++) {
       const type = this.cubeType(columnWorldX, columnWorldZ, iy);
-      if (type === undefined || type === Chunk.blockTypeAir) {
+      if (
+        type === undefined ||
+        type === Chunk.blockTypeAir ||
+        type === Chunk.blockTypeWater
+      ) {
         continue;
       }
       const top = iy + 0.5;

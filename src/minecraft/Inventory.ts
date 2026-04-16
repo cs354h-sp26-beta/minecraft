@@ -217,6 +217,8 @@ export class Inventory {
     this.selectedCraftingRecipeIdx = 0;
     this.selectedHotbarIdx = 0;
     this.itemsCrafted = 0;
+
+    this.insertItemById("portal_frame", 32);
   }
 
   public insertStack(itemStack: ItemStack | null): boolean {
