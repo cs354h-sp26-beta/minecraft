@@ -61,6 +61,7 @@ class Entity {
   // Does base physics updates for entities.
   public stepPhysics(
     lookDir: Vec3,
+    speed: number,
     chunkProvider: Chunk.ColumnProvider,
     dt: number,
   ) {
@@ -70,7 +71,7 @@ class Entity {
 
     const momentumH = this.velocity.scale(dt, new Vec3());
     momentumH.y = 0;
-    lookDir = lookDir.scale(0.4, new Vec3());
+    lookDir = lookDir.scale(speed, new Vec3());
     const totalH = lookDir.add(momentumH, new Vec3());
 
     let px = this.position.x;
@@ -239,7 +240,7 @@ export class Player extends Entity {
     chunkProvider: Chunk.ColumnProvider,
     dt: number,
   ) {
-    super.stepPhysics(lookDir, chunkProvider, dt);
+    super.stepPhysics(lookDir, 0.4, chunkProvider, dt);
   }
 
   public jump(chunkProvider: Chunk.ColumnProvider) {
@@ -263,6 +264,8 @@ enum EnemyState {
 export class Enemy extends Entity {
   public yaw: number;
 
+  private speed: number;
+
   public mesh: Mesh;
 
   private state: EnemyState;
@@ -275,7 +278,7 @@ export class Enemy extends Entity {
 
   constructor(mesh: Mesh, position: Vec3) {
     // HACK: Enemy centered at CoM rather than head.
-    super(position, 0.4, 1.0, 20, 20);
+    super(position, 0.4, 1.5, 20, 20);
     this.yaw = 0.0;
     this.mesh = new Mesh(mesh);
     this.mesh.setPose(enemyIdlePose);
@@ -283,6 +286,7 @@ export class Enemy extends Entity {
     this.path = [];
     this.pathIndex = 0;
     this.pathTimer = 0;
+    this.speed = 0.1;
   }
 
   private setState(state: EnemyState) {
@@ -375,10 +379,10 @@ export class Enemy extends Entity {
         this.jump(chunkProvider);
       }
 
-      super.stepPhysics(this.lookDir(), chunkProvider, dt);
+      super.stepPhysics(this.lookDir(), this.speed, chunkProvider, dt);
     } else {
       // no path or reached the end of path...stand still
-      super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), chunkProvider, dt);
+      super.stepPhysics(new Vec3([0.0, 0.0, 0.0]), this.speed, chunkProvider, dt);
     }
 
     if (this.path && this.pathIndex < this.path.length) {

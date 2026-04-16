@@ -617,7 +617,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       throw new Error("Failed to load enemy mesh.");
     }
     this.enemyMesh = this.enemyMeshLoader.meshes[0];
-    this.enemyMesh!.scale(0.5);
+    this.enemyMesh!.scale(0.85);
 
     let faceCount = this.enemyMesh!.geometry.position.count / 3;
     let fIndices = new Uint32Array(faceCount * 3);
@@ -813,7 +813,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x + 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z + 2,
         ]),
       ),
@@ -823,7 +823,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x - 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z + 2,
         ]),
       ),
@@ -833,7 +833,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x + 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z - 2,
         ]),
       ),
@@ -843,7 +843,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.enemyMesh!,
         new Vec3([
           this.player.position.x - 2,
-          this.player.position.y - 85,
+          this.player.position.y,
           this.player.position.z - 2,
         ]),
       ),
