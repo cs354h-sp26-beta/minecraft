@@ -287,7 +287,7 @@ const portalFrameTexture = `
         if (noise > 0.85) textureColor += vec3(0.15, 0.10, 0.20); // bright magenta highlights
         return textureColor;
     }
-`
+`;
 
 const oreTexture = `
     vec3 makeOre(vec2 uv, vec3 world, float scale, vec3 color) {

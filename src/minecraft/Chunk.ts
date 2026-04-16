@@ -447,7 +447,13 @@ export class Chunk {
           }
 
           // 3D Perlin noise sampled at sea level determines pond placement
-          const pondNoise = this.perlinNoise3D(worldX, seaLvl, worldZ, 200, 0.04);
+          const pondNoise = this.perlinNoise3D(
+            worldX,
+            seaLvl,
+            worldZ,
+            200,
+            0.04,
+          );
 
           // negative noise = pond basin
           if (pondNoise < -0.15) {
@@ -654,10 +660,7 @@ export class Chunk {
     }
 
     // Netherite veins deep in the nether
-    if (
-      y <= 15 &&
-      this.perlinNoise3D(worldX, y, worldZ, 155, 0.14) > 0.42
-    ) {
+    if (y <= 15 && this.perlinNoise3D(worldX, y, worldZ, 155, 0.14) > 0.42) {
       return Chunk.blockTypeNetherite;
     }
 
