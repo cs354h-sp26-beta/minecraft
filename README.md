@@ -33,7 +33,7 @@ spawn a portal to the nether, another dimension
 ## Known Issues/Quirks
 
 - Though the spec says to use the constants 9.8 units/sec and 10 units/sec for gravity and jump acceleration, we found these numbers to lead to strange-feeling results for the player. So, we tuned these manually.
-- Mining on top of large structures (i.e., mountains) is known to be slow due to our undermined block detection algorithm.
+- Mining on top of large structures (i.e., mountains) is known to be slower due to our undermined block detection algorithm.
 - Portals between dimensions will not render the other dimension correctly
 
 ## Build
