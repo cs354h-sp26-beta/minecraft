@@ -1916,7 +1916,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
+    const hotbarY = this.canvas2d.height - slotSize - 55;
 
     const startX = hotbarX - 15;
     const startY = hotbarY - 15 - heartSize - 4;
@@ -2004,7 +2004,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 35;
+    const hotbarY = this.canvas2d.height - slotSize - 55;
 
     const totalBarWidth = totalFood * foodSize + (totalFood - 1) * spacing;
     const startX = hotbarX + hotbarWidth + 15 - totalBarWidth;
