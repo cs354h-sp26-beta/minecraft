@@ -23,8 +23,12 @@ import {
   ItemAction,
   ItemStack,
   itemTypes,
-  registerItemTypes, registerRecipes,
+  registerItemTypes,
 } from "./Inventory.js";
+import {
+  CRAFTING_RECIPES,
+  type CraftingRecipe,
+} from "./Crafting.js";
 
 type Achievement = {
   id: string;
@@ -97,6 +101,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   private selectedHotbarIdx: number;
   private isInInventory: boolean;
 
+  private craftingRecipes: CraftingRecipe[];
+  private selectedCraftingRecipeIdx: number;
+  private doubleJumpAvailable: boolean;
+  private jetpackFuel: number;
+  private blasterCooldown: number;
+
   /**
    * Entities whose chunk is not in `renderedChunks` are parked here by chunk key.
    * Used for mobs (`Enemy`) and block entities (`Block`); the player is always active.
@@ -130,7 +140,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     registerItemTypes();
-    registerRecipes();
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
@@ -187,6 +196,12 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.inventory = new Inventory();
     this.selectedHotbarIdx = 0;
+    this.craftingRecipes = CRAFTING_RECIPES;
+    this.selectedCraftingRecipeIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
+    this.seedStarterInventory();
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
@@ -383,6 +398,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   private resetInventoryState(): void {
     this.inventory = new Inventory();
     this.selectedHotbarIdx = 0;
+    this.selectedCraftingRecipeIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
+    this.isInInventory = false;
+    this.seedStarterInventory();
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -453,12 +474,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const randomItemType =
       allItemTypes[Math.floor(Math.random() * allItemTypes.length)];
     this.inventory.insertStack(new ItemStack(randomItemType, 1));
-  }
-
-  public giveAllItems(): void {
-    for (const type of itemTypes.values()) {
-      this.inventory.insertStack(new ItemStack(type, type.maxStackSize));
-    }
   }
 
   /**
@@ -1116,11 +1131,29 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
+    this.blasterCooldown = Math.max(0, this.blasterCooldown - dt);
 
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+
     if (!this.player.isDead()) {
+      const heldId = this.heldItem()?.itemType.id ?? null;
+      if (
+        heldId === "jetpack" &&
+        this.gui.isSpaceDown &&
+        this.jetpackFuel > 0 &&
+        !this.isPlayerGrounded(prov)
+      ) {
+        this.player.velocity.y += 18.0 * dt;
+        this.jetpackFuel = Math.max(0, this.jetpackFuel - 20.0 * dt);
+      } else {
+        this.jetpackFuel = Math.min(100, this.jetpackFuel + 12.0 * dt);
+      }
+
       this.player.update(this.gui.walkDir(), prov, dt);
       this.updatePlayerFallDamage(prov);
+      if (this.isPlayerGrounded(prov)) {
+        this.doubleJumpAvailable = true;
+      }
     } else {
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
@@ -1129,6 +1162,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.enemies.forEach((enemy) => {
       enemy.update(prov, this.player, dt);
     });
+    this.enemies = this.enemies.filter((enemy) => !enemy.isDead());
 
     // Update hunger
     this.hungerTimer += dt;
@@ -1218,7 +1252,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blankCubeRenderPass.drawInstanced(instanceCount);
 
     // Enemies
-    if (this.enemyMesh !== null && this.enemies.length > 0) {
+    if (this.enemyMesh !== null) {
       const enemyInstanceCount = this.enemies.length;
       const enemyPositions = new Float32Array(enemyInstanceCount * 4);
       const enemyRotations = new Float32Array(enemyInstanceCount * 4);
@@ -1360,34 +1394,37 @@ export class MinecraftAnimation extends CanvasAnimation {
     return new Mat4(viewValues);
   }
 
+
   public jump() {
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
     if (this.player.isDead()) {
       return;
     }
-    const previousVelocityY = this.player.velocity.y;
-    this.player.jump(prov);
-    if (this.player.velocity.y > previousVelocityY) {
+
+    const heldId = this.heldItem()?.itemType.id ?? null;
+    const grounded = this.isPlayerGrounded(prov);
+    if (grounded) {
+      const previousVelocityY = this.player.velocity.y;
+      this.player.jump(prov);
+      if (this.player.velocity.y > previousVelocityY) {
+        this.successfulJumps++;
+      }
+      this.doubleJumpAvailable = true;
+      return;
+    }
+
+    if (
+      this.doubleJumpAvailable &&
+      (heldId === "boots" || heldId === "jetpack")
+    ) {
+      this.player.velocity.y = Math.max(this.player.velocity.y, 8.5);
+      this.doubleJumpAvailable = false;
       this.successfulJumps++;
     }
   }
 
   public toggleAchievements(): void {
     this.showAchievements = !this.showAchievements;
-  }
-
-  public isInventoryOpen(): boolean {
-    return this.isInInventory;
-  }
-
-  public toggleInventory(open?: boolean): void {
-    this.isInInventory = open ?? !this.isInInventory;
-    if (this.isInInventory) {
-      document.exitPointerLock();
-    } else {
-      this.canvas2d.requestPointerLock();
-      this.inventory.closeInventory();
-    }
   }
 
   public isPlayerDead(): boolean {
@@ -1581,6 +1618,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.inventory.insertStack(ItemStack.dropsFrom(brokenCubeType ?? -1));
   }
 
+
   public rightClick(cubeSelected: boolean) {
     const item = this.heldItem();
     if (item === null) {
@@ -1588,6 +1626,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     const itemType = item.itemType!;
+    if (itemType.id === "blaster") {
+      this.fireBlaster();
+      return;
+    }
+    if (itemType.id === "jetpack") {
+      if (this.jetpackFuel > 0) {
+        this.player.velocity.y += 4.0;
+        this.jetpackFuel = Math.max(0, this.jetpackFuel - 10.0);
+      }
+      return;
+    }
+
     switch (itemType.actionType) {
       case ItemAction.None: {
         return;
@@ -1624,7 +1674,8 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.blocksPlaced++;
 
         this.inventory.editSlotCount(
-          Inventory.slotIndex(this.selectedHotbarIdx, 0),
+          this.selectedHotbarIdx,
+          0,
           item!.count - 1,
         );
       }
@@ -1652,19 +1703,20 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
+    this.drawHealthBar();
+    this.drawHungerBar();
     this.drawMinimap();
+    this.drawHotbar();
     this.drawAchievementToast();
-    this.drawCrosshair();
+    if (!this.isInInventory) {
+      this.drawCrosshair();
+    }
     if (this.player.isDead()) {
       this.drawDeathOverlay();
     }
 
     if (this.isInInventory) {
-      this.inventory.drawInventoryScreen(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx, this.gui.mouseX, this.gui.mouseY);
-    } else {
-      this.inventory.drawHotbar(this.overlayCtx, this.canvas2d.width, this.canvas2d.height, this.selectedHotbarIdx);
-      this.drawHealthBar();
-      this.drawHungerBar();
+      this.drawInventory();
     }
 
     ctx.restore();
@@ -1879,8 +1931,490 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.restore();
   }
 
-  public inventoryClick(mouseX: number, mouseY: number, button: number): void {
-    this.inventory.handleClick(mouseX, mouseY, this.canvas2d.width, this.canvas2d.height, button);
+  private drawHotbar(): void {
+    const ctx = this.overlayCtx;
+    const hotbarSize = Inventory.width;
+    const slotSize = 60;
+    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
+    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
+    const hotbarY = this.canvas2d.height - slotSize - 35;
+
+    ctx.save();
+    ctx.translate(hotbarX, hotbarY);
+
+    // background
+    ctx.beginPath();
+    ctx.roundRect(-15, -15, hotbarWidth + 30, slotSize + 30, 6);
+    ctx.strokeStyle = "#737981";
+    ctx.lineWidth = 4;
+    ctx.fillStyle = "rgba(21,27,41,0.6)";
+    ctx.fill();
+    ctx.stroke();
+
+    // slots
+    ctx.font = "16px monospace";
+    ctx.textBaseline = "bottom";
+    ctx.textAlign = "right";
+
+    for (let i = 0; i < hotbarSize; i++) {
+      ctx.beginPath();
+      ctx.roundRect(i * (slotSize + 10), 0, slotSize, slotSize, 4);
+      ctx.fillStyle = "rgba(15,15,25,0.6)";
+      ctx.fill();
+      ctx.strokeStyle = "#1b1717";
+      ctx.lineWidth = 2;
+      if (i === this.selectedHotbarIdx) {
+        ctx.strokeStyle = "#e1d8b7";
+        ctx.lineWidth = 4;
+      }
+      ctx.stroke();
+
+      // item icons
+      const item = this.inventory.getItemStack(i, 0);
+      if (item) {
+        const img = item.itemType.img!;
+        if (img) {
+          ctx.drawImage(
+            img,
+            i * (slotSize + 10) + 9,
+            9,
+            slotSize - 18,
+            slotSize - 18,
+          );
+        } else {
+          // draw a rectangle for items without icons
+          ctx.fillStyle = "#d81cd5";
+          ctx.fillRect(
+            i * (slotSize + 10) + 9,
+            9,
+            slotSize - 18,
+            slotSize - 18,
+          );
+        }
+
+        if (item.count > 1) {
+          ctx.fillStyle = "#fff6d7";
+          ctx.fillText(
+            String(item.count),
+            i * (slotSize + 10) + slotSize - 8,
+            slotSize - 6,
+          );
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+
+  private drawInventory(): void {
+    const ctx = this.overlayCtx;
+    const layout = this.getInventoryLayout();
+
+    ctx.save();
+    ctx.fillStyle = "rgba(7, 11, 18, 0.82)";
+    ctx.fillRect(0, 0, this.canvas2d.width, this.canvas2d.height);
+
+    ctx.fillStyle = "rgba(15, 21, 32, 0.94)";
+    ctx.strokeStyle = "#8a8f9a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(
+      layout.panelX,
+      layout.panelY,
+      layout.panelW,
+      layout.panelH,
+      12,
+    );
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff6d7";
+    ctx.font = "18px monospace";
+    ctx.textBaseline = "top";
+    ctx.fillText("Crafting & Inventory", layout.panelX + 24, layout.panelY + 18);
+
+    // Recipe list
+    ctx.font = "13px monospace";
+    for (let i = 0; i < this.craftingRecipes.length; i++) {
+      const recipe = this.craftingRecipes[i];
+      const rowY = layout.recipeListY + i * layout.recipeRowH;
+      const selected = i === this.selectedCraftingRecipeIdx;
+
+      ctx.fillStyle = selected ? "rgba(225,216,183,0.22)" : "rgba(255,255,255,0.05)";
+      ctx.beginPath();
+      ctx.roundRect(
+        layout.recipeListX,
+        rowY,
+        layout.recipeListW,
+        layout.recipeRowH - 6,
+        8,
+      );
+      ctx.fill();
+
+      ctx.fillStyle = selected ? "#fff6d7" : "#f0eee6";
+      ctx.fillText(recipe.title, layout.recipeListX + 10, rowY + 8);
+      ctx.fillStyle = "#c9d1d9";
+      ctx.font = "11px monospace";
+      ctx.fillText(recipe.description, layout.recipeListX + 10, rowY + 24);
+      ctx.font = "13px monospace";
+    }
+
+    // Detail panel
+    const recipe = this.currentCraftingRecipe();
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.beginPath();
+    ctx.roundRect(
+      layout.detailX,
+      layout.detailY,
+      layout.detailW,
+      layout.detailH,
+      12,
+    );
+    ctx.fill();
+
+    ctx.fillStyle = "#fff6d7";
+    ctx.fillText(recipe.title, layout.detailX + 16, layout.detailY + 12);
+    ctx.fillStyle = "#d8dee9";
+    const inputs = recipe.ingredients
+      .map((ingredient) => {
+        const owned = this.inventory.countItem(ingredient.itemId);
+        return `${ingredient.itemId} x${ingredient.count} (${owned})`;
+      })
+      .join(", ");
+    ctx.fillText("Inputs:", layout.detailX + 16, layout.detailY + 44);
+    ctx.fillText(inputs, layout.detailX + 16, layout.detailY + 64);
+
+    ctx.fillText(
+      `Output: ${recipe.outputItemId} x${recipe.outputCount}`,
+      layout.detailX + 16,
+      layout.detailY + 100,
+    );
+
+    const canCraft = this.canCraftRecipe(recipe);
+    ctx.fillStyle = canCraft ? "rgba(84, 190, 120, 0.9)" : "rgba(190, 84, 84, 0.9)";
+    ctx.beginPath();
+    ctx.roundRect(
+      layout.craftButtonX,
+      layout.craftButtonY,
+      layout.craftButtonW,
+      layout.craftButtonH,
+      10,
+    );
+    ctx.fill();
+
+    ctx.fillStyle = "#fff6d7";
+    ctx.font = "15px monospace";
+    ctx.fillText(
+      canCraft ? "Craft (Enter)" : "Need more materials",
+      layout.craftButtonX + 16,
+      layout.craftButtonY + 11,
+    );
+
+    // Inventory grid
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.beginPath();
+    ctx.roundRect(
+      layout.gridX - 10,
+      layout.gridY - 30,
+      Inventory.width * layout.slotSize +
+        (Inventory.width - 1) * layout.slotGap +
+        20,
+      Inventory.height * layout.slotSize +
+        (Inventory.height - 1) * layout.slotGap +
+        50,
+      12,
+    );
+    ctx.fill();
+
+    ctx.fillStyle = "#fff6d7";
+    ctx.font = "14px monospace";
+    ctx.fillText("Inventory / Hotbar", layout.gridX, layout.gridY - 24);
+
+    for (let row = 0; row < Inventory.height; row++) {
+      for (let col = 0; col < Inventory.width; col++) {
+        const x = layout.gridX + col * (layout.slotSize + layout.slotGap);
+        const y = layout.gridY + row * (layout.slotSize + layout.slotGap);
+        const stack = this.inventory.getItemStack(col, row);
+
+        ctx.fillStyle =
+          row === 0 && col === this.selectedHotbarIdx
+            ? "rgba(225,216,183,0.22)"
+            : "rgba(15,15,25,0.7)";
+        ctx.strokeStyle = "#1b1717";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(x, y, layout.slotSize, layout.slotSize, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        if (stack !== null) {
+          const img = stack.itemType.img;
+          if (img !== null) {
+            ctx.drawImage(img, x + 8, y + 8, layout.slotSize - 16, layout.slotSize - 16);
+          } else {
+            ctx.fillStyle = "#d81cd5";
+            ctx.fillRect(x + 8, y + 8, layout.slotSize - 16, layout.slotSize - 16);
+          }
+
+          if (stack.count > 1) {
+            ctx.fillStyle = "#fff6d7";
+            ctx.font = "12px monospace";
+            ctx.fillText(String(stack.count), x + layout.slotSize - 8, y + layout.slotSize - 16);
+            ctx.font = "14px monospace";
+          }
+        }
+
+        if (row === 0) {
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "11px monospace";
+          ctx.fillText(String(col + 1), x + 4, y + 4);
+          ctx.font = "14px monospace";
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+
+  public isCraftingOpen(): boolean {
+    return this.isInInventory;
+  }
+
+  public toggleInventory(): void {
+    this.isInInventory = !this.isInInventory;
+    if (this.isInInventory) {
+      this.gui.releasePointerLock();
+    }
+  }
+
+  public selectCraftingRecipe(delta: number): void {
+    const len = this.craftingRecipes.length;
+    if (len === 0) {
+      this.selectedCraftingRecipeIdx = 0;
+      return;
+    }
+    this.selectedCraftingRecipeIdx =
+      (this.selectedCraftingRecipeIdx + delta + len) % len;
+  }
+
+  private currentCraftingRecipe(): CraftingRecipe {
+    if (this.craftingRecipes.length === 0) {
+      throw new Error("No crafting recipes registered.");
+    }
+    return this.craftingRecipes[this.selectedCraftingRecipeIdx];
+  }
+
+  private canCraftRecipe(recipe: CraftingRecipe): boolean {
+    for (const ingredient of recipe.ingredients) {
+      if (!this.inventory.hasItem(ingredient.itemId, ingredient.count)) {
+        return false;
+      }
+    }
+
+    return this.inventory.canFitItemById(
+      recipe.outputItemId,
+      recipe.outputCount,
+    );
+  }
+
+  public craftSelectedRecipe(): boolean {
+    const recipe = this.currentCraftingRecipe();
+    if (!this.canCraftRecipe(recipe)) {
+      return false;
+    }
+
+    for (const ingredient of recipe.ingredients) {
+      if (!this.inventory.removeItemById(ingredient.itemId, ingredient.count)) {
+        return false;
+      }
+    }
+
+    return this.inventory.addItemById(
+      recipe.outputItemId,
+      recipe.outputCount,
+    );
+  }
+
+  public handleInventoryClick(x: number, y: number): void {
+    if (!this.isInInventory) {
+      return;
+    }
+
+    const layout = this.getInventoryLayout();
+
+    // Recipe list selection.
+    if (
+      x >= layout.recipeListX &&
+      x <= layout.recipeListX + layout.recipeListW &&
+      y >= layout.recipeListY &&
+      y <= layout.recipeListY + layout.recipeRowH * this.craftingRecipes.length
+    ) {
+      const idx = Math.floor((y - layout.recipeListY) / layout.recipeRowH);
+      if (idx >= 0 && idx < this.craftingRecipes.length) {
+        this.selectedCraftingRecipeIdx = idx;
+      }
+      return;
+    }
+
+    // Craft button
+    if (
+      x >= layout.craftButtonX &&
+      x <= layout.craftButtonX + layout.craftButtonW &&
+      y >= layout.craftButtonY &&
+      y <= layout.craftButtonY + layout.craftButtonH
+    ) {
+      this.craftSelectedRecipe();
+      return;
+    }
+
+    // Inventory grid: clicking the top row selects hotbar slots.
+    if (
+      x >= layout.gridX &&
+      x <= layout.gridX + Inventory.width * layout.slotSize + (Inventory.width - 1) * layout.slotGap &&
+      y >= layout.gridY &&
+      y <= layout.gridY + Inventory.height * layout.slotSize + (Inventory.height - 1) * layout.slotGap
+    ) {
+      const col = Math.floor(
+        (x - layout.gridX) / (layout.slotSize + layout.slotGap),
+      );
+      const row = Math.floor(
+        (y - layout.gridY) / (layout.slotSize + layout.slotGap),
+      );
+      const withinSlotX =
+        (x - layout.gridX) % (layout.slotSize + layout.slotGap) <=
+        layout.slotSize;
+      const withinSlotY =
+        (y - layout.gridY) % (layout.slotSize + layout.slotGap) <=
+        layout.slotSize;
+
+      if (withinSlotX && withinSlotY && row >= 0 && row < Inventory.height) {
+        if (row === 0 && col >= 0 && col < Inventory.width) {
+          this.setHotbarSlot(col);
+        }
+      }
+    }
+  }
+
+  private getInventoryLayout() {
+    const canvasW = this.canvas2d.width;
+    const canvasH = this.canvas2d.height;
+    const panelX = 48;
+    const panelY = 50;
+    const panelW = canvasW - 96;
+    const panelH = canvasH - 100;
+
+    const recipeListX = panelX + 20;
+    const recipeListY = panelY + 64;
+    const recipeListW = 300;
+    const recipeRowH = 48;
+
+    const detailX = recipeListX + recipeListW + 24;
+    const detailY = recipeListY;
+    const detailW = 340;
+    const detailH = 270;
+
+    const gridX = recipeListX;
+    const gridY = panelY + panelH - 300;
+    const slotSize = 56;
+    const slotGap = 8;
+
+    const craftButtonX = detailX + 20;
+    const craftButtonY = detailY + detailH - 56;
+    const craftButtonW = detailW - 40;
+    const craftButtonH = 40;
+
+    return {
+      panelX,
+      panelY,
+      panelW,
+      panelH,
+      recipeListX,
+      recipeListY,
+      recipeListW,
+      recipeRowH,
+      detailX,
+      detailY,
+      detailW,
+      detailH,
+      gridX,
+      gridY,
+      slotSize,
+      slotGap,
+      craftButtonX,
+      craftButtonY,
+      craftButtonW,
+      craftButtonH,
+    };
+  }
+
+  private seedStarterInventory(): void {
+    const starters: Array<[string, number]> = [
+      ["dirt", 16],
+      ["grass", 16],
+      ["cobble", 16],
+      ["sand", 16],
+      ["coal", 16],
+      ["iron", 16],
+      ["stick", 8],
+      ["ammo", 16],
+      ["water_bucket", 1],
+    ];
+
+    for (const [itemId, count] of starters) {
+      this.inventory.addItemById(itemId, count);
+    }
+  }
+
+  private fireBlaster(): void {
+    if (this.blasterCooldown > 0) {
+      return;
+    }
+
+    if (!this.inventory.removeItemById("ammo", 1)) {
+      return;
+    }
+
+    const camera = this.gui.getCamera();
+    const cameraPos = camera.pos();
+    const origin = new Vec3([cameraPos.x, cameraPos.y, cameraPos.z]);
+    const dirRaw = camera.forward();
+    const dirLen = Math.hypot(dirRaw.x, dirRaw.y, dirRaw.z) || 1;
+    const dir = new Vec3([dirRaw.x / dirLen, dirRaw.y / dirLen, dirRaw.z / dirLen]);
+
+    let bestEnemy: Enemy | null = null;
+    let bestT = Infinity;
+
+    for (const enemy of this.enemies) {
+      if (enemy.isDead()) {
+        continue;
+      }
+      const rel = new Vec3([
+        enemy.position.x - origin.x,
+        enemy.position.y - origin.y,
+        enemy.position.z - origin.z,
+      ]);
+      const t =
+        rel.x * dir.x +
+        rel.y * dir.y +
+        rel.z * dir.z;
+      if (t <= 0 || t > 20) {
+        continue;
+      }
+      const relSq = rel.x * rel.x + rel.y * rel.y + rel.z * rel.z;
+      const perpSq = Math.max(0, relSq - t * t);
+      if (perpSq <= 1.5 * 1.5 && t < bestT) {
+        bestT = t;
+        bestEnemy = enemy;
+      }
+    }
+
+    if (bestEnemy !== null) {
+      bestEnemy.takeDamage(6);
+    }
+
+    this.blasterCooldown = 0.35;
   }
 
   public setHotbarSlot(number: number) {
@@ -1888,15 +2422,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public heldItem(): ItemStack | null {
-    return this.inventory.getItemStack(Inventory.slotIndex(this.selectedHotbarIdx, 0));
-  }
-
-  public dropHeldItem(): void {
-    const index = Inventory.slotIndex(this.selectedHotbarIdx, 0);
-    const item = this.inventory.getItemStack(index);
-    if (item) {
-      this.inventory.editSlotCount(index, item.count - 1);
-    }
+    return this.inventory.getItemStack(this.selectedHotbarIdx, 0);
   }
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;
@@ -1916,7 +2442,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 55;
+    const hotbarY = this.canvas2d.height - slotSize - 35;
 
     const startX = hotbarX - 15;
     const startY = hotbarY - 15 - heartSize - 4;
@@ -2004,7 +2530,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarSize = Inventory.width;
     const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
     const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
-    const hotbarY = this.canvas2d.height - slotSize - 55;
+    const hotbarY = this.canvas2d.height - slotSize - 35;
 
     const totalBarWidth = totalFood * foodSize + (totalFood - 1) * spacing;
     const startX = hotbarX + hotbarWidth + 15 - totalBarWidth;

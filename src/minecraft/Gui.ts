@@ -42,11 +42,10 @@ export class GUI implements IGUI {
   private Wdown: boolean;
   private Sdown: boolean;
   private Ddown: boolean;
+  private spaceDown: boolean;
 
   private _pointerLocked: boolean;
   private canvas: HTMLCanvasElement;
-  private _mouseX: number;
-  private _mouseY: number;
 
   /**
    *
@@ -65,9 +64,8 @@ export class GUI implements IGUI {
     this.Wdown = false;
     this.Sdown = false;
     this.Ddown = false;
+    this.spaceDown = false;
     this._pointerLocked = false;
-    this._mouseX = 0;
-    this._mouseY = 0;
 
     this.animation = animation;
 
@@ -93,6 +91,7 @@ export class GUI implements IGUI {
     this.Wdown = false;
     this.Sdown = false;
     this.Ddown = false;
+    this.spaceDown = false;
     this.dragging = false;
     this.cubeSelected = false;
   }
@@ -135,12 +134,14 @@ export class GUI implements IGUI {
     return this._pointerLocked;
   }
 
-  public get mouseX(): number {
-    return this._mouseX;
+  public get isSpaceDown(): boolean {
+    return this.spaceDown;
   }
 
-  public get mouseY(): number {
-    return this._mouseY;
+  public releasePointerLock(): void {
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock();
+    }
   }
 
   public dragStart(mouse: MouseEvent): void {
@@ -148,8 +149,8 @@ export class GUI implements IGUI {
       return;
     }
 
-    if (this.animation.isInventoryOpen()) {
-      this.animation.inventoryClick(mouse.offsetX, mouse.offsetY, mouse.button);
+    if (this.animation.isCraftingOpen()) {
+      this.animation.handleInventoryClick(mouse.offsetX, mouse.offsetY);
       return;
     }
 
@@ -178,10 +179,7 @@ export class GUI implements IGUI {
    * @param mouse
    */
   public drag(mouse: MouseEvent): void {
-    this._mouseX = mouse.offsetX;
-    this._mouseY = mouse.offsetY;
-
-    if (this.animation.isPlayerDead()) {
+    if (this.animation.isPlayerDead() || this.animation.isCraftingOpen()) {
       return;
     }
     if (this._pointerLocked) {
@@ -259,6 +257,38 @@ export class GUI implements IGUI {
     if (this.animation.isPlayerDead() && key.code !== "KeyR") {
       return;
     }
+
+    if (key.code === "KeyC") {
+      this.animation.toggleInventory();
+      if (this.animation.isCraftingOpen()) {
+        this.releasePointerLock();
+      }
+      return;
+    }
+
+    if (this.animation.isCraftingOpen()) {
+      switch (key.code) {
+        case "ArrowUp": {
+          this.animation.selectCraftingRecipe(-1);
+          return;
+        }
+        case "ArrowDown": {
+          this.animation.selectCraftingRecipe(1);
+          return;
+        }
+        case "Enter": {
+          this.animation.craftSelectedRecipe();
+          return;
+        }
+        case "Escape": {
+          this.animation.toggleInventory();
+          return;
+        }
+        default:
+          return;
+      }
+    }
+
     switch (key.code) {
       case "KeyW": {
         this.Wdown = true;
@@ -320,27 +350,12 @@ export class GUI implements IGUI {
         this.animation.giveRandomItem();
         break;
       }
-      case "KeyE": {
-        this.animation.toggleInventory();
-        break;
-      }
-      case "KeyQ": {
-        this.animation.dropHeldItem();
-        break;
-      }
-      case "KeyP": {
-        this.animation.giveAllItems();
-        break;
-      }
       case "KeyG": {
         this.animation.toggleAchievements();
         break;
       }
-      case "Escape": {
-        this.animation.toggleInventory(false);
-        break;
-      }
       case "Space": {
+        this.spaceDown = true;
         this.animation.jump();
         break;
       }
@@ -367,6 +382,10 @@ export class GUI implements IGUI {
       }
       case "KeyD": {
         this.Ddown = false;
+        break;
+      }
+      case "Space": {
+        this.spaceDown = false;
         break;
       }
     }
@@ -397,8 +416,10 @@ export class GUI implements IGUI {
       this.dragEnd(mouse),
     );
 
+    // TODO: document.exitPointerLock() on inventory open or anything else you need mouse for
+
     canvas.addEventListener("click", () => {
-      if (!this._pointerLocked && !this.animation.isInventoryOpen()) {
+      if (!this._pointerLocked && !this.animation.isCraftingOpen()) {
         canvas.requestPointerLock();
       }
     });
