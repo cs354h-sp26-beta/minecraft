@@ -66,6 +66,11 @@ export class MinecraftAnimation extends CanvasAnimation {
   private renderedChunks: Map<string, Chunk>;
   private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
 
+  // Nether dimension state — separate caches so overworld and nether chunks don't collide
+  public playerInNether: boolean = false;
+  private netherChunkCache: LruCache<string, Chunk>;
+  private netherDeltaMaps: Map<string, Map<string, number>>;
+
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
 
@@ -188,6 +193,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+    this.netherChunkCache = new LruCache();
+    this.netherDeltaMaps = new Map();
     this.decorationGenerator = new DecorationGenerator();
     this.decorationCache = new Map();
 
@@ -480,6 +487,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.fallDamageArmed = false;
     this.gui.getCamera().setPos(this.player.position);
     this.loadChunksAroundPlayer();
+  }
+
+  /** Toggle between the overworld and the Nether. Clears rendered chunks so
+   *  the new dimension's terrain loads immediately on the next frame. */
+  public toggleNether(): void {
+    this.playerInNether = !this.playerInNether;
+    this.renderedChunks.clear();
+    this.decorationCache.clear();
   }
 
   private isPlayerGrounded(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -1317,14 +1332,16 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         nextLoadedKeys.add(key);
-        if (!this.chunkCache.has(key)) {
-          let deltaMap = this.deltaMaps.has(key)
-            ? this.deltaMaps.get(key)
+        const activeCache = this.playerInNether ? this.netherChunkCache : this.chunkCache;
+        const activeDeltaMaps = this.playerInNether ? this.netherDeltaMaps : this.deltaMaps;
+        if (!activeCache.has(key)) {
+          let deltaMap = activeDeltaMaps.has(key)
+            ? activeDeltaMaps.get(key)
             : new Map();
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
+          activeCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap, this.playerInNether));
           this.decorationCache.delete(key);
         }
-        const cachedChunk = this.chunkCache.get(key)!;
+        const cachedChunk = activeCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
         if (!this.decorationCache.has(key)) {
           this.decorationCache.set(
@@ -2247,7 +2264,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         continue;
       }
       const deltaMap = chunk.changeCubeTypeNoUpdate(x, z, y, blockType);
-      this.deltaMaps.set(chunkKey, deltaMap);
+      (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(chunkKey, deltaMap);
       writtenThisTick.set(posKey, blockType);
       this.waterDirty.add(posKey);
       updatedChunks.add(chunk);
@@ -2314,7 +2331,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
     this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
 
-    this.deltaMaps.set(key, chunkDeltaMap);
+    (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(key, chunkDeltaMap);
     if (
       brokenCubeType !== undefined &&
       brokenCubeType !== Chunk.blockTypeAir &&
@@ -2383,7 +2400,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           blockType,
         );
 
-        this.deltaMaps.set(key, chunkDeltaMap);
+        (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(key, chunkDeltaMap);
         this.blocksPlaced++;
 
         if (blockType === Chunk.blockTypePortalFrame) {
@@ -2512,7 +2529,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
     }
 
-    const check = (blockIsPortal) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
+    const check = (blockIsPortal: (x: number, y: number) => boolean) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
         && blockIsPortal(0, 4) && blockIsPortal(1, 4) && blockIsPortal(2, 4) && blockIsPortal(3, 4)
         && blockIsPortal(0, 1) && blockIsPortal(0, 2) && blockIsPortal(0, 3)
         && blockIsPortal(3, 1) && blockIsPortal(3, 2) && blockIsPortal(3, 3);
