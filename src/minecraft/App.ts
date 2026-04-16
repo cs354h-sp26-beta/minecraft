@@ -2434,21 +2434,8 @@ export class MinecraftAnimation extends CanvasAnimation {
       const currBlockPos = queue[queueHead++];
       blocksToUpdate.push(currBlockPos);
 
-      let isPortal = false;
-      if (this.portals.length > 0) {
-        let chunk = this.getChunkAtWorld(currBlockPos[0], currBlockPos[2])!;
-        const blockType = chunk.cubeType(
-          currBlockPos[0],
-          currBlockPos[2],
-          currBlockPos[1],
-        )!;
-        isPortal =
-          blockType === Chunk.blockTypePortal ||
-          blockType == Chunk.blockTypePortalFrame;
-      }
-
       // Check if current block is touching "ground" by checking y = 0 or if it's a portal
-      if (currBlockPos![1] === 0 || isPortal) {
+      if (currBlockPos![1] === 0 || this.isUnMineable(currBlockPos[0], currBlockPos[2], currBlockPos[1])) {
         foundGround = true;
         break;
       }
@@ -2667,6 +2654,19 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
+  public isUnMineable(x: number, z: number, y: number): boolean {
+    const chunk = this.chunkAt(x, z);
+    if (chunk === undefined) {
+      return true;
+    }
+    const blockType = chunk.cubeType(x, z, y);
+    return chunk!.isWater(x, z, y)
+        || blockType === Chunk.blockTypePortal
+        || blockType === Chunk.blockTypePortalFrame
+        || blockType === Chunk.blockTypeLava
+        || blockType === Chunk.blockTypeBedrock;
+  }
+
   public leftClick(cubeSelected: boolean): void {
     if (
       this.selectedEnemy !== null &&
@@ -2691,22 +2691,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     const cubeY = this.selectedCubePosition.y;
     const cubeZ = this.selectedCubePosition.z;
 
-    let brokenCubeType = chunk.cubeType(
-      this.selectedCubePosition.x,
-      this.selectedCubePosition.z,
-      this.selectedCubePosition.y,
-    );
+    const brokenCubeType = chunk.cubeType(cubeX, cubeZ, cubeY);
 
-    if (
-      chunk.isWater(
-        this.selectedCubePosition.x,
-        this.selectedCubePosition.z,
-        this.selectedCubePosition.y,
-      ) ||
-      brokenCubeType === Chunk.blockTypePortal ||
-      brokenCubeType === Chunk.blockTypePortalFrame ||
-      brokenCubeType === Chunk.blockTypeLava
-    ) {
+    if (this.isUnMineable(cubeX, cubeZ, cubeY)) {
       return;
     }
 
