@@ -523,7 +523,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const localI = Math.round(worldZ - originZ);
     const localY = Math.round(worldY);
 
-    deltaMap.set(`${localJ},${localI},${localY}`, blockType);
+    deltaMap.set(localJ + localI * step + localY * step * step, blockType);
   }
 
   /** Write a portal frame, interior blocks, and surrounding air pocket
@@ -2765,7 +2765,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       blockIsPortal(3, 1) &&
       blockIsPortal(3, 2) &&
       blockIsPortal(3, 3);
-
 
     const srcDimension: "overworld" | "nether" = this.playerInNether
       ? "nether"
