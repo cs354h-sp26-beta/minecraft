@@ -648,6 +648,12 @@ export class MinecraftAnimation extends CanvasAnimation {
         gl.uniform1f(loc, this.getTimeValue());
       },
     );
+    this.skyboxRenderPass.addUniform(
+      "uIsNether",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, this.playerInNether ? 1.0 : 0.0);
+      },
+    );
 
     this.skyboxRenderPass.setDrawData(
       this.ctx.TRIANGLES,
@@ -1300,16 +1306,14 @@ export class MinecraftAnimation extends CanvasAnimation {
         t === Chunk.blockTypeWater ||
         t === Chunk.blockTypeWaterFalling ||
         (t >= Chunk.blockTypeWaterFlowLevel3 &&
-         t <= Chunk.blockTypeWaterFlowLevel1)
+          t <= Chunk.blockTypeWaterFlowLevel1)
       ) {
         continue;
       }
       // Enemy position is head-based; hitboxHeight is 1. Spawn with feet just
       // above the surface block's top face (stepPhysics will snap cleanly).
       const headY = top.height + 1.5;
-      this.enemies.push(
-        new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])),
-      );
+      this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])));
       spawned++;
     }
   }
@@ -1332,13 +1336,20 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         nextLoadedKeys.add(key);
-        const activeCache = this.playerInNether ? this.netherChunkCache : this.chunkCache;
-        const activeDeltaMaps = this.playerInNether ? this.netherDeltaMaps : this.deltaMaps;
+        const activeCache = this.playerInNether
+          ? this.netherChunkCache
+          : this.chunkCache;
+        const activeDeltaMaps = this.playerInNether
+          ? this.netherDeltaMaps
+          : this.deltaMaps;
         if (!activeCache.has(key)) {
           let deltaMap = activeDeltaMaps.has(key)
             ? activeDeltaMaps.get(key)
             : new Map();
-          activeCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap, this.playerInNether));
+          activeCache.set(
+            key,
+            new Chunk(chunkX, chunkZ, step, deltaMap, this.playerInNether),
+          );
           this.decorationCache.delete(key);
         }
         const cachedChunk = activeCache.get(key)!;
@@ -1543,7 +1554,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     // Update health
-    if (this.player.food >= this.player.maxFood * this.regenHealthFoodThreshold) {
+    if (
+      this.player.food >=
+      this.player.maxFood * this.regenHealthFoodThreshold
+    ) {
       this.regenHealthTimer += dt;
       if (this.regenHealthTimer >= this.regenHealthInterval) {
         this.regenHealthTimer = 0;
@@ -1593,7 +1607,9 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Drawing
     const gl = this.ctx as WebGL2RenderingContext;
-    const bg: Vec4 = this.backgroundColor;
+    const bg: Vec4 = this.playerInNether
+      ? new Vec4([0.33, 0.0, 0.0, 1.0])
+      : this.backgroundColor;
 
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
@@ -2264,7 +2280,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         continue;
       }
       const deltaMap = chunk.changeCubeTypeNoUpdate(x, z, y, blockType);
-      (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(chunkKey, deltaMap);
+      (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+        chunkKey,
+        deltaMap,
+      );
       writtenThisTick.set(posKey, blockType);
       this.waterDirty.add(posKey);
       updatedChunks.add(chunk);
@@ -2331,7 +2350,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
     this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
 
-    (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(key, chunkDeltaMap);
+    (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+      key,
+      chunkDeltaMap,
+    );
     if (
       brokenCubeType !== undefined &&
       brokenCubeType !== Chunk.blockTypeAir &&
@@ -2400,7 +2422,10 @@ export class MinecraftAnimation extends CanvasAnimation {
           blockType,
         );
 
-        (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(key, chunkDeltaMap);
+        (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+          key,
+          chunkDeltaMap,
+        );
         this.blocksPlaced++;
 
         if (blockType === Chunk.blockTypePortalFrame) {
@@ -2461,10 +2486,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.position.z += linked.position.z - currentPortal.position.z;
 
     // Rotate the camera based on the two portal normals.
-    const srcAngle = Math.atan2(
-      currentPortal.normal.x,
-      currentPortal.normal.z,
-    );
+    const srcAngle = Math.atan2(currentPortal.normal.x, currentPortal.normal.z);
     const dstAngle = Math.atan2(linked.normal.x, linked.normal.z);
     const deltaYaw = dstAngle - srcAngle;
     if (deltaYaw !== 0) {
@@ -2519,7 +2541,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       y += minY;
       const chunk = this.chunkAt(x, z);
       return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
-    }
+    };
 
     const blockIsPortalZ = (z: number, y: number): boolean => {
       const x = minX;
@@ -2527,36 +2549,57 @@ export class MinecraftAnimation extends CanvasAnimation {
       y += minY;
       const chunk = this.chunkAt(x, z);
       return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
-    }
+    };
 
-    const check = (blockIsPortal: (x: number, y: number) => boolean) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
-        && blockIsPortal(0, 4) && blockIsPortal(1, 4) && blockIsPortal(2, 4) && blockIsPortal(3, 4)
-        && blockIsPortal(0, 1) && blockIsPortal(0, 2) && blockIsPortal(0, 3)
-        && blockIsPortal(3, 1) && blockIsPortal(3, 2) && blockIsPortal(3, 3);
+    const check = (blockIsPortal: (x: number, y: number) => boolean) =>
+      blockIsPortal(0, 0) &&
+      blockIsPortal(1, 0) &&
+      blockIsPortal(2, 0) &&
+      blockIsPortal(3, 0) &&
+      blockIsPortal(0, 4) &&
+      blockIsPortal(1, 4) &&
+      blockIsPortal(2, 4) &&
+      blockIsPortal(3, 4) &&
+      blockIsPortal(0, 1) &&
+      blockIsPortal(0, 2) &&
+      blockIsPortal(0, 3) &&
+      blockIsPortal(3, 1) &&
+      blockIsPortal(3, 2) &&
+      blockIsPortal(3, 3);
 
     if (check(blockIsPortalX)) {
-      this.portals.push(new Portal(
+      this.portals.push(
+        new Portal(
           new Vec3([minX + 1, minY + 1, minZ]),
           new Vec3([0, 0, 1]),
           new Vec3([0, 1, 0]),
           2,
           3,
-      ));
+        ),
+      );
       if (this.portals.length % 2 === 0) {
-        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
+        this.portalRenderer.addPortalPair(
+          this.portals[this.portals.length - 2],
+          this.portals[this.portals.length - 1],
+        );
       }
       return true;
     }
     if (check(blockIsPortalZ)) {
-      this.portals.push(new Portal(
+      this.portals.push(
+        new Portal(
           new Vec3([minX, minY + 1, minZ + 2]),
           new Vec3([1, 0, 0]),
           new Vec3([0, 1, 0]),
           2,
           3,
-      ));
+        ),
+      );
       if (this.portals.length % 2 === 0) {
-        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
+        this.portalRenderer.addPortalPair(
+          this.portals[this.portals.length - 2],
+          this.portals[this.portals.length - 1],
+        );
       }
       return true;
     }

@@ -287,7 +287,7 @@ const portalFrameTexture = `
         if (noise > 0.85) textureColor += vec3(0.15, 0.10, 0.20); // bright magenta highlights
         return textureColor;
     }
-`
+`;
 
 const oreTexture = `
     vec3 makeOre(vec2 uv, vec3 world, float scale, vec3 color) {
@@ -862,6 +862,7 @@ export const skyboxFSText = `
     precision highp float;
 
     uniform float uTime;
+    uniform float uIsNether;
 
     varying vec3 vDirection;
 
@@ -1183,6 +1184,14 @@ export const skyboxFSText = `
 
             float starTransmittance = mix(transmittance, pow(transmittance, 0.45), nightMix);
             color = cloudAccum + transmittance * skyBackground + starTransmittance * starBackground;
+        }
+
+        // Nether
+        if (uIsNether > 0.5) {
+            vec3 netherHorizon = vec3(0.35, 0.04, 0.02);
+            vec3 netherZenith  = vec3(0.5, 0.0, 0.0);
+            float nh = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+            color = mix(netherHorizon, netherZenith, pow(nh, 0.6));
         }
 
         gl_FragColor = vec4(color, 1.0);
