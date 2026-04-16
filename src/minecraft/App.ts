@@ -29,10 +29,6 @@ import {
   itemTypes,
   registerItemTypes,
 } from "./Inventory.js";
-import {
-  CRAFTING_RECIPES,
-  type CraftingRecipe,
-} from "./Crafting.js";
 
 type Achievement = {
   id: string;
@@ -1652,7 +1648,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       return;
     }
 
-    const heldId = this.inventory.getHeldItem()?.itemType.id ?? null;
     const grounded = this.isPlayerGrounded(prov);
     if (grounded) {
       const previousVelocityY = this.player.velocity.y;
@@ -1890,14 +1885,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     const itemType = item.itemType!;
-    // if (itemType.id === "jetpack") {
-    //   if (this.jetpackFuel > 0) {
-    //     this.player.velocity.y += 4.0;
-    //     this.jetpackFuel = Math.max(0, this.jetpackFuel - 10.0);
-    //   }
-    //   return;
-    // }
-
     switch (itemType.actionType) {
       case ItemAction.None: {
         return;
