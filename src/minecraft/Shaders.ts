@@ -11,8 +11,10 @@ export const blankCubeVSText = `
     attribute vec4 aOffset;
     attribute vec2 aUV;
     attribute float aBlockType;
-    
+    attribute highp vec2 aAO;
+
     varying float vBlockType;
+    varying float vAO;
     varying vec4 normal;
     varying vec4 wsPos;
     varying vec2 uv;
@@ -36,6 +38,35 @@ export const blankCubeVSText = `
         uv = aUV;
         selected = uSelectedCubePos == aOffset ? 1.0 : 0.0;
         vBlockType = aBlockType;
+
+        // Decode per-vertex AO from packed vec2.
+        // Float 0 packs faces: Top(+Y)=byte0, Left(-X)=byte1, Right(+X)=byte2
+        // Float 1 packs faces: Front(+Z)=byte0, Back(-Z)=byte1, Bottom(-Y)=byte2
+        // Each face byte: 4 corners × 2 bits, corner idx = step(t1) + step(t2)*2
+        {
+            vec3 an = abs(aNorm.xyz);
+            highp float faceIdx;
+            float c1, c2;
+            if (an.y > 0.5) {
+                faceIdx = aNorm.y > 0.0 ? 0.0 : 5.0;
+                c1 = step(0.0, aVertPos.x);
+                c2 = step(0.0, aVertPos.z);
+            } else if (an.x > 0.5) {
+                faceIdx = aNorm.x < 0.0 ? 1.0 : 2.0;
+                c1 = step(0.0, aVertPos.z);
+                c2 = step(0.0, aVertPos.y);
+            } else {
+                faceIdx = aNorm.z > 0.0 ? 3.0 : 4.0;
+                c1 = step(0.0, aVertPos.x);
+                c2 = step(0.0, aVertPos.y);
+            }
+            float cornerIdx = c1 + c2 * 2.0;
+            highp float packedV = faceIdx < 3.0 ? aAO.x : aAO.y;
+            highp float localFace = faceIdx < 3.0 ? faceIdx : faceIdx - 3.0;
+            highp float faceData = mod(floor(packedV / exp2(localFace * 8.0)), 256.0);
+            highp float aoVal = mod(floor(faceData / exp2(cornerIdx * 2.0)), 4.0);
+            vAO = aoVal / 3.0;
+        }
 
         vLocalPos = aVertPos.xyz + vec3(0.5); // convert from [-0.5, 0.5] to [0, 1] for easier texturing
     }
@@ -139,12 +170,22 @@ const dirtTexture = `
     }
 `;
 
-const terrainDetailTextures = `
-    vec3 makeSandstone(vec2 uv) {
+const sandStoneTexture = `
+    vec3 makeSandstone(vec2 uv, vec3 local, vec3 world) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float band = step(0.5, fract(pixelUV.y * 8.0 + fbm(pixelUV * 4.0, 2) * 0.5));
-        return mix(vec3(0.64, 0.56, 0.39), vec3(0.80, 0.71, 0.52), band);
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        vec2 worldSeed = hash2(floor(world.xz) * 8.0);
+        float layer = fract(pixelWorld.y * 3.0) * 2.0 - 1.0;
+
+        layer = pow(layer, 4.0);
+
+        vec3 stones = makeCobble(uv, world, 1.0) * vec3(1.4, 1.3, 1.05);
+
+        return mix(1.2 * stones, stones, layer);
     }
+`;
+
+const terrainDetailTextures = `
 
     vec3 makeSnow(vec2 uv) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
@@ -266,7 +307,7 @@ const grassTexture = `
 const cobbleTexture = `
     vec3 makeCobble(vec2 uv, vec3 world, float scale) {
       vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
-      vec3 p = pixelatedWorld.xyz * (3.0);          // scale controls stone size
+      vec3 p = pixelatedWorld.xyz * scale;          // scale controls stone size
       float v = 0.3 * voronoi(p);              // cell distance → grooves
       float groove = smoothstep(0.35, -0.55, v * 0.5);  // dark at edges
       float noise = fbm(pixelatedWorld.xz * 8.0, 2);     // surface variation
@@ -290,7 +331,7 @@ const portalFrameTexture = `
         if (noise > 0.85) textureColor += vec3(0.15, 0.10, 0.20); // bright magenta highlights
         return textureColor;
     }
-`
+`;
 
 const oreTexture = `
     vec3 makeOre(vec2 uv, vec3 world, float scale, vec3 color) {
@@ -413,6 +454,7 @@ export const blankCubeFSText = `
     varying vec2 uv;
     varying float selected;
     varying float vBlockType;
+    varying float vAO;
 
     ${noiseUtils}
 
@@ -438,24 +480,32 @@ export const blankCubeFSText = `
 
     ${netherRackTexture}
 
+    ${sandStoneTexture}
+
     ${portalFrameTexture}
     
     void main() {
         vec3 kd = vec3(1.0, 1.0, 1.0);
-        vec3 ka = vec3(0.1, 0.1, 0.1);
+
+        /* Time-dependent ambient: brighter during day, dimmer at night */
+        float dayProgress = mod(uTime, 1440.0) / 1440.0;
+        float sunArc = dayProgress * 6.28318530718;
+        float sunY = -cos(sunArc);
+        float dayFactor = smoothstep(-0.1, 0.3, sunY);
+        vec3 ka = mix(vec3(0.05, 0.05, 0.08), vec3(0.3, 0.3, 0.25), dayFactor);
 
         /* Compute light fall off */
         vec4 lightDirection = uLightPos - wsPos;
         float dot_nl = dot(normalize(lightDirection), normalize(normal));
 	    dot_nl = clamp(dot_nl, 0.0, 1.0);
-	
+
         float highlight = selected == 1.0 ? 1.2 : 1.0;
         vec3 textureColor = vec3(1.0, 0.5, 1.0);
 
         if (vBlockType == 0.0) {
             textureColor = makeDirt(uv);
         } else if (vBlockType == 1.0) {
-            textureColor = makeCobble(uv, wsPos.xyz, 3.5);
+            textureColor = makeCobble(uv, wsPos.xyz, 3.0);
         } else if (vBlockType == 2.0 || (vBlockType >= 99.0 && vBlockType <= 102.0)) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 3.0) {
@@ -471,13 +521,13 @@ export const blankCubeFSText = `
         } else if (vBlockType == 8.0) {
             textureColor = makeSand(uv, vLocalPos, wsPos.xyz);
         } else if (vBlockType == 9.0) {
-            textureColor = makeSandstone(uv);
+            textureColor = makeSandstone(uv, vLocalPos, wsPos.xyz);
         } else if (vBlockType == 10.0) {
             textureColor = makeSnow(uv);
         } else if (vBlockType == 11.0) {
             textureColor = makeNetherite(uv, wsPos.xyz);
         } else if (vBlockType == 12.0) {
-            textureColor = makeCobble(uv, wsPos.xyz, 6.0) * vec3(0.55, 0.55, 0.55);
+            textureColor = makeCobble(uv, wsPos.xyz, 3.0) * vec3(0.55, 0.55, 0.55);
         } else if (vBlockType == 13.0) {
             textureColor = makePortal(wsPos.xyz);
         } else if (vBlockType == 14.0) {
@@ -500,7 +550,10 @@ export const blankCubeFSText = `
             textureColor = makePortalFrame(uv);
         }
 
-        gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
+        // Per-vertex ambient occlusion (interpolated across face by rasterizer)
+        float aoFactor = mix(0.55, 1.0, vAO);
+
+        gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor * aoFactor, 1.0);
     }
 `;
 
