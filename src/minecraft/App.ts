@@ -118,6 +118,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private enemies: Enemy[];
   private selectedEnemy: Enemy | null;
   private selectedEnemyDistance: number;
+  private readonly meleeAttackRange: number = 5;
   private achievements: Achievement[];
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
@@ -163,7 +164,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private hungerTimer: number;
   private starvationTimer: number;
   private regenHealthTimer: number;
-  private readonly regenHealthFoodThreshold: number = 0.9; // player must have at least 90% food to regen health
+  private readonly regenHealthFoodThreshold: number = 0.7; // player must have at least 70% food to regen health
   private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
   private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
   private readonly regenHealthInterval: number = 4; // player regenerates health at this interval when the threshold is met
@@ -2551,7 +2552,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public leftClick(cubeSelected: boolean): void {
-    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
+    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= this.meleeAttackRange) {
       const enemy = this.selectedEnemy;
       this.attackEnemy(enemy, 5);
       this.selectedEnemy = null;
@@ -3179,8 +3180,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
   }
 
-  public attackEnemy(enemy: Enemy, amount: number): void {
-    enemy.takeDamage(5);
+  public attackEnemy(enemy: Enemy, amount: number = 5): void {
+    enemy.takeDamage(amount);
     if (enemy.isDead()) {
       const idx = this.enemies.indexOf(enemy);
       if (idx >= 0) {
@@ -3285,7 +3286,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     const y = centerY - size / 2;
 
     const targetingEnemy =
-      this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
+      this.selectedEnemy !== null &&
+        ((this.selectedEnemyDistance <= this.meleeAttackRange)
+        || (this.inventory.getHeldItem()?.itemType?.id === "blaster")); // blaster range is infinite
 
     ctx.save();
     ctx.globalAlpha = 0.75;
@@ -3373,7 +3376,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // visibility factors
     const MAX_DIST = 15;
-    const FADE_START = 7; // fully opaque within this radius; fades from here to MAX_DIST
+    const INJURED_MAX_DIST = 2 * MAX_DIST;
+    //const FADE_START = 7; // fully opaque within this radius; fades from here to MAX_DIST
 
     // Bar dimensions in canvas pixels.
     const BAR_W = 50;
@@ -3400,15 +3404,18 @@ export class MinecraftAnimation extends CanvasAnimation {
       const dy = enemy.position.y - playerPos.y;
       const dz = enemy.position.z - playerPos.z;
       const distSq = dx * dx + dy * dy + dz * dz;
-      if (distSq > MAX_DIST * MAX_DIST) continue;
+      const shouldRender = distSq <= MAX_DIST * MAX_DIST
+        || (enemy.health < enemy.maxHealth && distSq <= INJURED_MAX_DIST * INJURED_MAX_DIST)
+        || (enemy === this.selectedEnemy && this.inventory.getHeldItem()?.itemType?.id === "blaster"); // always show health bar for targeted enemy with blaster
+      if (!shouldRender) continue;
 
       const dist = Math.sqrt(distSq);
       let alpha = 1.0;
-      if (dist > FADE_START) {
-        // Linear fade from 1.0 at FADE_START to 0.0 at MAX_DIST.
-        alpha = 1.0 - (dist - FADE_START) / (MAX_DIST - FADE_START);
-      }
-      if (alpha <= 0) continue;
+      // if (dist > FADE_START) {
+      //   // Linear fade from 1.0 at FADE_START to 0.0 at MAX_DIST.
+      //   alpha = 1.0 - (dist - FADE_START) / (MAX_DIST - FADE_START);
+      // }
+      // if (alpha <= 0) continue;
 
       // --- world -> clip space ---
       const worldPos = new Vec4([
