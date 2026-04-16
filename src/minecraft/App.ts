@@ -343,6 +343,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.position = this.spawnPosition.copy();
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
+    this.player.food = this.player.maxFood;
+    this.resetInventoryState();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
@@ -370,10 +372,16 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
     this.player.food = this.player.maxFood;
+    this.resetInventoryState();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
     this.gui.getCamera().setPos(this.player.position);
+  }
+
+  private resetInventoryState(): void {
+    this.inventory = new Inventory();
+    this.selectedHotbarIdx = 0;
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
