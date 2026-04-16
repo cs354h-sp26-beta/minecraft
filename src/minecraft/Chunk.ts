@@ -654,7 +654,7 @@ export class Chunk {
     return false;
   }
 
-  private updateCubePositionsAndTypes() {
+  public updateCubePositionsAndTypes() {
     const [topLeftX, topLeftZ] = this.origin();
 
     // Count all visible cubes up to generated column height (including water)
@@ -1209,6 +1209,23 @@ export class Chunk {
 
     this.deltaMap.set(key, newType);
     this.updateCubePositionsAndTypes();
+    return this.deltaMap;
+  }
+
+  public changeCubeTypeNoUpdate(
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+    newType: number,
+  ): Map<string, number> {
+    const [topLeftX, topLeftZ] = this.origin();
+    const cubeChunkX = Math.round(worldX - topLeftX);
+    const cubeChunkZ = Math.round(worldZ - topLeftZ);
+    const cubeChunkY = Math.round(worldY);
+
+    const key = `${cubeChunkX},${cubeChunkZ},${cubeChunkY}`;
+
+    this.deltaMap.set(key, newType);
     return this.deltaMap;
   }
 

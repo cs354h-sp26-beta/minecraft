@@ -107,7 +107,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   >;
 
   /* Water simulation */
-  private static readonly waterTickInterval: number = 10;
+  private static readonly waterTickInterval: number = 30;
   private frameCount: number = 0;
   private waterDirty: Set<string> = new Set();
 
@@ -1628,6 +1628,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // written this tick so falling water always wins over horizontal flow.
     const writtenThisTick = new Map<string, number>(); // "x,y,z" → blockType
 
+    let updatedChunks = new Set<Chunk>();
     for (const { sourceKey, x, y, z, blockType } of toPlace) {
       const posKey = `${x},${y},${z}`;
       const existing = writtenThisTick.get(posKey);
@@ -1643,10 +1644,14 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.waterDirty.add(sourceKey);
         continue;
       }
-      const deltaMap = chunk.changeCubeType(x, z, y, blockType);
+      const deltaMap = chunk.changeCubeTypeNoUpdate(x, z, y, blockType);
       this.deltaMaps.set(chunkKey, deltaMap);
       writtenThisTick.set(posKey, blockType);
       this.waterDirty.add(posKey);
+      updatedChunks.add(chunk);
+    }
+    for (const chunk of updatedChunks) {
+      chunk.updateCubePositionsAndTypes();
     }
   }
 
