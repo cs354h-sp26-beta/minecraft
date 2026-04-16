@@ -175,7 +175,12 @@ export class RenderPass {
 
   public addUniform(name: string,
                     bindFunction: (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => void) {
-    this.uniforms.set(name, new Uniform(0, bindFunction));
+    const existing = this.uniforms.get(name);
+    if (existing) {
+      existing.bindFunction = bindFunction;
+    } else {
+      this.uniforms.set(name, new Uniform(0, bindFunction));
+    }
   }
 
   public setIndexBufferData(data: Uint32Array) {
