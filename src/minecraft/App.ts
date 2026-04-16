@@ -1764,18 +1764,6 @@ export class MinecraftAnimation extends CanvasAnimation {
           blockType,
         );
 
-        // Test falling blocks (water manages its own gravity via tickWater)
-        if (
-          !chunk.isWater(cubeX, cubeZ, cubeY) &&
-          chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir
-        ) {
-          const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
-          this.fallingBlocks.push(
-            new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
-          );
-          chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
-        }
-
         this.deltaMaps.set(key, chunkDeltaMap);
         this.blocksPlaced++;
 
