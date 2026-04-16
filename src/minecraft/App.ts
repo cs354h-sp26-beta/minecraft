@@ -111,6 +111,9 @@ export class MinecraftAnimation extends CanvasAnimation {
   private blocksBroken: number;
   private blocksPlaced: number;
   private successfulJumps: number;
+  private blasterHits: number;
+  private starvationDamageTaken: number;
+  private jetpackUsed: boolean;
 
   /* Inventory */
   public inventory: Inventory;
@@ -211,6 +214,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.blocksBroken = 0;
     this.blocksPlaced = 0;
     this.successfulJumps = 0;
+    this.blasterHits = 0;
+    this.starvationDamageTaken = 0;
+    this.jetpackUsed = false;
 
     this.isInInventory = false;
 
@@ -293,6 +299,34 @@ export class MinecraftAnimation extends CanvasAnimation {
         completed: false,
         completedAt: null,
       },
+      {
+        id: "blaster_hit",
+        title: "In My Sights",
+        description: "Shoot an enemy with a blaster.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "starvation",
+        title: "Rumbling Stomach",
+        description: "Take damage from starvation.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "jetpack",
+        title: "Jetpack Joyride",
+        description: "Use a jetpack.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "craft",
+        title: "Crafty",
+        description: "Craft anything.",
+        completed: false,
+        completedAt: null,
+      },
     ];
   }
 
@@ -337,6 +371,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
     if (this.isNightTime()) {
       this.completeAchievement("night");
+    }
+    if (this.blasterHits > 0) {
+      this.completeAchievement("blaster_hit");
+    }
+    if (this.starvationDamageTaken > 0) {
+      this.completeAchievement("starvation");
+    }
+    if (this.jetpackUsed) {
+      this.completeAchievement("jetpack");
+    }
+    if (this.inventory.itemsCrafted > 0) {
+      this.completeAchievement("craft");
     }
 
     if (this.achievementToast !== null) {
@@ -1397,6 +1443,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       ) {
         this.player.velocity.y += 18.0 * dt;
         this.jetpackFuel = Math.max(0, this.jetpackFuel - 20.0 * dt);
+        this.jetpackUsed = true;
       } else {
         this.jetpackFuel = Math.min(100, this.jetpackFuel + 12.0 * dt);
       }
@@ -1427,6 +1474,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (this.starvationTimer >= this.starvationInterval) {
         this.starvationTimer = 0;
         this.player.takeDamage(1);
+        this.starvationDamageTaken++;
       }
     } else {
       this.starvationTimer = 0;
@@ -2504,6 +2552,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         const idx = this.enemies.indexOf(this.selectedEnemy);
         this.enemies.splice(idx, 1);
       }
+      this.blasterHits++;
     }
 
     this.blasterCooldown = 0.35;

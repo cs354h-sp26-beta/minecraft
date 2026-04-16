@@ -191,6 +191,7 @@ export class Inventory {
   private craftingRecipes: CraftingRecipe[];
   private selectedCraftingRecipeIdx: number;
   public selectedHotbarIdx: number;
+  public itemsCrafted: number;
 
   constructor() {
     this.items = new Array(Inventory.width * Inventory.height).fill(null);
@@ -200,6 +201,7 @@ export class Inventory {
     this.craftingRecipes = CRAFTING_RECIPES;
     this.selectedCraftingRecipeIdx = 0;
     this.selectedHotbarIdx = 0;
+    this.itemsCrafted = 0;
   }
 
   public insertStack(itemStack: ItemStack | null): boolean {
@@ -812,10 +814,14 @@ export class Inventory {
       }
     }
 
-    return this.insertItemById(
+    const inserted = this.insertItemById(
         recipe.outputItemId,
         recipe.outputCount,
     );
+    if (inserted) {
+      this.itemsCrafted++;
+    }
+    return inserted;
   }
   
   // private seedStarterInventory(): void {
