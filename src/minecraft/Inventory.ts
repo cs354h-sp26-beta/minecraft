@@ -116,13 +116,24 @@ export function registerItemTypes() {
 
 export function registerRecipes() {
   const registerRecipe = (
-      outputType: string, outputCount: number, inputs: {type: string, count: number}[]) => {
-    recipes.push(new Recipe(
+    outputType: string,
+    outputCount: number,
+    inputs: { type: string; count: number }[],
+  ) => {
+    recipes.push(
+      new Recipe(
         new ItemStack(itemTypes.get(outputType)!, outputCount),
-        inputs.map(i => new ItemStack(itemTypes.get(i.type)!, i.count))));
+        inputs.map((i) => new ItemStack(itemTypes.get(i.type)!, i.count)),
+      ),
+    );
   };
 
-  registerRecipe("sandstone", 1, [{type: "sand", count: 1}, {type: "sand", count: 1}, {type: "sand", count: 1}, {type: "sand", count: 1}]);
+  registerRecipe("sandstone", 1, [
+    { type: "sand", count: 1 },
+    { type: "sand", count: 1 },
+    { type: "sand", count: 1 },
+    { type: "sand", count: 1 },
+  ]);
 }
 
 export class ItemStack {
@@ -171,8 +182,8 @@ export class Recipe {
   public inputs: ItemStack[];
 
   constructor(output: ItemStack, inputs: ItemStack[]) {
-      this.output = output;
-      this.inputs = inputs;
+    this.output = output;
+    this.inputs = inputs;
   }
 }
 
@@ -319,7 +330,7 @@ export class Inventory {
     } else if (index === 3000) {
       this.outputSlot = itemStack;
     } else {
-        throw new Error(`Invalid inventory slot index: ${index}`);
+      throw new Error(`Invalid inventory slot index: ${index}`);
     }
   }
 
@@ -329,16 +340,19 @@ export class Inventory {
   private static readonly HOTBAR_GAP = 30;
 
   /** Iterates over all inventory slots, calling cb with (col, invRow, x, y) relative to grid origin. */
-  private forEachInventorySlot(cb: (col: number, invRow: number, x: number, y: number) => void): void {
+  private forEachInventorySlot(
+    cb: (col: number, invRow: number, x: number, y: number) => void,
+  ): void {
     const { SLOT_SIZE, SLOT_GAP, HOTBAR_GAP } = Inventory;
     const cols = Inventory.width;
     const rows = Inventory.height;
 
     for (let row = 0; row < rows; row++) {
       const invRow = row < rows - 1 ? row + 1 : 0;
-      const y = row < rows - 1
-        ? row * (SLOT_SIZE + SLOT_GAP)
-        : row * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
+      const y =
+        row < rows - 1
+          ? row * (SLOT_SIZE + SLOT_GAP)
+          : row * SLOT_SIZE + (rows - 2) * SLOT_GAP + HOTBAR_GAP;
 
       for (let col = 0; col < cols; col++) {
         cb(col, invRow, col * (SLOT_SIZE + SLOT_GAP), y);
@@ -350,12 +364,19 @@ export class Inventory {
 
   /** Returns the width of the inventory grid. */
   private static invGridWidth(): number {
-    return Inventory.width * Inventory.SLOT_SIZE + (Inventory.width - 1) * Inventory.SLOT_GAP;
+    return (
+      Inventory.width * Inventory.SLOT_SIZE +
+      (Inventory.width - 1) * Inventory.SLOT_GAP
+    );
   }
 
   /** Returns the height of the inventory grid (including hotbar gap). */
   private static invGridHeight(): number {
-    return Inventory.height * Inventory.SLOT_SIZE + (Inventory.height - 2) * Inventory.SLOT_GAP + Inventory.HOTBAR_GAP;
+    return (
+      Inventory.height * Inventory.SLOT_SIZE +
+      (Inventory.height - 2) * Inventory.SLOT_GAP +
+      Inventory.HOTBAR_GAP
+    );
   }
 
   /** Height of the lower panels (equipment / crafting). */
@@ -363,17 +384,26 @@ export class Inventory {
     return 2 * Inventory.SLOT_SIZE + Inventory.SLOT_GAP;
   }
 
-  private gridOrigin(canvasWidth: number, canvasHeight: number): [number, number] {
+  private gridOrigin(
+    canvasWidth: number,
+    canvasHeight: number,
+  ): [number, number] {
     const gridWidth = Inventory.invGridWidth();
-    const totalHeight = Inventory.invGridHeight() + Inventory.LOWER_PANEL_GAP + Inventory.lowerPanelHeight();
-    return [
-      (canvasWidth - gridWidth) / 2,
-      (canvasHeight - totalHeight) / 2,
-    ];
+    const totalHeight =
+      Inventory.invGridHeight() +
+      Inventory.LOWER_PANEL_GAP +
+      Inventory.lowerPanelHeight();
+    return [(canvasWidth - gridWidth) / 2, (canvasHeight - totalHeight) / 2];
   }
 
   /** Draws a single inventory slot by index. */
-  private drawSlot(ctx: CanvasRenderingContext2D, x: number, y: number, index: number, highlight: boolean): void {
+  private drawSlot(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    index: number,
+    highlight: boolean,
+  ): void {
     const { SLOT_SIZE } = Inventory;
 
     ctx.beginPath();
@@ -390,7 +420,12 @@ export class Inventory {
     }
   }
 
-  private drawItem(ctx: CanvasRenderingContext2D, item: ItemStack, x: number, y: number): void {
+  private drawItem(
+    ctx: CanvasRenderingContext2D,
+    item: ItemStack,
+    x: number,
+    y: number,
+  ): void {
     const { SLOT_SIZE } = Inventory;
     const img = item.itemType.img;
     if (img) {
@@ -409,14 +444,21 @@ export class Inventory {
     }
   }
 
-  public drawHotbar(ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, selectedHotbarIdx: number): void {
+  public drawHotbar(
+    ctx: CanvasRenderingContext2D,
+    canvasWidth: number,
+    canvasHeight: number,
+    selectedHotbarIdx: number,
+  ): void {
     const { SLOT_SIZE, SLOT_GAP } = Inventory;
     const cols = Inventory.width;
     const hotbarWidth = cols * SLOT_SIZE + (cols - 1) * SLOT_GAP;
     const hotbarX = (canvasWidth - hotbarWidth) / 2;
     const hotbarY = canvasHeight - SLOT_SIZE - 35;
 
-    const selectedItem = this.getItemStack(Inventory.slotIndex(selectedHotbarIdx, 0));
+    const selectedItem = this.getItemStack(
+      Inventory.slotIndex(selectedHotbarIdx, 0),
+    );
     ctx.font = "16px monospace";
     const titleHeight = selectedItem ? 18 : 0;
 
@@ -425,7 +467,13 @@ export class Inventory {
 
     // background (extended upward for title)
     ctx.beginPath();
-    ctx.roundRect(-15, -15 - titleHeight, hotbarWidth + 30, SLOT_SIZE + 30 + titleHeight, 6);
+    ctx.roundRect(
+      -15,
+      -15 - titleHeight,
+      hotbarWidth + 30,
+      SLOT_SIZE + 30 + titleHeight,
+      6,
+    );
     ctx.strokeStyle = "#737981";
     ctx.lineWidth = 4;
     ctx.fillStyle = "rgba(21,27,41,0.6)";
@@ -441,17 +489,36 @@ export class Inventory {
     }
 
     for (let i = 0; i < cols; i++) {
-      this.drawSlot(ctx, i * (SLOT_SIZE + SLOT_GAP), 0, Inventory.slotIndex(i, 0), i === selectedHotbarIdx);
+      this.drawSlot(
+        ctx,
+        i * (SLOT_SIZE + SLOT_GAP),
+        0,
+        Inventory.slotIndex(i, 0),
+        i === selectedHotbarIdx,
+      );
     }
 
     ctx.restore();
   }
 
   /** Draws a labeled panel background. */
-  private drawPanel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, label: string): void {
+  private drawPanel(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    label: string,
+  ): void {
     const { INV_PADDING } = Inventory;
     ctx.beginPath();
-    ctx.roundRect(x - INV_PADDING, y - INV_PADDING, w + INV_PADDING * 2, h + INV_PADDING * 2, 6);
+    ctx.roundRect(
+      x - INV_PADDING,
+      y - INV_PADDING,
+      w + INV_PADDING * 2,
+      h + INV_PADDING * 2,
+      6,
+    );
     ctx.strokeStyle = "#737981";
     ctx.lineWidth = 4;
     ctx.fillStyle = "rgba(21,27,41,0.85)";
@@ -465,7 +532,14 @@ export class Inventory {
     ctx.fillText(label, x, y - INV_PADDING - 4);
   }
 
-  public drawInventoryScreen(ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, selectedHotbarIdx: number, mouseX: number, mouseY: number): void {
+  public drawInventoryScreen(
+    ctx: CanvasRenderingContext2D,
+    canvasWidth: number,
+    canvasHeight: number,
+    selectedHotbarIdx: number,
+    mouseX: number,
+    mouseY: number,
+  ): void {
     const { SLOT_SIZE, SLOT_GAP, LOWER_PANEL_GAP } = Inventory;
     const gridWidth = Inventory.invGridWidth();
     const gridHeight = Inventory.invGridHeight();
@@ -480,7 +554,13 @@ export class Inventory {
     this.drawPanel(ctx, 0, 0, gridWidth, gridHeight, "Inventory");
 
     this.forEachInventorySlot((col, invRow, x, y) => {
-      this.drawSlot(ctx, x, y, Inventory.slotIndex(col, invRow), invRow === 0 && col === selectedHotbarIdx);
+      this.drawSlot(
+        ctx,
+        x,
+        y,
+        Inventory.slotIndex(col, invRow),
+        invRow === 0 && col === selectedHotbarIdx,
+      );
     });
 
     // Lower panels Y
@@ -490,12 +570,19 @@ export class Inventory {
     const equipW = SLOT_SIZE;
     this.drawPanel(ctx, 0, lowerY, equipW, lowerH, "Equipment");
     for (let i = 0; i < Inventory.equipmentCount; i++) {
-      this.drawSlot(ctx, 0, lowerY + i * (SLOT_SIZE + SLOT_GAP), Inventory.equipmentIndex(i), false);
+      this.drawSlot(
+        ctx,
+        0,
+        lowerY + i * (SLOT_SIZE + SLOT_GAP),
+        Inventory.equipmentIndex(i),
+        false,
+      );
     }
 
     // Crafting panel (right) — 2x2 grid + output slot
     const craftCols = 2;
-    const craftW = craftCols * SLOT_SIZE + (craftCols - 1) * SLOT_GAP + SLOT_GAP + SLOT_SIZE; // 2x2 + gap + output
+    const craftW =
+      craftCols * SLOT_SIZE + (craftCols - 1) * SLOT_GAP + SLOT_GAP + SLOT_SIZE; // 2x2 + gap + output
     const craftX = gridWidth - craftW;
     this.drawPanel(ctx, craftX, lowerY, craftW, lowerH, "Crafting");
     for (let row = 0; row < 2; row++) {
@@ -526,10 +613,18 @@ export class Inventory {
 
   private isInSlot(relX: number, relY: number, x: number, y: number): boolean {
     const { SLOT_SIZE } = Inventory;
-    return relX >= x && relX < x + SLOT_SIZE && relY >= y && relY < y + SLOT_SIZE;
+    return (
+      relX >= x && relX < x + SLOT_SIZE && relY >= y && relY < y + SLOT_SIZE
+    );
   }
 
-  public handleClick(mouseX: number, mouseY: number, canvasWidth: number, canvasHeight: number, button: number): void {
+  public handleClick(
+    mouseX: number,
+    mouseY: number,
+    canvasWidth: number,
+    canvasHeight: number,
+    button: number,
+  ): void {
     const { SLOT_SIZE, SLOT_GAP, LOWER_PANEL_GAP } = Inventory;
     const [originX, originY] = this.gridOrigin(canvasWidth, canvasHeight);
     const relX = mouseX - originX;
@@ -556,11 +651,19 @@ export class Inventory {
 
     // Crafting slots
     const craftCols = 2;
-    const craftW = craftCols * SLOT_SIZE + (craftCols - 1) * SLOT_GAP + SLOT_GAP + SLOT_SIZE;
+    const craftW =
+      craftCols * SLOT_SIZE + (craftCols - 1) * SLOT_GAP + SLOT_GAP + SLOT_SIZE;
     const craftX = gridWidth - craftW;
     for (let row = 0; row < 2; row++) {
       for (let col = 0; col < 2; col++) {
-        if (this.isInSlot(relX, relY, craftX + col * (SLOT_SIZE + SLOT_GAP), lowerY + row * (SLOT_SIZE + SLOT_GAP))) {
+        if (
+          this.isInSlot(
+            relX,
+            relY,
+            craftX + col * (SLOT_SIZE + SLOT_GAP),
+            lowerY + row * (SLOT_SIZE + SLOT_GAP),
+          )
+        ) {
           this.clickSlot(Inventory.craftingIndex(col, row), button);
           return;
         }
@@ -578,17 +681,38 @@ export class Inventory {
   public clickSlot(index: number, button: number): void {
     const slotItem = this.getItemStack(index);
 
-    const canUseSlot = !this.mouseItem || !(1000 <= index && index < 2000 && this.mouseItem.itemType.actionType !== ItemAction.Equip);
+    const canUseSlot =
+      !this.mouseItem ||
+      !(
+        1000 <= index &&
+        index < 2000 &&
+        this.mouseItem.itemType.actionType !== ItemAction.Equip
+      );
 
     if (index === Inventory.outputIndex()) {
-      if (slotItem && (!this.mouseItem ||
-            (this.mouseItem && slotItem.itemType.id === this.mouseItem.itemType.id && this.mouseItem.count + slotItem.count <= slotItem.itemType.maxStackSize))) {
-        this.mouseItem = new ItemStack(slotItem.itemType, this.mouseItem ? this.mouseItem.count + slotItem.count : slotItem.count);
+      if (
+        slotItem &&
+        (!this.mouseItem ||
+          (this.mouseItem &&
+            slotItem.itemType.id === this.mouseItem.itemType.id &&
+            this.mouseItem.count + slotItem.count <=
+              slotItem.itemType.maxStackSize))
+      ) {
+        this.mouseItem = new ItemStack(
+          slotItem.itemType,
+          this.mouseItem
+            ? this.mouseItem.count + slotItem.count
+            : slotItem.count,
+        );
         this.setItemStack(index, null);
         this.useUpCrafingInputs();
       }
     } else if (button === 0) {
-      if (this.mouseItem && slotItem && this.mouseItem.itemType.id === slotItem.itemType.id) {
+      if (
+        this.mouseItem &&
+        slotItem &&
+        this.mouseItem.itemType.id === slotItem.itemType.id
+      ) {
         // If same item type, try to merge mouse item into slot item
         const spaceLeft = slotItem.itemType.maxStackSize - slotItem.count;
         const toAdd = Math.min(spaceLeft, this.mouseItem.count);
@@ -620,9 +744,12 @@ export class Inventory {
         if (this.mouseItem.count <= 0) {
           this.mouseItem = null;
         }
-      } else if (this.mouseItem && slotItem
-            && slotItem.itemType.id === this.mouseItem.itemType.id
-            && slotItem.count < slotItem.itemType.maxStackSize) {
+      } else if (
+        this.mouseItem &&
+        slotItem &&
+        slotItem.itemType.id === this.mouseItem.itemType.id &&
+        slotItem.count < slotItem.itemType.maxStackSize
+      ) {
         slotItem.count += 1;
         this.mouseItem.count -= 1;
         if (this.mouseItem.count <= 0) {
@@ -656,7 +783,12 @@ export class Inventory {
         for (let i = 0; i < 4; i++) {
           const craftIndex = Inventory.craftingIndex(i % 2, Math.floor(i / 2));
           const slotItem = this.getItemStack(craftIndex);
-          if (!used[i] && slotItem && slotItem.itemType.id === input.itemType.id && slotItem.count >= input.count) {
+          if (
+            !used[i] &&
+            slotItem &&
+            slotItem.itemType.id === input.itemType.id &&
+            slotItem.count >= input.count
+          ) {
             found = true;
             used[i] = true;
             break;
@@ -668,7 +800,10 @@ export class Inventory {
         }
       }
       if (matches) {
-        this.setItemStack(Inventory.outputIndex(), new ItemStack(recipe.output.itemType, recipe.output.count));
+        this.setItemStack(
+          Inventory.outputIndex(),
+          new ItemStack(recipe.output.itemType, recipe.output.count),
+        );
         this.activeRecipe = recipe;
         return;
       }
@@ -678,13 +813,20 @@ export class Inventory {
   }
 
   private useUpCrafingInputs() {
-    if (!this.activeRecipe) { return; }
+    if (!this.activeRecipe) {
+      return;
+    }
     let used = [false, false, false, false];
     for (let input of this.activeRecipe.inputs) {
       for (let i = 0; i < 4; i++) {
         const craftIndex = Inventory.craftingIndex(i % 2, Math.floor(i / 2));
         const slotItem = this.getItemStack(craftIndex);
-        if (!used[i] && slotItem && slotItem.itemType.id === input.itemType.id && slotItem.count >= input.count) {
+        if (
+          !used[i] &&
+          slotItem &&
+          slotItem.itemType.id === input.itemType.id &&
+          slotItem.count >= input.count
+        ) {
           this.editSlotCount(craftIndex, slotItem.count - input.count);
           used[i] = true;
         }
