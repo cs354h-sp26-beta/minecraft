@@ -1389,6 +1389,7 @@ export class Chunk {
     if (type === undefined || type === Chunk.blockTypeAir) return false;
     // Water is non-solid — the player walks and swims through it.
     if (this.isWater(wx, wz, wy)) return false;
+    if (this.isLava(wx, wz, wy)) return false;
     return true;
   }
 
@@ -1490,6 +1491,11 @@ export class Chunk {
         t >= Chunk.blockTypeWaterFlowLevel3 &&
         t <= Chunk.blockTypeWaterFlowLevel1)
     );
+  }
+
+  public isLava(worldX: number, worldZ: number, worldY: number): boolean {
+    const t = this.cubeType(worldX, worldZ, worldY);
+    return t === Chunk.blockTypeLava;
   }
 
   // Returns true if the block at the given world coords is a non-source (falling or flowing) water block.
