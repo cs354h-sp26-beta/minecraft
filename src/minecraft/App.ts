@@ -99,7 +99,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private foodBitmap: ImageBitmap | null = null;
   private crosshairBitmap: ImageBitmap | null = null;
 
-  private player: Player;
+  public player: Player;
   private spawnPosition: Vec3;
   private decorationGenerator: DecorationGenerator;
   private decorationCache: Map<string, DecorBuffer>;
@@ -140,6 +140,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     { enemies: Enemy[]; blocks: Block[] }
   >;
 
+  /** Chunk keys for which initial enemies have already been spawned. */
+  private spawnedChunkKeys: Set<string> = new Set();
+  private static readonly enemiesPerChunk: number = 2;
+
   /* Water simulation */
   private static readonly waterTickInterval: number = 30;
   private frameCount: number = 0;
@@ -149,11 +153,14 @@ export class MinecraftAnimation extends CanvasAnimation {
   private minimapPixelSize = 135;
   private minimapColors: Map<number, [number, number, number]>;
 
-  /* Hunger */
+  /* Hunger and health*/
   private hungerTimer: number;
   private starvationTimer: number;
+  private regenHealthTimer: number;
+  private readonly regenHealthFoodThreshold: number = 0.9; // player must have at least 90% food to regen health
   private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
   private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
+  private readonly regenHealthInterval: number = 4; // player regenerates health at this interval when the threshold is met
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -194,6 +201,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
 
+    // Must be initialized before loadChunksAroundPlayer, since that now
+    // spawns enemies as chunks come online.
+    this.enemies = [];
+    this.selectedEnemy = null;
+    this.enemyMesh = null;
+
     this.loadChunksAroundPlayer();
 
     this.blankCubeRenderPass = new RenderPass(
@@ -217,8 +230,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Portal rendering setup
     this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
     this.portals = [];
-    this.enemies = [];
-    this.selectedEnemy = null;
     this.achievements = this.createAchievements();
     this.achievementToast = null;
     this.showAchievements = false;
@@ -232,7 +243,6 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.isInInventory = false;
 
-    this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
 
@@ -247,6 +257,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
+    this.regenHealthTimer = 0;
 
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
@@ -556,7 +567,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           0,
           fallDistance - MinecraftAnimation.safeFallDistance,
         );
-        if (damage > 0) {
+        if (damage > 0 && !this.inventory.hasEquipmentById("jetpack")) {
           this.player.takeDamage(damage);
         }
       }
@@ -1082,46 +1093,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     this.enemyRenderPass.setup();
 
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
+    // The mesh may have finished loading after the initial chunk batch was
+    // rendered (the load is async), so retroactively spawn in every chunk
+    // that's already live.
+    for (const [key, chunk] of this.renderedChunks) {
+      this.spawnEnemiesInChunk(key, chunk);
+    }
   }
 
   private loadEnemyBoneTranslations(gl: WebGLRenderingContext): void {
@@ -1279,6 +1256,49 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
+  /**
+   * Drop a couple of enemies onto random walkable surface blocks in this
+   * chunk. No-op if the enemy mesh isn't loaded yet, or if this chunk has
+   * already been populated. When the mesh finishes loading `initEnemies`
+   * retroactively spawns for any chunks that were skipped.
+   */
+  private spawnEnemiesInChunk(chunkKey: string, chunk: Chunk): void {
+    if (!this.enemyMesh) return;
+    if (this.spawnedChunkKeys.has(chunkKey)) return;
+    this.spawnedChunkKeys.add(chunkKey);
+
+    const size = chunk.chunkSize();
+    const topLeftX = chunk.topLeftX();
+    const topLeftZ = chunk.topLeftZ();
+    const target = MinecraftAnimation.enemiesPerChunk;
+    let spawned = 0;
+    let attempts = 0;
+    while (spawned < target && attempts < 20) {
+      attempts++;
+      const wx = topLeftX + Math.floor(Math.random() * size);
+      const wz = topLeftZ + Math.floor(Math.random() * size);
+      const top = chunk.topBlockAt(wx, wz);
+      if (!top || top.height < 0) continue;
+      const t = top.type;
+      if (
+        t === Chunk.blockTypeAir ||
+        t === Chunk.blockTypeWater ||
+        t === Chunk.blockTypeWaterFalling ||
+        (t >= Chunk.blockTypeWaterFlowLevel3 &&
+         t <= Chunk.blockTypeWaterFlowLevel1)
+      ) {
+        continue;
+      }
+      // Enemy position is head-based; hitboxHeight is 1. Spawn with feet just
+      // above the surface block's top face (stepPhysics will snap cleanly).
+      const headY = top.height + 1.5;
+      this.enemies.push(
+        new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])),
+      );
+      spawned++;
+    }
+  }
+
   private loadChunksAroundPlayer(): void {
     const prevLoadedKeys = new Set(this.renderedChunks.keys());
     const nextLoadedKeys = new Set<string>();
@@ -1324,6 +1344,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (!prevLoadedKeys.has(key)) {
         this.loadEntitiesForChunk(key);
       }
+      this.spawnEnemiesInChunk(key, this.renderedChunks.get(key)!);
     }
   }
 
@@ -1502,6 +1523,17 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
     } else {
       this.starvationTimer = 0;
+    }
+
+    // Update health
+    if (this.player.food >= this.player.maxFood * this.regenHealthFoodThreshold) {
+      this.regenHealthTimer += dt;
+      if (this.regenHealthTimer >= this.regenHealthInterval) {
+        this.regenHealthTimer = 0;
+        this.player.heal(1);
+      }
+    } else {
+      this.regenHealthTimer = 0;
     }
 
     this.updateAchievements(dt);
@@ -2324,7 +2356,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(this, item!, this.player);
+        itemType.useAction(this);
         return;
       }
       case ItemAction.Place: {

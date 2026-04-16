@@ -19,7 +19,7 @@ export class ItemType {
   private action:
     | null
     | number
-    | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void);
+    | ((app: MinecraftAnimation) => void);
   public img: ImageBitmap | null;
 
   constructor(id: string, name: string, image: string, maxStackSize: number) {
@@ -52,14 +52,14 @@ export class ItemType {
   public setAction(actionType: ItemAction.Equip): ItemType;
   public setAction(
     actionType: ItemAction.Use,
-    action: (app: MinecraftAnimation, stack: ItemStack, player: Player) => void,
+    action: (app: MinecraftAnimation) => void,
   ): ItemType;
   public setAction(actionType: ItemAction.Place, blockType: number): ItemType;
   public setAction(
     actionType: ItemAction,
     action?:
       | number
-      | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void),
+      | ((app: MinecraftAnimation) => void),
   ): ItemType {
     this.actionType = actionType;
     if (action !== undefined) {
@@ -70,18 +70,10 @@ export class ItemType {
     return this;
   }
 
-  public useAction(
-    app: MinecraftAnimation,
-    itemStack: ItemStack,
-    player: Player,
-  ) {
+  public useAction(app: MinecraftAnimation) {
     if (this.actionType === ItemAction.Use) {
-      const actionFunc = this.action as (
-        app: MinecraftAnimation,
-        stack: ItemStack,
-        p: Player,
-      ) => void;
-      actionFunc(app, itemStack, player);
+      const actionFunc = this.action as (app: MinecraftAnimation) => void;
+      actionFunc(app);
     }
   }
 
@@ -147,15 +139,17 @@ export function registerItemTypes() {
   registerItem("jetpack", "Jetpack", 1).setAction(ItemAction.Equip);
   registerItem("blaster", "Blaster", 1).setAction(
     ItemAction.Use,
-    (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
+    (app: MinecraftAnimation) => {
       app.fireBlaster();
     },
   );
 
   registerItem("food", "Food").setAction(
     ItemAction.Use,
-    (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
-      p.eat(5);
+    (app: MinecraftAnimation) => {
+      app.player.eat(5);
+      const count = app.inventory.getHeldItem()!.count;
+      app.inventory.editSlotCount(app.inventory.selectedHotbarIdx, count - 1);
     },
   );
 }
