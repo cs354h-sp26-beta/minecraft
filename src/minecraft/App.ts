@@ -1444,16 +1444,15 @@ export class MinecraftAnimation extends CanvasAnimation {
       blocksToUpdate.push(currBlockPos);
 
       // Check if current block is touching "ground" by checking y = 0
-      if (currBlockPos!.at(1)! === 0) {
+      if (currBlockPos![1] === 0) {
         foundGround = true;
-        console.log(foundGround);
         break;
       }
 
       for (const [dx, dy, dz] of directions) {
-        const x = currBlockPos!.at(0)! + dx;
-        const y = currBlockPos!.at(1)! + dy;
-        const z = currBlockPos!.at(2)! + dz;
+        const x = currBlockPos![0] + dx;
+        const y = currBlockPos![1] + dy;
+        const z = currBlockPos![2] + dz;
 
         const blockKey = `${x},${y},${z}`;
         let chunk = this.getChunkAtWorld(x, z);
@@ -1467,26 +1466,30 @@ export class MinecraftAnimation extends CanvasAnimation {
           visited.add(blockKey);
           queue.push([x, y, z]);
         }
+        if (chunk === undefined) {
+          foundGround = true; // Assume block in unloaded chunk is connected to the ground
+          break;
+        }
       }
     }
     // Do nothing if ground is found, but mark all blocks searched as falling if ground is not found
     if (foundGround === false) {
       for (const blockPos of blocksToUpdate) {
         const fallingBlockType = chunk.cubeType(
-          blockPos!.at(0)!,
-          blockPos!.at(2)!,
-          blockPos!.at(1)!,
+          blockPos![0],
+          blockPos![2],
+          blockPos![1],
         )!; // x, z, y
         this.fallingBlocks.push(
           new Block(
-            new Vec3([blockPos!.at(0)!, blockPos!.at(1)!, blockPos!.at(2)!]),
+            new Vec3([blockPos![0], blockPos![1], blockPos![2]]),
             fallingBlockType,
           ),
         );
         chunk.changeCubeType(
-          blockPos!.at(0)!,
-          blockPos!.at(2)!,
-          blockPos!.at(1)!,
+          blockPos![0],
+          blockPos![2],
+          blockPos![1],
           Chunk.blockTypeAir,
         );
       }
