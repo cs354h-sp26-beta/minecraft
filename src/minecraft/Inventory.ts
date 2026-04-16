@@ -3,6 +3,7 @@ import { Chunk } from "./Chunk.js";
 import { DecorationGenerator } from "./Decorations.js";
 import { CRAFTING_RECIPES, CraftingRecipe } from "./Crafting.js";
 import { MinecraftAnimation } from "./App.js";
+import {Vec3} from "../lib/tsm/Vec3.js";
 
 export enum ItemAction {
   None,
@@ -16,7 +17,7 @@ export class ItemType {
   public name: string;
   public maxStackSize: number;
   public actionType: ItemAction;
-  private action: null | number | ((app: MinecraftAnimation) => void);
+  private action: null | number | ((app: MinecraftAnimation, pos: Vec3) => void);
   public img: ImageBitmap | null;
 
   constructor(id: string, name: string, image: string, maxStackSize: number) {
@@ -49,12 +50,12 @@ export class ItemType {
   public setAction(actionType: ItemAction.Equip): ItemType;
   public setAction(
     actionType: ItemAction.Use,
-    action: (app: MinecraftAnimation) => void,
+    action: (app: MinecraftAnimation, pos: Vec3) => void,
   ): ItemType;
   public setAction(actionType: ItemAction.Place, blockType: number): ItemType;
   public setAction(
     actionType: ItemAction,
-    action?: number | ((app: MinecraftAnimation) => void),
+    action?: number | ((app: MinecraftAnimation, pos: Vec3) => void),
   ): ItemType {
     this.actionType = actionType;
     if (action !== undefined) {
@@ -65,10 +66,10 @@ export class ItemType {
     return this;
   }
 
-  public useAction(app: MinecraftAnimation) {
+  public useAction(app: MinecraftAnimation, pos: Vec3) {
     if (this.actionType === ItemAction.Use) {
-      const actionFunc = this.action as (app: MinecraftAnimation) => void;
-      actionFunc(app);
+      const actionFunc = this.action as (app: MinecraftAnimation, pos: Vec3) => void;
+      actionFunc(app, pos);
     }
   }
 
@@ -134,14 +135,21 @@ export function registerItemTypes() {
   registerItem("jetpack", "Jetpack", 1).setAction(ItemAction.Equip);
   registerItem("blaster", "Blaster", 1).setAction(
     ItemAction.Use,
-    (app: MinecraftAnimation) => {
+    (app: MinecraftAnimation, pos: Vec3) => {
       app.fireBlaster();
     },
   );
 
+  registerItem("nether_star", "Nether Star", 1).setAction(ItemAction.Use, (app: MinecraftAnimation, pos: Vec3) => {
+    if (app.checkCreateDimensionPortal(pos)) {
+      const count = app.inventory.getHeldItem()!.count;
+      app.inventory.editSlotCount(app.inventory.selectedHotbarIdx, count - 1);
+    }
+  });
+
   registerItem("food", "Food").setAction(
     ItemAction.Use,
-    (app: MinecraftAnimation) => {
+    (app: MinecraftAnimation, pos: Vec3) => {
       app.player.eat(5);
       const count = app.inventory.getHeldItem()!.count;
       app.inventory.editSlotCount(app.inventory.selectedHotbarIdx, count - 1);
@@ -439,7 +447,7 @@ export class Inventory {
   }
 
   private static readonly PANEL_GAP = 50;
-  private static readonly CRAFTING_PANEL_HEIGHT = 330;
+  private static readonly CRAFTING_PANEL_HEIGHT = 350;
   private static readonly CRAFTING_PANEL_GAP = 75;
 
   /** Returns the width of the inventory grid. */

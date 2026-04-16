@@ -91,6 +91,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   /* Portal Rendering */
   private portalRenderer: PortalRenderer;
   private portals: Portal[];
+  private tempPortal: Portal | null;
   private playerInPortal: Portal | null = null;
 
   /* Global Rendering Info */
@@ -237,6 +238,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Portal rendering setup
     this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
     this.portals = [];
+    this.tempPortal = null;
     this.achievements = this.createAchievements();
     this.achievementToast = null;
     this.showAchievements = false;
@@ -478,6 +480,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui.reset();
 
     this.player.position = this.spawnPosition.copy();
+    this.playerInNether = false;
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
     this.player.food = this.player.maxFood;
@@ -562,12 +565,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (let i = 0; i < 4; i++) {
       for (let j = 0; j < 5; j++) {
         const isFrame = i === 0 || i === 3 || j === 0 || j === 4;
-        const isInterior = i >= 1 && i <= 2 && j >= 1 && j <= 3;
-        if (!isFrame && !isInterior) continue;
+        // const isInterior = i >= 1 && i <= 2 && j >= 1 && j <= 3;
+        if (!isFrame) continue;
 
-        const blockType = isFrame
-          ? Chunk.blockTypePortalFrame
-          : Chunk.blockTypePortal;
+        const blockType = Chunk.blockTypePortalFrame;
 
         if (isXAligned) {
           this.writeDeltaBlock(
@@ -1655,7 +1656,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.jetpackFuel > 0 &&
         !this.isPlayerGrounded(prov)
       ) {
-        this.player.velocity.y += 18.0 * dt;
+        if (this.player.velocity.y < 0) {
+          this.player.velocity.y += -0.9 * this.player.velocity.y * dt;
+        }
+        this.player.velocity.y += 35.0 * dt;
         this.jetpackFuel = Math.max(0, this.jetpackFuel - 20.0 * dt);
         this.jetpackUsed = true;
       } else {
@@ -2542,7 +2546,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(this);
+        itemType.useAction(this, new Vec3(this.selectedCubePosition.xyz));
         return;
       }
       case ItemAction.Place: {
@@ -2728,7 +2732,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       : "overworld";
 
     if (check(blockIsPortalX)) {
-      const srcPortal = new Portal(
+      const newPortal = new Portal(
         new Vec3([minX + 1, minY + 1, minZ]),
         new Vec3([0, 0, 1]),
         new Vec3([0, 1, 0]),
@@ -2736,21 +2740,17 @@ export class MinecraftAnimation extends CanvasAnimation {
         3,
         srcDimension,
       );
-      const destPortal = this.writeDestinationPortal(
-        srcPortal,
-        minX,
-        minZ,
-        minY,
-        true,
-      );
-      srcPortal.link(destPortal);
-      this.portals.push(srcPortal);
-      this.portals.push(destPortal);
-      this.portalRenderer.addPortalPair(srcPortal, destPortal);
+      this.portals.push(newPortal);
+      if (this.tempPortal !== null) {
+        this.portalRenderer.addPortalPair(this.tempPortal, newPortal);
+        this.tempPortal = null;
+      } else {
+        this.tempPortal = newPortal;
+      }
       return true;
     }
     if (check(blockIsPortalZ)) {
-      const srcPortal = new Portal(
+      const newPortal = new Portal(
         new Vec3([minX, minY + 1, minZ + 2]),
         new Vec3([1, 0, 0]),
         new Vec3([0, 1, 0]),
@@ -2758,17 +2758,36 @@ export class MinecraftAnimation extends CanvasAnimation {
         3,
         srcDimension,
       );
+      this.portals.push(newPortal);
+      if (this.tempPortal !== null) {
+        this.portalRenderer.addPortalPair(this.tempPortal, newPortal);
+        this.tempPortal = null;
+      } else {
+        this.tempPortal = newPortal;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  public checkCreateDimensionPortal(pos: Vec3): boolean {
+    if (this.tempPortal === null) {
+      return false;
+    }
+
+    if (Math.abs(Vec3.dot(pos, this.tempPortal.normal) - Vec3.dot(this.tempPortal.position, this.tempPortal.normal)) < 0.5
+        && Vec3.distance(pos, this.tempPortal.position) <= 5.1) {
+
       const destPortal = this.writeDestinationPortal(
-        srcPortal,
-        minX,
-        minZ,
-        minY,
-        false,
+          this.tempPortal,
+          this.tempPortal.position.x,
+          this.tempPortal.position.z,
+          this.tempPortal.position.y,
+          this.tempPortal.normal.x === 0,
       );
-      srcPortal.link(destPortal);
-      this.portals.push(srcPortal);
-      this.portals.push(destPortal);
-      this.portalRenderer.addPortalPair(srcPortal, destPortal);
+      this.portalRenderer.addPortalPair(this.tempPortal, destPortal);
+      this.tempPortal = null;
       return true;
     }
 

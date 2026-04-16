@@ -87,4 +87,14 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     ],
     description: "Dimension-bending blocks for building a portal.",
   },
+  {
+    id: "nether_star",
+    title: "Nether Star",
+    outputItemId: "nether_star",
+    outputCount: 1,
+    ingredients: [
+      { itemId: "diamond", count: 16 }
+    ],
+    description: "A mythical artifact that can pierce the realms.",
+  },
 ];
