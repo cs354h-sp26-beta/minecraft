@@ -311,6 +311,58 @@ const oreTexture = `
 }
 `;
 
+const netheriteTexture = `
+    vec3 makeNetherite(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float v = voronoi(pixelWorld * 3.5);
+        float groove = smoothstep(0.3, 0.0, v * 0.4);
+        float shine = fbm(uv * 6.0, 2) * 0.3;
+        float vein = perlin(uv * 3.0 + pixelWorld.xz * 0.5);
+        vein = pow(clamp(vein, 0.0, 1.0), 4.0);
+        vec3 baseColor = vec3(0.2, 0.18, 0.22);
+        vec3 veinColor = vec3(0.6, 0.25, 0.0);
+        vec3 color = mix(baseColor * (0.4 + groove + shine), veinColor, vein * 0.7);
+        return color;
+    }
+`;
+
+// Animated glowing lava with slow churning motion
+const lavaTexture = `
+    vec3 makeLava(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 8.0) / 8.0;
+        vec2 p = pixelWorld.xz * 2.0;
+        float flow1 = perlin(p * 1.2 + vec2(uTime * 0.04, uTime * 0.02));
+        float flow2 = perlin(p * 2.5 + vec2(-uTime * 0.025, uTime * 0.035));
+        float flow = (flow1 + flow2) * 0.5;
+        float hot = pow(clamp(perlin(p * 1.8 + vec2(uTime * 0.015, 0.0)), 0.0, 1.0), 3.5);
+        vec3 coolColor  = vec3(0.55, 0.04, 0.0);
+        vec3 warmColor  = vec3(0.95, 0.35, 0.0);
+        vec3 hotColor   = vec3(1.0,  0.85, 0.2);
+        vec3 color = mix(coolColor, warmColor, pow(flow, 1.5));
+        color = mix(color, hotColor, hot * 0.6);
+        return color;
+    }
+`;
+
+// Dark porous volcanic rock with faint lava-glow cracks
+const netherRackTexture = `
+    vec3 makeNetherRack(vec2 uv, vec3 world, float scale) {
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float v = voronoi(pixelWorld * scale);
+        float groove = smoothstep(0.35, 0.0, v * 0.5);
+        float noise = fbm3(pixelWorld, 2);
+        float veinNoise = perlin(uv * 6.0 + pixelWorld.xz);
+        float lavaVein = smoothstep(0.72, 0.85, veinNoise) * groove;
+        vec3 baseColor = vec3(0.38, 0.05, 0.04);
+        vec3 darkColor = vec3(0.16, 0.02, 0.02);
+        vec3 lavaColor = vec3(0.8, 0.2, 0.0);
+        vec3 color = mix(darkColor, baseColor, noise * 0.6 + 0.4);
+        color *= (0.3 + 0.8 * groove + 0.4 * noise);
+        color = mix(color, lavaColor, lavaVein * 0.7);
+        return color;
+    }
+`;
+
 // const cellsTexture = `
 //       vec3 makeCobble(vec2 uv, vec3 world, float scale) {
 
@@ -376,7 +428,13 @@ export const blankCubeFSText = `
     ${waterTexture}
 
     ${oreTexture}
-    
+
+    ${netheriteTexture}
+
+    ${lavaTexture}
+
+    ${netherRackTexture}
+
     ${portalFrameTexture}
     
     void main() {
@@ -414,11 +472,17 @@ export const blankCubeFSText = `
         } else if (vBlockType == 10.0) {
             textureColor = makeSnow(uv);
         } else if (vBlockType == 11.0) {
-            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.24, 0.20, 0.20));
+            textureColor = makeNetherite(uv, wsPos.xyz);
         } else if (vBlockType == 12.0) {
             textureColor = makeCobble(uv, wsPos.xyz, 6.0) * vec3(0.55, 0.55, 0.55);
         } else if (vBlockType == 13.0) {
             textureColor = makePortal(wsPos.xyz);
+        } else if (vBlockType == 14.0) {
+            // Lava: slow animated orange-red glow
+            textureColor = makeLava(uv, wsPos.xyz);
+        } else if (vBlockType == 15.0) {
+            // Nether rack: dark volcanic rock with faint lava cracks
+            textureColor = makeNetherRack(uv, wsPos.xyz, 3.0);
         } else if (vBlockType == 20.0) {
             textureColor = makeWood(uv, wsPos.xyz);
         } else if (vBlockType == 21.0) {

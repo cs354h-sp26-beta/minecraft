@@ -38,7 +38,11 @@ export class Chunk {
   public static readonly blockTypeBedrock: number = 12;
   public static readonly blockTypePortal: number = 13;
   public static readonly blockTypePortalFrame: number = 30;
+  public static readonly blockTypeLava: number = 14;
+  public static readonly blockTypeNetherRack: number = 15;
   public static readonly SEA_LEVEL: number = 8;
+  public static readonly NETHER_LAVA_LEVEL: number = 4;
+  public static readonly NETHER_CEILING: number = 58;
 
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
@@ -51,23 +55,33 @@ export class Chunk {
   private static seedHash: number = 2166136261 >>> 0;
 
   private deltaMap: Map<string, number>; // Stores the modified cubes in the chunk (position -> block type)
+  private isNether: boolean; // Whether this chunk is in the Nether dimension
 
   constructor(
     centerX: number,
     centerZ: number,
     size: number,
     deltaMap = new Map(),
+    isNether = false,
   ) {
     this.x = centerX;
     this.z = centerZ;
     this.size = size;
     this.cubes = size * size;
     this.deltaMap = deltaMap;
+    this.isNether = isNether;
     this.generateCubes();
   }
 
   public static setSeedHash(seedHash: number): void {
     Chunk.seedHash = seedHash >>> 0;
+  }
+
+  // Returns the maximum Y for visibility iteration in this chunk column.
+  // Nether uses a fixed ceiling; overworld uses terrain height clamped to sea level.
+  private getColMaxY(i: number, j: number): number {
+    if (this.isNether) return Chunk.NETHER_CEILING;
+    return Math.max(this.heightMapData[this.size * i + j], Chunk.SEA_LEVEL);
   }
 
   private origin(): [number, number] {
@@ -394,47 +408,55 @@ export class Chunk {
 
     // TODO: wire Chunk.setWorldSeed(...) to a user-provided world seed from app/UI settings.
 
-    const activeGridSizes: number[] = [...TERRAIN_OCTAVE_TUNING.gridSizes];
-    const activeMultCoeffs: number[] = [...TERRAIN_OCTAVE_TUNING.multCoeffs];
+    if (this.isNether) {
+      // Nether: flat ceiling height map — all columns extend to NETHER_CEILING.
+      this.heightMapData = new Float32Array(this.size * this.size).fill(
+        Chunk.NETHER_CEILING,
+      );
+    } else {
+      // Overworld: biome-driven multi-octave height map.
+      const activeGridSizes: number[] = [...TERRAIN_OCTAVE_TUNING.gridSizes];
+      const activeMultCoeffs: number[] = [...TERRAIN_OCTAVE_TUNING.multCoeffs];
 
-    this.heightMapData = new Float32Array(this.size * this.size);
-    for (let i = 0; i < this.size; i++) {
-      for (let j = 0; j < this.size; j++) {
-        const worldX = topLeftX + j;
-        const worldZ = topLeftZ + i;
-        this.heightMapData[this.size * i + j] = this.sampleHeightAtWorld(
-          worldX,
-          worldZ,
-          activeGridSizes,
-          activeMultCoeffs,
-        );
-      }
-    }
-
-    // Carve pond basins using 3D Perlin noise.
-    // Sample noise at sea level to find pond regions, then lower terrain there.
-    const seaLvl = Chunk.SEA_LEVEL;
-    for (let i = 0; i < this.size; i++) {
-      for (let j = 0; j < this.size; j++) {
-        const worldX = topLeftX + j;
-        const worldZ = topLeftZ + i;
-        const terrainH = this.heightMapData[this.size * i + j];
-
-        // Only carve near sea level
-        if (terrainH > seaLvl + 5) {
-          continue;
-        }
-
-        // 3D Perlin noise sampled at sea level determines pond placement
-        const pondNoise = this.perlinNoise3D(worldX, seaLvl, worldZ, 200, 0.04);
-
-        // negative noise = pond basin
-        if (pondNoise < -0.15) {
-          const carveDepth = Math.floor((-0.15 - pondNoise) * 12);
-          this.heightMapData[this.size * i + j] = Math.max(
-            1,
-            terrainH - carveDepth,
+      this.heightMapData = new Float32Array(this.size * this.size);
+      for (let i = 0; i < this.size; i++) {
+        for (let j = 0; j < this.size; j++) {
+          const worldX = topLeftX + j;
+          const worldZ = topLeftZ + i;
+          this.heightMapData[this.size * i + j] = this.sampleHeightAtWorld(
+            worldX,
+            worldZ,
+            activeGridSizes,
+            activeMultCoeffs,
           );
+        }
+      }
+
+      // Carve pond basins using 3D Perlin noise.
+      // Sample noise at sea level to find pond regions, then lower terrain there.
+      const seaLvl = Chunk.SEA_LEVEL;
+      for (let i = 0; i < this.size; i++) {
+        for (let j = 0; j < this.size; j++) {
+          const worldX = topLeftX + j;
+          const worldZ = topLeftZ + i;
+          const terrainH = this.heightMapData[this.size * i + j];
+
+          // Only carve near sea level
+          if (terrainH > seaLvl + 5) {
+            continue;
+          }
+
+          // 3D Perlin noise sampled at sea level determines pond placement
+          const pondNoise = this.perlinNoise3D(worldX, seaLvl, worldZ, 200, 0.04);
+
+          // negative noise = pond basin
+          if (pondNoise < -0.15) {
+            const carveDepth = Math.floor((-0.15 - pondNoise) * 12);
+            this.heightMapData[this.size * i + j] = Math.max(
+              1,
+              terrainH - carveDepth,
+            );
+          }
         }
       }
     }
@@ -450,22 +472,26 @@ export class Chunk {
         const worldX = topLeftX + j;
         const worldZ = topLeftZ + i;
         const h = this.heightMapData[this.size * i + j];
-        const biome = this.sampleBiomeProfileAt(worldX, worldZ);
-        for (let y = 0; y < h; y++) {
-          this.blockTypeData[y * this.size * this.size + i * this.size + j] =
-            this.blockTypeAt(worldX, y, worldZ, h, biome);
+        if (this.isNether) {
+          for (let y = 0; y < h; y++) {
+            this.blockTypeData[y * this.size * this.size + i * this.size + j] =
+              this.netherBlockTypeAt(worldX, y, worldZ, h);
+          }
+        } else {
+          const biome = this.sampleBiomeProfileAt(worldX, worldZ);
+          for (let y = 0; y < h; y++) {
+            this.blockTypeData[y * this.size * this.size + i * this.size + j] =
+              this.blockTypeAt(worldX, y, worldZ, h, biome);
+          }
         }
       }
     }
 
-    // Count all visible cubes up to generated column height (including water)
+    // Count all visible cubes up to column max Y (water fills overworld, lava is in blockTypeData for nether)
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(
-          this.heightMapData[this.size * i + j],
-          Chunk.SEA_LEVEL,
-        );
+        const colMaxY = this.getColMaxY(i, j);
         for (let y = 0; y < colMaxY; y++) {
           if (
             this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
@@ -479,10 +505,7 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(
-        this.heightMapData[this.size * i + j],
-        Chunk.SEA_LEVEL,
-      );
+      const colMaxY = this.getColMaxY(i, j);
       if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
     }
 
@@ -492,10 +515,7 @@ export class Chunk {
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(
-          this.heightMapData[this.size * i + j],
-          Chunk.SEA_LEVEL,
-        );
+        const colMaxY = this.getColMaxY(i, j);
         for (let y = 0; y < colMaxY; y++) {
           const blockType = this.getLocalCubeType(i, j, y);
           if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
@@ -515,10 +535,7 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(
-        this.heightMapData[this.size * i + j],
-        Chunk.SEA_LEVEL,
-      );
+      const colMaxY = this.getColMaxY(i, j);
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
       this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
@@ -606,11 +623,54 @@ export class Chunk {
     return Chunk.blockTypeCobble;
   }
 
+  // Assigns a block type for a given voxel inside a Nether chunk.
+  // Uses height-biased cave carving: more open near the lava sea, more solid near the ceiling.
+  private netherBlockTypeAt(
+    worldX: number,
+    y: number,
+    worldZ: number,
+    columnHeight: number,
+  ): number {
+    // Impassable bedrock floor
+    if (y === 0) return Chunk.blockTypeBedrock;
+
+    // Always-solid nether rack ceiling (top 3 rows never carved)
+    if (y >= columnHeight - 3) return Chunk.blockTypeNetherRack;
+
+    // Height-based carving threshold: more aggressive near lava level, tighter near ceiling.
+    // heightFrac goes 0 → 1 from NETHER_LAVA_LEVEL to ceiling-6.
+    const heightFrac = this.clamp01(
+      (y - Chunk.NETHER_LAVA_LEVEL) /
+        (columnHeight - 6 - Chunk.NETHER_LAVA_LEVEL),
+    );
+    const threshold = this.lerp(-0.1, 0.35, heightFrac * heightFrac);
+
+    const caveNoise = this.perlinNoise3D(worldX, y, worldZ, 161, 0.035);
+    if (caveNoise > threshold) {
+      // Carved voxel: below lava level becomes lava, above becomes air
+      return y < Chunk.NETHER_LAVA_LEVEL
+        ? Chunk.blockTypeLava
+        : Chunk.blockTypeAir;
+    }
+
+    // Netherite veins deep in the nether
+    if (
+      y <= 15 &&
+      this.perlinNoise3D(worldX, y, worldZ, 155, 0.14) > 0.42
+    ) {
+      return Chunk.blockTypeNetherite;
+    }
+
+    return Chunk.blockTypeNetherRack;
+  }
+
   // Returns the procedurally generated block type at local chunk coords (i=localZ, j=localX).
   // Handles water for positions above terrain but below sea level.
   private getGeneratedBlockType(i: number, j: number, y: number): number {
     const height = this.heightMapData[this.size * i + j];
     if (y >= height) {
+      // In the nether there is no water sea; above the ceiling is just air.
+      if (this.isNether) return Chunk.blockTypeAir;
       return y < Chunk.SEA_LEVEL ? Chunk.blockTypeWater : Chunk.blockTypeAir;
     }
     return this.blockTypeData[y * this.size * this.size + i * this.size + j];
@@ -658,14 +718,11 @@ export class Chunk {
   public updateCubePositionsAndTypes() {
     const [topLeftX, topLeftZ] = this.origin();
 
-    // Count all visible cubes up to generated column height (including water)
+    // Count all visible cubes up to column max Y (water fills overworld, lava is in blockTypeData for nether)
     this.cubes = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(
-          this.heightMapData[this.size * i + j],
-          Chunk.SEA_LEVEL,
-        );
+        const colMaxY = this.getColMaxY(i, j);
         for (let y = 0; y < colMaxY; y++) {
           if (
             this.getLocalCubeType(i, j, y) !== Chunk.blockTypeAir &&
@@ -679,10 +736,7 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(
-        this.heightMapData[this.size * i + j],
-        Chunk.SEA_LEVEL,
-      );
+      const colMaxY = this.getColMaxY(i, j);
       if (y >= colMaxY && this.isExposed(i, j, y)) this.cubes++;
     }
 
@@ -692,10 +746,7 @@ export class Chunk {
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
       for (let j = 0; j < this.size; j++) {
-        const colMaxY = Math.max(
-          this.heightMapData[this.size * i + j],
-          Chunk.SEA_LEVEL,
-        );
+        const colMaxY = this.getColMaxY(i, j);
         for (let y = 0; y < colMaxY; y++) {
           const blockType = this.getLocalCubeType(i, j, y);
           if (blockType === Chunk.blockTypeAir || !this.isExposed(i, j, y))
@@ -715,10 +766,7 @@ export class Chunk {
     for (const [key, blockType] of this.deltaMap) {
       if (blockType === Chunk.blockTypeAir) continue;
       const [j, i, y] = key.split(",").map(Number);
-      const colMaxY = Math.max(
-        this.heightMapData[this.size * i + j],
-        Chunk.SEA_LEVEL,
-      );
+      const colMaxY = this.getColMaxY(i, j);
       if (y < colMaxY || !this.isExposed(i, j, y)) continue;
 
       this.cubePositionsF32[4 * cubeIdx + 0] = topLeftX + j;
