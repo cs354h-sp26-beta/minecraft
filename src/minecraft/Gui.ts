@@ -42,6 +42,7 @@ export class GUI implements IGUI {
   private Wdown: boolean;
   private Sdown: boolean;
   private Ddown: boolean;
+  private spaceDown: boolean;
 
   private _pointerLocked: boolean;
   private canvas: HTMLCanvasElement;
@@ -65,6 +66,7 @@ export class GUI implements IGUI {
     this.Wdown = false;
     this.Sdown = false;
     this.Ddown = false;
+    this.spaceDown = false;
     this._pointerLocked = false;
     this._mouseX = 0;
     this._mouseY = 0;
@@ -93,6 +95,7 @@ export class GUI implements IGUI {
     this.Wdown = false;
     this.Sdown = false;
     this.Ddown = false;
+    this.spaceDown = false;
     this.dragging = false;
     this.cubeSelected = false;
   }
@@ -133,6 +136,10 @@ export class GUI implements IGUI {
 
   public get pointerLocked(): boolean {
     return this._pointerLocked;
+  }
+
+  public get isSpaceDown(): boolean {
+    return this.spaceDown;
   }
 
   public get mouseX(): number {
@@ -227,7 +234,7 @@ export class GUI implements IGUI {
     ]);
     rayDir.normalize();
 
-    this.cubeSelected = this.animation.intersectCubes(cameraPos, rayDir);
+    this.cubeSelected = this.animation.pickTarget(cameraPos, rayDir);
   }
 
   public walkDir(): Vec3 {
@@ -259,6 +266,25 @@ export class GUI implements IGUI {
     if (this.animation.isPlayerDead() && key.code !== "KeyR") {
       return;
     }
+
+    if (this.animation.isInventoryOpen()) {
+      switch (key.code) {
+        case "ArrowUp": {
+          this.animation.inventory.selectCraftingRecipe(-1);
+          return;
+        }
+        case "ArrowDown": {
+          this.animation.inventory.selectCraftingRecipe(1);
+          return;
+        }
+        case "Enter": {
+          this.animation.inventory.craftSelectedRecipe();
+          return;
+        }
+        default: {}
+      }
+    }
+
     switch (key.code) {
       case "KeyW": {
         this.Wdown = true;
@@ -277,39 +303,39 @@ export class GUI implements IGUI {
         break;
       }
       case "Digit1": {
-        this.animation.setHotbarSlot(0);
+        this.animation.inventory.selectedHotbarIdx = 0;
         break;
       }
       case "Digit2": {
-        this.animation.setHotbarSlot(1);
+        this.animation.inventory.selectedHotbarIdx = 1;
         break;
       }
       case "Digit3": {
-        this.animation.setHotbarSlot(2);
+        this.animation.inventory.selectedHotbarIdx = 2;
         break;
       }
       case "Digit4": {
-        this.animation.setHotbarSlot(3);
+        this.animation.inventory.selectedHotbarIdx = 3;
         break;
       }
       case "Digit5": {
-        this.animation.setHotbarSlot(4);
+        this.animation.inventory.selectedHotbarIdx = 4;
         break;
       }
       case "Digit6": {
-        this.animation.setHotbarSlot(5);
+        this.animation.inventory.selectedHotbarIdx = 5;
         break;
       }
       case "Digit7": {
-        this.animation.setHotbarSlot(6);
+        this.animation.inventory.selectedHotbarIdx = 6;
         break;
       }
       case "Digit8": {
-        this.animation.setHotbarSlot(7);
+        this.animation.inventory.selectedHotbarIdx = 7;
         break;
       }
       case "Digit9": {
-        this.animation.setHotbarSlot(8);
+        this.animation.inventory.selectedHotbarIdx = 8;
         break;
       }
       case "KeyR": {
@@ -324,8 +350,12 @@ export class GUI implements IGUI {
         this.animation.toggleInventory();
         break;
       }
+      case "Escape": {
+        this.animation.toggleInventory(false);
+        return;
+      }
       case "KeyQ": {
-        this.animation.dropHeldItem();
+        this.animation.inventory.dropHeldItem();
         break;
       }
       case "KeyP": {
@@ -336,11 +366,8 @@ export class GUI implements IGUI {
         this.animation.toggleAchievements();
         break;
       }
-      case "Escape": {
-        this.animation.toggleInventory(false);
-        break;
-      }
       case "Space": {
+        this.spaceDown = true;
         this.animation.jump();
         break;
       }
@@ -367,6 +394,10 @@ export class GUI implements IGUI {
       }
       case "KeyD": {
         this.Ddown = false;
+        break;
+      }
+      case "Space": {
+        this.spaceDown = false;
         break;
       }
     }

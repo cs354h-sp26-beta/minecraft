@@ -28,7 +28,6 @@ import {
   ItemStack,
   itemTypes,
   registerItemTypes,
-  registerRecipes,
 } from "./Inventory.js";
 
 type Achievement = {
@@ -104,6 +103,8 @@ export class MinecraftAnimation extends CanvasAnimation {
   private fallDamageArmed: boolean;
 
   private enemies: Enemy[];
+  private selectedEnemy: Enemy | null;
+  private selectedEnemyDistance: number;
   private achievements: Achievement[];
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
@@ -112,9 +113,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   private successfulJumps: number;
 
   /* Inventory */
-  private inventory: Inventory;
-  private selectedHotbarIdx: number;
+  public inventory: Inventory;
   private isInInventory: boolean;
+
+  private doubleJumpAvailable: boolean;
+  private jetpackFuel: number;
+  private blasterCooldown: number;
 
   /**
    * Entities whose chunk is not in `renderedChunks` are parked here by chunk key.
@@ -154,7 +158,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     registerItemTypes();
-    registerRecipes();
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
@@ -201,6 +204,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initDecorBillboards();
 
     this.enemies = [];
+    this.selectedEnemy = null;
     this.achievements = this.createAchievements();
     this.achievementToast = null;
     this.showAchievements = false;
@@ -219,7 +223,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
 
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
@@ -425,7 +431,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private resetInventoryState(): void {
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
+    this.isInInventory = false;
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -1374,11 +1383,29 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
+    this.blasterCooldown = Math.max(0, this.blasterCooldown - dt);
 
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+
     if (!this.player.isDead()) {
+      const heldId = this.inventory.getHeldItem()?.itemType.id ?? null;
+      if (
+        this.inventory.hasEquipmentById("jetpack") &&
+        this.gui.isSpaceDown &&
+        this.jetpackFuel > 0 &&
+        !this.isPlayerGrounded(prov)
+      ) {
+        this.player.velocity.y += 18.0 * dt;
+        this.jetpackFuel = Math.max(0, this.jetpackFuel - 20.0 * dt);
+      } else {
+        this.jetpackFuel = Math.min(100, this.jetpackFuel + 12.0 * dt);
+      }
+
       this.player.update(this.gui.walkDir(), prov, dt);
       this.updatePlayerFallDamage(prov);
+      if (this.isPlayerGrounded(prov)) {
+        this.doubleJumpAvailable = true;
+      }
     } else {
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
@@ -1641,9 +1668,24 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.player.isDead()) {
       return;
     }
-    const previousVelocityY = this.player.velocity.y;
-    this.player.jump(prov);
-    if (this.player.velocity.y > previousVelocityY) {
+
+    const grounded = this.isPlayerGrounded(prov);
+    if (grounded) {
+      const previousVelocityY = this.player.velocity.y;
+      this.player.jump(prov);
+      if (this.player.velocity.y > previousVelocityY) {
+        this.successfulJumps++;
+      }
+      this.doubleJumpAvailable = true;
+      return;
+    }
+
+    if (
+      this.doubleJumpAvailable &&
+        (this.inventory.hasEquipmentById("boots") || this.inventory.hasEquipmentById("jetpack"))
+    ) {
+      this.player.velocity.y = Math.max(this.player.velocity.y, 8.5);
+      this.doubleJumpAvailable = false;
       this.successfulJumps++;
     }
   }
@@ -1670,11 +1712,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.player.isDead();
   }
 
-  public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
-    let bestT = Infinity;
+  /**
+   * Raycasts the crosshair ray against cubes and enemies, picking whichever is closer.
+   * For cubes, it'll update `selectedCubePosition` and `isectNormal`. For enemies, 
+   * it'll update `selectedEnemy`.
+   * Returns true if either is hit
+   */
+  public pickTarget(rayPos: Vec3, rayDir: Vec3): boolean {
+    // --- Cubes ---
+    let bestCubeT = Infinity;
     let bestPos = [-1000, -1000, -1000];
     let bestN = new Vec3();
-    let hit = false;
+    let cubeHit = false;
 
     const rPick = 5;
     for (let dx = -rPick; dx <= rPick; dx++) {
@@ -1692,16 +1741,40 @@ export class MinecraftAnimation extends CanvasAnimation {
           if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
-            if (t !== undefined && t < bestT) {
-              bestT = t;
+            if (t !== undefined && t < bestCubeT) {
+              bestCubeT = t;
               bestPos = [x, y, z];
               bestN = isect?.normal !== undefined ? isect.normal : new Vec3();
-              hit = true;
+              cubeHit = true;
             }
           }
         }
       }
     }
+
+    // --- Enemies ---
+    let bestEnemyT = Infinity;
+    let bestEnemy: Enemy | null = null;
+    for (const enemy of this.enemies) {
+      if (enemy.isDead()) continue;
+      const t = this.intersectEnemyAABB(rayPos, rayDir, enemy);
+      if (t < bestEnemyT) {
+        bestEnemyT = t;
+        bestEnemy = enemy;
+      }
+    }
+
+    // Prefer enemies
+    if (bestEnemy !== null && bestEnemyT < bestCubeT) {
+      this.selectedEnemy = bestEnemy;
+      this.selectedEnemyDistance = bestEnemyT;
+      this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 0]);
+      this.isectNormal = new Vec3();
+      return true;
+    }
+
+    // fallback on cubes
+    this.selectedEnemy = null;
     this.selectedCubePosition = new Vec4([
       Math.round(bestPos[0]),
       Math.round(bestPos[1]),
@@ -1709,7 +1782,46 @@ export class MinecraftAnimation extends CanvasAnimation {
       0,
     ]);
     this.isectNormal = bestN;
-    return hit;
+    return cubeHit;
+  }
+
+  /**
+   * Returns t value of intersection, or infinity if no intersection
+   */
+  private intersectEnemyAABB(rayPos: Vec3, rayDir: Vec3, enemy: Enemy): number {
+    const r = enemy.hitboxRadius;
+    const hh = enemy.hitboxHeight / 2;
+    const minX = enemy.position.x - r;
+    const maxX = enemy.position.x + r;
+    const minY = enemy.position.y - hh;
+    const maxY = enemy.position.y + hh;
+    const minZ = enemy.position.z - r;
+    const maxZ = enemy.position.z + r;
+
+    const invX = 1.0 / rayDir.x;
+    const invY = 1.0 / rayDir.y;
+    const invZ = 1.0 / rayDir.z;
+
+    const t0x = (minX - rayPos.x) * invX;
+    const t1x = (maxX - rayPos.x) * invX;
+    const t0y = (minY - rayPos.y) * invY;
+    const t1y = (maxY - rayPos.y) * invY;
+    const t0z = (minZ - rayPos.z) * invZ;
+    const t1z = (maxZ - rayPos.z) * invZ;
+
+    const tNear = Math.max(
+      Math.min(t0x, t1x),
+      Math.min(t0y, t1y),
+      Math.min(t0z, t1z),
+    );
+    const tFar = Math.min(
+      Math.max(t0x, t1x),
+      Math.max(t0y, t1y),
+      Math.max(t0z, t1z),
+    );
+
+    if (tNear > tFar || tFar < 0) return Infinity;
+    return tNear < 0 ? tFar : tNear;
   }
 
   /**
@@ -1955,6 +2067,19 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public leftClick(cubeSelected: boolean): void {
+    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
+      const enemy = this.selectedEnemy;
+      enemy.takeDamage(5);
+      if (enemy.isDead()) {
+        const idx = this.enemies.indexOf(enemy);
+        if (idx >= 0) {
+          this.enemies.splice(idx, 1);
+        }
+      }
+      this.selectedEnemy = null;
+      return;
+    }
+
     if (!cubeSelected) {
       return;
     }
@@ -1975,7 +2100,9 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     if (
-      brokenCubeType === Chunk.blockTypeWater ||
+      chunk.isWater(this.selectedCubePosition.x,
+          this.selectedCubePosition.z,
+          this.selectedCubePosition.y) ||
       brokenCubeType === Chunk.blockTypePortal
     ) {
       return;
@@ -2030,7 +2157,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public rightClick(cubeSelected: boolean) {
-    const item = this.heldItem();
+    const item = this.inventory.getHeldItem();
     if (item === null) {
       return;
     }
@@ -2041,7 +2168,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(item!, this.player);
+        itemType.useAction(this, item!, this.player);
         return;
       }
       case ItemAction.Place: {
@@ -2085,7 +2212,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
 
         this.inventory.editSlotCount(
-          Inventory.slotIndex(this.selectedHotbarIdx, 0),
+          Inventory.slotIndex(this.inventory.selectedHotbarIdx, 0),
           item!.count - 1,
         );
       }
@@ -2113,19 +2240,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
+    this.drawEnemyHealthbars();
     this.drawMinimap();
     this.drawAchievementToast();
-    this.drawCrosshair();
-    if (this.player.isDead()) {
-      this.drawDeathOverlay();
-    }
 
     if (this.isInInventory) {
       this.inventory.drawInventoryScreen(
         this.overlayCtx,
         this.canvas2d.width,
         this.canvas2d.height,
-        this.selectedHotbarIdx,
         this.gui.mouseX,
         this.gui.mouseY,
       );
@@ -2133,11 +2256,15 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.inventory.drawHotbar(
         this.overlayCtx,
         this.canvas2d.width,
-        this.canvas2d.height,
-        this.selectedHotbarIdx,
+        this.canvas2d.height
       );
       this.drawHealthBar();
       this.drawHungerBar();
+      this.drawCrosshair();
+    }
+
+    if (this.player.isDead()) {
+      this.drawDeathOverlay();
     }
 
     ctx.restore();
@@ -2362,23 +2489,26 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
   }
 
-  public setHotbarSlot(number: number) {
-    this.selectedHotbarIdx = number;
-  }
-
-  public heldItem(): ItemStack | null {
-    return this.inventory.getItemStack(
-      Inventory.slotIndex(this.selectedHotbarIdx, 0),
-    );
-  }
-
-  public dropHeldItem(): void {
-    const index = Inventory.slotIndex(this.selectedHotbarIdx, 0);
-    const item = this.inventory.getItemStack(index);
-    if (item) {
-      this.inventory.editSlotCount(index, item.count - 1);
+  public fireBlaster(): void {
+    if (this.blasterCooldown > 0) {
+      return;
     }
+
+    if (!this.inventory.removeItemById("ammo", 1)) {
+      return;
+    }
+
+    if (this.selectedEnemy !== null) {
+      this.selectedEnemy.takeDamage(8);
+      if (this.selectedEnemy.isDead()) {
+        const idx = this.enemies.indexOf(this.selectedEnemy);
+        this.enemies.splice(idx, 1);
+      }
+    }
+
+    this.blasterCooldown = 0.35;
   }
+
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;
 
@@ -2452,17 +2582,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     const centerX = this.canvas2d.width / 2;
     const centerY = this.canvas2d.height / 2;
     const size = 30;
+    const x = centerX - size / 2;
+    const y = centerY - size / 2;
+
+    const targetingEnemy = this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
 
     ctx.save();
     ctx.globalAlpha = 0.75;
-    ctx.fillStyle = "#ffffff";
-    ctx.drawImage(
-      this.crosshairBitmap,
-      centerX - size / 2,
-      centerY - size / 2,
-      size,
-      size,
-    );
+    ctx.drawImage(this.crosshairBitmap, x, y, size, size);
+
+    if (targetingEnemy) {
+      ctx.globalCompositeOperation = "source-atop";
+      ctx.fillStyle = "rgba(230, 40, 40, 0.85)";
+      ctx.fillRect(x, y, size, size);
+    }
+
     ctx.globalAlpha = 1.0;
     ctx.restore();
   }
@@ -2533,6 +2667,97 @@ export class MinecraftAnimation extends CanvasAnimation {
     ctx.globalAlpha = 1.0;
     ctx.restore();
   }
+
+  private drawEnemyHealthbars(): void {
+    const ctx = this.overlayCtx;
+
+    // visibility factors
+    const MAX_DIST = 15;
+    const FADE_START = 7; // fully opaque within this radius; fades from here to MAX_DIST
+
+    // Bar dimensions in canvas pixels.
+    const BAR_W = 50;
+    const BAR_H = 10;
+    const BAR_YOFFSET = 1.5; // world units above enemy CoM 
+
+    const canvasW = this.canvas2d.width;
+    const canvasH = this.canvas2d.height;
+
+    // Combined projection * view matrix. Compute once per frame.
+    const viewProj = this.gui.projMatrix().copy().multiply(this.gui.viewMatrix());
+
+    const playerPos = this.player.position;
+
+    ctx.save();
+    for (const enemy of this.enemies) {
+      if (enemy.isDead()) continue;
+
+      // --- distance filtering + fade ---
+      const dx = enemy.position.x - playerPos.x;
+      const dy = enemy.position.y - playerPos.y;
+      const dz = enemy.position.z - playerPos.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq > MAX_DIST * MAX_DIST) continue;
+
+      const dist = Math.sqrt(distSq);
+      let alpha = 1.0;
+      if (dist > FADE_START) {
+        // Linear fade from 1.0 at FADE_START to 0.0 at MAX_DIST.
+        alpha = 1.0 - (dist - FADE_START) / (MAX_DIST - FADE_START);
+      }
+      if (alpha <= 0) continue;
+
+      // --- world -> clip space ---
+      const worldPos = new Vec4([
+        enemy.position.x,
+        enemy.position.y + BAR_YOFFSET,
+        enemy.position.z,
+        1.0,
+      ]);
+      const clip = viewProj.multiplyVec4(worldPos);
+
+      // Cull anything behind the camera / near plane.
+      if (clip.w <= 0) continue;
+
+      const ndcX = clip.x / clip.w;
+      const ndcY = clip.y / clip.w;
+
+      // Off-screen cull (small margin so bars near the edge still render).
+      if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2) continue;
+
+      const screenX = (ndcX + 1) * 0.5 * canvasW;
+      const screenY = (1 - ndcY) * 0.5 * canvasH;
+
+      const healthRatio = Math.max(0, Math.min(1, enemy.health / enemy.maxHealth));
+
+      ctx.globalAlpha = alpha;
+
+      // Background (dark).
+      ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+      ctx.fillRect(screenX - BAR_W / 2, screenY - BAR_H / 2, BAR_W, BAR_H);
+
+      // Filled portion (red).
+      ctx.fillStyle = "rgba(220, 40, 40, 0.95)";
+      ctx.fillRect(
+        screenX - BAR_W / 2,
+        screenY - BAR_H / 2,
+        BAR_W * healthRatio,
+        BAR_H,
+      );
+
+      // Thin border for readability.
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(
+        screenX - BAR_W / 2 + 0.5,
+        screenY - BAR_H / 2 + 0.5,
+        BAR_W - 1,
+        BAR_H - 1,
+      );
+    }
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+    }
 }
 
 export function initializeCanvas(): void {
