@@ -15,7 +15,7 @@ export type Collision = {
   belowEntity: boolean;
 };
 
-const GRAVITY = -30; 
+const GRAVITY = -30;
 
 class Entity {
   // The entity's head position in world coordinates.
@@ -174,7 +174,10 @@ class Entity {
     }
   }
 
-  public jump(chunkProvider: Chunk.ColumnProvider, velocity: number = GRAVITY * -0.25) {
+  public jump(
+    chunkProvider: Chunk.ColumnProvider,
+    velocity: number = GRAVITY * -0.25,
+  ) {
     const r = this.hitboxRadius;
     const h = this.hitboxHeight;
     const footSlack = 0.55;
