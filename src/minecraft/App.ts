@@ -2308,7 +2308,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   /**
    *
    */
-  private setFallingBlocksBFS(worldX: number, worldZ: number, worldY: number) {
+  private setFallingBlocksBFS(
+    worldX: number,
+    worldZ: number,
+    worldY: number,
+    connectedBlocks: Set<string>,
+  ) {
     const cubeX = Math.round(worldX);
     const cubeY = Math.round(worldY);
     const cubeZ = Math.round(worldZ);
@@ -2322,28 +2327,33 @@ export class MinecraftAnimation extends CanvasAnimation {
       return;
     }
 
-    const visited = new Set(); // track visited blocks
+    const visited = new Set<string>(); // track visited blocks
     visited.add(`${cubeX},${cubeY},${cubeZ}`);
     const queue = [[cubeX, cubeY, cubeZ]];
     const blocksToUpdate = [];
     let foundGround = false;
-    let queueHead = 0;
 
     const directions = [
+      [0, -1, 0],
+      [0, 1, 0],
       [1, 0, 0],
       [-1, 0, 0],
-      [0, 1, 0],
-      [0, -1, 0],
       [0, 0, 1],
       [0, 0, -1],
     ];
 
+    let queueHead = 0;
     while (queueHead < queue.length) {
       const currBlockPos = queue[queueHead++];
       blocksToUpdate.push(currBlockPos);
 
       // Check if current block is touching "ground" by checking y = 0
       if (currBlockPos![1] === 0) {
+        foundGround = true;
+        break;
+      }
+      const currKey = `${currBlockPos![0]},${currBlockPos![1]},${currBlockPos![2]}`;
+      if (connectedBlocks.has(currKey)) {
         foundGround = true;
         break;
       }
@@ -2398,6 +2408,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
       for (const chunk of chunksToUpdate) {
         chunk.updateCubePositionsAndTypes();
+      }
+    }
+    // Add all visited blocks to connected blocks set if ground is found
+    else {
+      for (const visitedBlock of visited) {
+        connectedBlocks.add(visitedBlock);
       }
     }
   }
@@ -2601,12 +2617,13 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Perform BFS beginning at each of the six surrounding cubes to update sets of blocks
     // connected to the ground
-    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY + 1);
-    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY - 1);
-    this.setFallingBlocksBFS(cubeX, cubeZ + 1, cubeY);
-    this.setFallingBlocksBFS(cubeX, cubeZ - 1, cubeY);
-    this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
-    this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
+    const connectedBlocks = new Set<string>();
+    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY + 1, connectedBlocks);
+    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY - 1, connectedBlocks);
+    this.setFallingBlocksBFS(cubeX, cubeZ + 1, cubeY, connectedBlocks);
+    this.setFallingBlocksBFS(cubeX, cubeZ - 1, cubeY, connectedBlocks);
+    this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY, connectedBlocks);
+    this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY, connectedBlocks);
 
     // Single rebuild after all modifications (avoids duplicate rebuild from changeCubeType)
     chunk.updateCubePositionsAndTypes();
