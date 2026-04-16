@@ -1682,7 +1682,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     if (
       this.doubleJumpAvailable &&
-        (this.inventory.hasEquipmentById("boots") || this.inventory.hasEquipmentById("jetpack"))
+      (this.inventory.hasEquipmentById("boots") ||
+        this.inventory.hasEquipmentById("jetpack"))
     ) {
       this.player.velocity.y = Math.max(this.player.velocity.y, 8.5);
       this.doubleJumpAvailable = false;
@@ -1714,7 +1715,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /**
    * Raycasts the crosshair ray against cubes and enemies, picking whichever is closer.
-   * For cubes, it'll update `selectedCubePosition` and `isectNormal`. For enemies, 
+   * For cubes, it'll update `selectedCubePosition` and `isectNormal`. For enemies,
    * it'll update `selectedEnemy`.
    * Returns true if either is hit
    */
@@ -1848,16 +1849,17 @@ export class MinecraftAnimation extends CanvasAnimation {
     let foundGround = false;
 
     const directions = [
+      [0, -1, 0],
+      [0, 1, 0],
       [1, 0, 0],
       [-1, 0, 0],
-      [0, 1, 0],
-      [0, -1, 0],
       [0, 0, 1],
       [0, 0, -1],
     ];
 
-    while (queue.length > 0) {
-      const currBlockPos = queue.shift();
+    let queueHead = 0;
+    while (queueHead < queue.length) {
+      const currBlockPos = queue[queueHead++];
       blocksToUpdate.push(currBlockPos);
 
       // Check if current block is touching "ground" by checking y = 0
@@ -2100,9 +2102,11 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     if (
-      chunk.isWater(this.selectedCubePosition.x,
-          this.selectedCubePosition.z,
-          this.selectedCubePosition.y) ||
+      chunk.isWater(
+        this.selectedCubePosition.x,
+        this.selectedCubePosition.z,
+        this.selectedCubePosition.y,
+      ) ||
       brokenCubeType === Chunk.blockTypePortal
     ) {
       return;
@@ -2256,7 +2260,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.inventory.drawHotbar(
         this.overlayCtx,
         this.canvas2d.width,
-        this.canvas2d.height
+        this.canvas2d.height,
       );
       this.drawHealthBar();
       this.drawHungerBar();
@@ -2585,7 +2589,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     const x = centerX - size / 2;
     const y = centerY - size / 2;
 
-    const targetingEnemy = this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
+    const targetingEnemy =
+      this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
 
     ctx.save();
     ctx.globalAlpha = 0.75;
@@ -2678,13 +2683,16 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Bar dimensions in canvas pixels.
     const BAR_W = 50;
     const BAR_H = 10;
-    const BAR_YOFFSET = 1.5; // world units above enemy CoM 
+    const BAR_YOFFSET = 1.5; // world units above enemy CoM
 
     const canvasW = this.canvas2d.width;
     const canvasH = this.canvas2d.height;
 
     // Combined projection * view matrix. Compute once per frame.
-    const viewProj = this.gui.projMatrix().copy().multiply(this.gui.viewMatrix());
+    const viewProj = this.gui
+      .projMatrix()
+      .copy()
+      .multiply(this.gui.viewMatrix());
 
     const playerPos = this.player.position;
 
@@ -2728,7 +2736,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       const screenX = (ndcX + 1) * 0.5 * canvasW;
       const screenY = (1 - ndcY) * 0.5 * canvasH;
 
-      const healthRatio = Math.max(0, Math.min(1, enemy.health / enemy.maxHealth));
+      const healthRatio = Math.max(
+        0,
+        Math.min(1, enemy.health / enemy.maxHealth),
+      );
 
       ctx.globalAlpha = alpha;
 
@@ -2757,7 +2768,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
     ctx.globalAlpha = 1.0;
     ctx.restore();
-    }
+  }
 }
 
 export function initializeCanvas(): void {
