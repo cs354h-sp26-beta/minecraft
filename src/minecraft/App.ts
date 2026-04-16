@@ -104,6 +104,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private heartBitmap: ImageBitmap | null = null;
   private foodBitmap: ImageBitmap | null = null;
   private crosshairBitmap: ImageBitmap | null = null;
+  private xpBarBitmap: ImageBitmap | null = null;
 
   public player: Player;
   private spawnPosition: Vec3;
@@ -129,6 +130,15 @@ export class MinecraftAnimation extends CanvasAnimation {
   private starvationDamageTaken: number;
   private jetpackUsed: boolean;
   private enemiesKilled: number;
+
+  /* XP / leveling */
+  private xp: number;
+  private xpLevel: number;
+  private static readonly xpBarHeight: number = 10;
+  private static readonly xpBarGap: number = 4;
+  // Vertical gap between the XP bar and the top of the hotbar. Needs to clear
+  // the hotbar's item-name title banner, which extends above it.
+  private static readonly xpBarHotbarGap: number = 22;
 
   /* Inventory */
   public inventory: Inventory;
@@ -253,6 +263,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.starvationDamageTaken = 0;
     this.jetpackUsed = false;
     this.enemiesKilled = 0;
+    this.xp = 0;
+    this.xpLevel = 0;
 
     this.isInInventory = false;
 
@@ -295,6 +307,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     crosshairImg.onload = () => {
       createImageBitmap(crosshairImg).then((bmp) => {
         this.crosshairBitmap = bmp;
+      });
+    };
+
+    const xpBarImg = new Image();
+    xpBarImg.src = "./static/assets/xp_bar.png";
+    xpBarImg.onload = () => {
+      createImageBitmap(xpBarImg).then((bmp) => {
+        this.xpBarBitmap = bmp;
       });
     };
   }
@@ -387,6 +407,22 @@ export class MinecraftAnimation extends CanvasAnimation {
       description: achievement.description,
       timeLeft: 4.0,
     };
+    this.addXp(10);
+  }
+
+  /** XP required to go from current level to the next. */
+  private xpForNextLevel(): number {
+    return 10 + this.xpLevel * 5;
+  }
+
+  /** Add XP and handle level-ups. */
+  public addXp(amount: number): void {
+    if (amount <= 0) return;
+    this.xp += amount;
+    while (this.xp >= this.xpForNextLevel()) {
+      this.xp -= this.xpForNextLevel();
+      this.xpLevel++;
+    }
   }
 
   private horizontalDistanceFromSpawn(): number {
@@ -493,6 +529,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
+    this.xp = 0;
+    this.xpLevel = 0;
     this.gui.getCamera().setPos(this.player.position);
     this.loadChunksAroundPlayer();
   }
@@ -665,6 +703,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
     this.player.food = this.player.maxFood;
+    this.xp = 0;
+    this.xpLevel = 0;
     this.resetInventoryState();
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
@@ -3035,6 +3075,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       );
       this.drawHealthBar();
       this.drawHungerBar();
+      this.drawXpBar();
       this.drawCrosshair();
     }
 
@@ -3273,6 +3314,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
       this.inventory.insertItemById("food", 3);
       this.enemiesKilled++;
+      this.addXp(5);
     }
   }
 
@@ -3314,7 +3356,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     const hotbarY = this.canvas2d.height - slotSize - 55;
 
     const startX = hotbarX - 15;
-    const startY = hotbarY - 15 - heartSize - 4;
+    // Lifted to leave room for the XP bar directly above the hotbar.
+    const startY =
+      hotbarY -
+      MinecraftAnimation.xpBarHotbarGap -
+      MinecraftAnimation.xpBarHeight -
+      MinecraftAnimation.xpBarGap -
+      heartSize;
 
     ctx.save();
     for (let i = 0; i < totalHearts; i++) {
@@ -3410,7 +3458,13 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     const totalBarWidth = totalFood * foodSize + (totalFood - 1) * spacing;
     const startX = hotbarX + hotbarWidth + 15 - totalBarWidth;
-    const startY = hotbarY - 15 - foodSize - 4;
+    // Lifted to match health bar — room for the XP bar directly above hotbar.
+    const startY =
+      hotbarY -
+      MinecraftAnimation.xpBarHotbarGap -
+      MinecraftAnimation.xpBarHeight -
+      MinecraftAnimation.xpBarGap -
+      foodSize;
 
     ctx.save();
     for (let i = 0; i < totalFood; i++) {
@@ -3452,6 +3506,87 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
     }
     ctx.globalAlpha = 1.0;
+    ctx.restore();
+  }
+
+  private drawXpBar(): void {
+    if (!this.xpBarBitmap) return;
+
+    const ctx = this.overlayCtx;
+
+    // Match the hotbar geometry used by drawHealthBar / drawHungerBar
+    const slotSize = 60;
+    const hotbarSize = Inventory.width;
+    const hotbarWidth = hotbarSize * slotSize + (hotbarSize - 1) * 10;
+    const hotbarX = (this.canvas2d.width - hotbarWidth) / 2;
+    const hotbarY = this.canvas2d.height - slotSize - 55;
+
+    const barWidth = hotbarWidth;
+    const barHeight = MinecraftAnimation.xpBarHeight;
+    const barX = hotbarX;
+    const barY = hotbarY - MinecraftAnimation.xpBarHotbarGap - barHeight;
+
+    const next = this.xpForNextLevel();
+    const ratio = next > 0 ? Math.max(0, Math.min(1, this.xp / next)) : 0;
+    const fillW = barWidth * ratio;
+
+    const lowAlpha = 0.2;
+    const fadeWidth = Math.max(8, barWidth * 0.08);
+
+    ctx.save();
+
+    // Baseline low-alpha bar across full width
+    ctx.globalAlpha = lowAlpha;
+    ctx.drawImage(this.xpBarBitmap, barX, barY, barWidth, barHeight);
+    ctx.globalAlpha = 1.0;
+
+    if (fillW > 0) {
+      const off = document.createElement("canvas");
+      off.width = Math.max(1, Math.ceil(barWidth));
+      off.height = Math.max(1, Math.ceil(barHeight));
+      const offCtx = off.getContext("2d");
+      if (offCtx) {
+        offCtx.drawImage(this.xpBarBitmap, 0, 0, off.width, off.height);
+        // Gradient mask: opaque on the left, fading to transparent at fillW.
+        offCtx.globalCompositeOperation = "destination-in";
+        const grad = offCtx.createLinearGradient(0, 0, off.width, 0);
+        const fadeStart = Math.max(0, (fillW - fadeWidth) / off.width);
+        const fadeEnd = Math.min(1, fillW / off.width);
+        grad.addColorStop(0, "rgba(0,0,0,1)");
+        grad.addColorStop(fadeStart, "rgba(0,0,0,1)");
+        grad.addColorStop(fadeEnd, "rgba(0,0,0,0)");
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        offCtx.fillStyle = grad;
+        offCtx.fillRect(0, 0, off.width, off.height);
+
+        ctx.drawImage(off, barX, barY);
+      }
+    }
+
+    ctx.restore();
+
+    // Level number: above the XP bar, horizontally centered between the
+    // health bar (on the left) and the hunger bar (on the right).
+    const heartSize = 24;
+    const healthRowTopY =
+      hotbarY -
+      MinecraftAnimation.xpBarHotbarGap -
+      MinecraftAnimation.xpBarHeight -
+      MinecraftAnimation.xpBarGap -
+      heartSize;
+
+    ctx.save();
+    ctx.font = "bold 18px monospace";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#10281a";
+    ctx.fillStyle = "#b6f09c";
+    const levelText = `${this.xpLevel}`;
+    const textX = this.canvas2d.width / 2;
+    const textY = healthRowTopY + heartSize / 2;
+    ctx.strokeText(levelText, textX, textY);
+    ctx.fillText(levelText, textX, textY);
     ctx.restore();
   }
 
