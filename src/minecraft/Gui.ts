@@ -367,10 +367,6 @@ export class GUI implements IGUI {
         this.animation.toggleAchievements();
         break;
       }
-      case "KeyN": {
-        this.animation.toggleNether();
-        break;
-      }
       case "Space": {
         this.spaceDown = true;
         this.animation.jump();

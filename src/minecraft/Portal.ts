@@ -7,6 +7,7 @@ export class Portal {
   public width: number; // portal width in blocks
   public height: number; // portal height in blocks
   public linked: Portal | null = null;
+  public dimension: "overworld" | "nether";
 
   constructor(
     position: Vec3,
@@ -14,12 +15,14 @@ export class Portal {
     up: Vec3,
     width: number,
     height: number,
+    dimension: "overworld" | "nether",
   ) {
     this.position = position;
     this.normal = normal;
     this.up = up;
     this.width = width;
     this.height = height;
+    this.dimension = dimension;
   }
 
   public link(other: Portal): void {
