@@ -620,14 +620,14 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private initTestPortals(): void {
     const src = new Portal(
-      new Vec3([5, 12, 5]),
+      new Vec3([5, 20, 5]),
       new Vec3([0, 0, 1]),
       new Vec3([0, 1, 0]),
       4,
       5,
     );
     const dst = new Portal(
-      new Vec3([40, 12, 40]),
+      new Vec3([40, 20, 40]),
       new Vec3([0, 0, -1]),
       new Vec3([0, 1, 0]),
       4,
@@ -1198,7 +1198,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     // --- Portal FBO pass: render destination scene from portal camera ---
     this.portalRenderer.renderPortalFBOs(
       this.gui.getCamera().pos(),
-      this.gui.projMatrix(),
       (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
     );
 

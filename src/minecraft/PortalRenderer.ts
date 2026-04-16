@@ -48,16 +48,6 @@ export class PortalRenderer {
       undefined,
       cubeGeometry.positionsFlat(),
     );
-    this.renderPass.addAttribute(
-      "aUV",
-      2,
-      gl.FLOAT,
-      false,
-      2 * Float32Array.BYTES_PER_ELEMENT,
-      0,
-      undefined,
-      cubeGeometry.uvFlat(),
-    );
     this.renderPass.addInstancedAttribute(
       "aOffset",
       4,
@@ -72,9 +62,10 @@ export class PortalRenderer {
     // These uniforms get overridden per-draw, but need initial values for setup
     this.renderPass.addUniform("uProj", (_gl, _loc) => {});
     this.renderPass.addUniform("uView", (_gl, _loc) => {});
-    this.renderPass.addUniform("uResolution", (gl, loc) => {
-      gl.uniform2f(loc, this.width, this.height);
-    });
+    this.renderPass.addUniform("uSrcOrigin", (_gl, _loc) => {});
+    this.renderPass.addUniform("uSrcRight", (_gl, _loc) => {});
+    this.renderPass.addUniform("uSrcUp", (_gl, _loc) => {});
+    this.renderPass.addUniform("uPortalSize", (_gl, _loc) => {});
     this.renderPass.addUniform("uPortalTex", (gl, loc) => {
       gl.uniform1i(loc, 0);
     });
@@ -173,28 +164,19 @@ export class PortalRenderer {
    * Render all portal FBOs. Call this BEFORE the main scene draw.
    * drawScene is called once per portal with the portal's view/proj matrices.
    */
-  public renderPortalFBOs(
-    playerPos: Vec3,
-    playerProjMatrix: Mat4,
-    drawScene: SceneDrawFn,
-  ): void {
+  public renderPortalFBOs(playerPos: Vec3, drawScene: SceneDrawFn): void {
     const gl = this.gl;
 
     for (let i = 0; i < this.portals.length; i++) {
       const portal = this.portals[i];
-      const portalView = portal.computePortalView(playerPos);
-      if (!portalView) continue;
-
-      const portalProj = portal.computeObliqueProj(
-        playerProjMatrix,
-        portalView,
-      );
+      const cam = portal.computeFramingCamera(playerPos);
+      if (!cam) continue;
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[i]);
       gl.clearColor(0.6, 0.2, 0.3, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      drawScene(portalView, portalProj);
+      drawScene(cam.view, cam.proj);
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -210,16 +192,35 @@ export class PortalRenderer {
     for (let i = 0; i < this.portals.length; i++) {
       const portal = this.portals[i];
 
-      // Bind this portal's FBO texture
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.colorTextures[i]);
 
-      // Set camera uniforms for this draw
+      // Player camera (screen position of portal blocks)
       this.renderPass.addUniform("uProj", (gl, loc) => {
         gl.uniformMatrix4fv(loc, false, new Float32Array(projMatrix.all()));
       });
       this.renderPass.addUniform("uView", (gl, loc) => {
         gl.uniformMatrix4fv(loc, false, new Float32Array(viewMatrix.all()));
+      });
+
+      // Portal geometry (for UV computation)
+      const srcRight = portal.right();
+      this.renderPass.addUniform("uSrcOrigin", (gl, loc) => {
+        gl.uniform3f(
+          loc,
+          portal.position.x,
+          portal.position.y,
+          portal.position.z,
+        );
+      });
+      this.renderPass.addUniform("uSrcRight", (gl, loc) => {
+        gl.uniform3f(loc, srcRight.x, srcRight.y, srcRight.z);
+      });
+      this.renderPass.addUniform("uSrcUp", (gl, loc) => {
+        gl.uniform3f(loc, portal.up.x, portal.up.y, portal.up.z);
+      });
+      this.renderPass.addUniform("uPortalSize", (gl, loc) => {
+        gl.uniform2f(loc, portal.width, portal.height);
       });
 
       const positions = portal.getBlockPositions();
