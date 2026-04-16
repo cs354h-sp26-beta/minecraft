@@ -36,6 +36,7 @@ export class Chunk {
   private cubes: number; // Number of cubes that should be *drawn* each frame
   private cubePositionsF32!: Float32Array; // (4 x cubes) array of cube translations, in homogeneous coordinates. Sent to GPU, only visible cubes
   private cubeTypesF32!: Float32Array; // (1 x cubes) array of block ids. Sent to GPU, only visible cubes
+  private aoF32!: Float32Array; // (1 x cubes) packed per-face AO flags. Sent to GPU, only visible cubes
   private heightMapData!: Float32Array; // Ground truth of what blocks exist.
   private blockTypeData!: Int8Array; // 3D cache of block types for cave-aware rendering
   private x: number; // Center of the chunk
@@ -481,6 +482,7 @@ export class Chunk {
 
     this.cubePositionsF32 = new Float32Array(4 * this.cubes);
     this.cubeTypesF32 = new Float32Array(this.cubes);
+    this.aoF32 = new Float32Array(this.cubes);
 
     let cubeIdx = 0;
     for (let i = 0; i < this.size; i++) {
@@ -500,6 +502,7 @@ export class Chunk {
           this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
           this.cubeTypesF32[cubeIdx] = blockType;
+          this.aoF32[cubeIdx] = this.computeAO(i, j, y);
           cubeIdx++;
         }
       }
@@ -520,6 +523,7 @@ export class Chunk {
       this.cubePositionsF32[4 * cubeIdx + 3] = 0;
 
       this.cubeTypesF32[cubeIdx] = blockType;
+      this.aoF32[cubeIdx] = this.computeAO(i, j, y);
       cubeIdx++;
     }
   }
@@ -617,6 +621,20 @@ export class Chunk {
       if (override !== undefined) return override;
     }
     return this.getGeneratedBlockType(i, j, y);
+  }
+
+  // Compute packed AO flags for the block at local coords (i, j, y).
+  // Each bit indicates whether the neighbor in that direction is solid (opaque).
+  // Bit layout: 1=+Y, 2=-Y, 4=-X, 8=+X, 16=+Z, 32=-Z
+  private computeAO(i: number, j: number, y: number): number {
+    let packed = 0;
+    if (this.isSolidAt(i, j, y + 1)) packed += 1;
+    if (this.isSolidAt(i, j, y - 1)) packed += 2;
+    if (this.isSolidAt(i - 1, j, y)) packed += 4;
+    if (this.isSolidAt(i + 1, j, y)) packed += 8;
+    if (this.isSolidAt(i, j + 1, y)) packed += 16;
+    if (this.isSolidAt(i, j - 1, y)) packed += 32;
+    return packed;
   }
 
   // Returns true if the block at (i, j, y) is non-air (solid terrain or water).
