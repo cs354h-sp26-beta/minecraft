@@ -164,10 +164,13 @@ export class MinecraftAnimation extends CanvasAnimation {
   private hungerTimer: number;
   private starvationTimer: number;
   private regenHealthTimer: number;
+  private lavaDamageTimer: number;
   private readonly regenHealthFoodThreshold: number = 0.7; // player must have at least 70% food to regen health
   private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
   private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
-  private readonly regenHealthInterval: number = 4; // player regenerates health at this interval when the threshold is met
+  private readonly regenHealthInterval: number = 2; // player regenerates health at this interval when the threshold is met
+  private readonly lavaDamageInterval: number = 1; // player takes damage this often while standing in lava
+  private readonly lavaDamageAmount: number = 1; // damage dealt per lava tick
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -268,6 +271,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.hungerTimer = 0;
     this.starvationTimer = 0;
     this.regenHealthTimer = 0;
+    this.lavaDamageTimer = 0;
 
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
@@ -697,6 +701,35 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
       for (const sampleY of sampleHeights) {
         if (chunk.isWater(sampleX, sampleZ, sampleY)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private doesPlayerTouchLava(chunkProvider: Chunk.ColumnProvider): boolean {
+    const feetY = this.player.position.y - this.player.hitboxHeight;
+    const sampleHeights = [feetY - 0.6, feetY - 0.1, feetY + 0.4, feetY + 0.9];
+    const offset = this.player.hitboxRadius * 0.7;
+    const sampleOffsets = [
+      [0, 0],
+      [offset, 0],
+      [-offset, 0],
+      [0, offset],
+      [0, -offset],
+    ];
+
+    for (const [dx, dz] of sampleOffsets) {
+      const sampleX = this.player.position.x + dx;
+      const sampleZ = this.player.position.z + dz;
+      const chunk = chunkProvider(Math.round(sampleX), Math.round(sampleZ));
+      if (!chunk) {
+        continue;
+      }
+      for (const sampleY of sampleHeights) {
+        if (chunk.isLava(sampleX, sampleZ, sampleY)) {
           return true;
         }
       }
@@ -1801,6 +1834,17 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.starvationTimer = 0;
     }
 
+    // Lava damage
+    if (!this.player.isDead() && this.doesPlayerTouchLava(prov)) {
+      this.lavaDamageTimer += dt;
+      if (this.lavaDamageTimer >= this.lavaDamageInterval) {
+        this.lavaDamageTimer = 0;
+        this.player.takeDamage(this.lavaDamageAmount);
+      }
+    } else {
+      this.lavaDamageTimer = 0;
+    }
+
     // Update health
     if (
       this.player.food >=
@@ -2216,8 +2260,11 @@ export class MinecraftAnimation extends CanvasAnimation {
 
           const chunkX = this.worldToChunkCoord(Math.round(x));
           const chunkZ = this.worldToChunkCoord(Math.round(z));
-          let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
-          let cubeType = currentChunk.cubeType(x, z, y);
+          let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`);
+          if (!currentChunk) {
+            continue;
+          }
+          let cubeType = currentChunk!.cubeType(x, z, y);
 
           if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
@@ -2791,6 +2838,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.player.position.y += linked.position.y - currentPortal.position.y;
     this.player.position.z += linked.position.z - currentPortal.position.z;
 
+    this.fallDamageArmed = false;
+
     // Rotate the camera based on the two portal normals.
     const srcAngle = Math.atan2(currentPortal.normal.x, currentPortal.normal.z);
     const dstAngle = Math.atan2(linked.normal.x, linked.normal.z);
@@ -2936,6 +2985,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.tempPortal.position.y,
         this.tempPortal.normal.x === 0,
       );
+      this.portals.push(destPortal);
       this.portalRenderer.addPortalPair(this.tempPortal, destPortal);
       this.tempPortal = null;
       return true;

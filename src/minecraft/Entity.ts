@@ -513,7 +513,9 @@ export class Block {
       c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
         Chunk.blockTypeAir &&
       c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
-        Chunk.blockTypeWater
+        Chunk.blockTypeWater &&
+      c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
+        Chunk.blockTypeLava
     ) {
       return [
         {
