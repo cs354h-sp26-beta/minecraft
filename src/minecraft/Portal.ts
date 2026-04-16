@@ -111,7 +111,7 @@ export class Portal {
    */
   public computeFramingCamera(
     playerPos: Vec3,
-  ): { view: Mat4; proj: Mat4 } | null {
+  ): { view: Mat4; proj: Mat4; flipU: boolean } | null {
     const eyePos = this.computePortalCamPos(playerPos);
     if (!eyePos || !this.linked) return null;
 
@@ -126,21 +126,32 @@ export class Portal {
     ]);
 
     // Vector from eye to bottom-left corner
-    const va = new Vec3([bl.x - eyePos.x, bl.y - eyePos.y, bl.z - eyePos.z]);
+    let va = new Vec3([bl.x - eyePos.x, bl.y - eyePos.y, bl.z - eyePos.z]);
 
     // Distance from eye to portal plane. If negative, eye is on the back side —
     // flip the view normal so we look through from the other direction.
     let d = -Vec3.dot(va, dst.normal);
     let viewNormal = dst.normal.copy();
     let viewRight = dstRight.copy();
+    let flipU = false;
     if (d < 0) {
       d = -d;
       viewNormal = new Vec3([-dst.normal.x, -dst.normal.y, -dst.normal.z]);
       viewRight = new Vec3([-dstRight.x, -dstRight.y, -dstRight.z]);
+      flipU = true;
     }
 
-    // Clamp minimum distance to avoid extreme wide-angle distortion up close
-    d = Math.max(d, 1.0);
+    // If too close, push the eye back along the view normal so the frustum
+    // stays consistent (extents and distance agree).
+    const minDist = 1.0;
+    if (d < minDist) {
+      const pushBack = minDist - d;
+      eyePos.x += viewNormal.x * pushBack;
+      eyePos.y += viewNormal.y * pushBack;
+      eyePos.z += viewNormal.z * pushBack;
+      va = new Vec3([bl.x - eyePos.x, bl.y - eyePos.y, bl.z - eyePos.z]);
+      d = minDist;
+    }
 
     const near = d;
     const far = 1000.0;
@@ -184,7 +195,7 @@ export class Portal {
       1,
     ]);
 
-    return { view, proj };
+    return { view, proj, flipU };
   }
 
   public right(): Vec3 {

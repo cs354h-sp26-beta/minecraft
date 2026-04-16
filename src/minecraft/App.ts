@@ -2351,11 +2351,13 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (this.portals.length > 0) {
         let chunk = this.getChunkAtWorld(currBlockPos[0], currBlockPos[2])!;
         const blockType = chunk.cubeType(
-            currBlockPos[0],
-            currBlockPos[2],
-            currBlockPos[1],
+          currBlockPos[0],
+          currBlockPos[2],
+          currBlockPos[1],
         )!;
-        isPortal = blockType === Chunk.blockTypePortal || blockType == Chunk.blockTypePortalFrame;
+        isPortal =
+          blockType === Chunk.blockTypePortal ||
+          blockType == Chunk.blockTypePortalFrame;
       }
 
       // Check if current block is touching "ground" by checking y = 0 or if it's a portal
@@ -2579,7 +2581,10 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   public leftClick(cubeSelected: boolean): void {
-    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= this.meleeAttackRange) {
+    if (
+      this.selectedEnemy !== null &&
+      this.selectedEnemyDistance <= this.meleeAttackRange
+    ) {
       const enemy = this.selectedEnemy;
       this.attackEnemy(enemy, 5);
       this.selectedEnemy = null;
@@ -3316,8 +3321,8 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     const targetingEnemy =
       this.selectedEnemy !== null &&
-        ((this.selectedEnemyDistance <= this.meleeAttackRange)
-        || (this.inventory.getHeldItem()?.itemType?.id === "blaster")); // blaster range is infinite
+      (this.selectedEnemyDistance <= this.meleeAttackRange ||
+        this.inventory.getHeldItem()?.itemType?.id === "blaster"); // blaster range is infinite
 
     ctx.save();
     ctx.globalAlpha = 0.75;
@@ -3433,9 +3438,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       const dy = enemy.position.y - playerPos.y;
       const dz = enemy.position.z - playerPos.z;
       const distSq = dx * dx + dy * dy + dz * dz;
-      const shouldRender = distSq <= MAX_DIST * MAX_DIST
-        || (enemy.health < enemy.maxHealth && distSq <= INJURED_MAX_DIST * INJURED_MAX_DIST)
-        || (enemy === this.selectedEnemy && this.inventory.getHeldItem()?.itemType?.id === "blaster"); // always show health bar for targeted enemy with blaster
+      const shouldRender =
+        distSq <= MAX_DIST * MAX_DIST ||
+        (enemy.health < enemy.maxHealth &&
+          distSq <= INJURED_MAX_DIST * INJURED_MAX_DIST) ||
+        (enemy === this.selectedEnemy &&
+          this.inventory.getHeldItem()?.itemType?.id === "blaster"); // always show health bar for targeted enemy with blaster
       if (!shouldRender) continue;
 
       const dist = Math.sqrt(distSq);

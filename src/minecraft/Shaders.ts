@@ -1358,6 +1358,7 @@ export const portalVSText = `
     uniform vec3 uSrcRight;
     uniform vec3 uSrcUp;
     uniform vec2 uPortalSize;
+    uniform float uFlipU;
 
     attribute vec4 aVertPos;
     attribute vec4 aOffset;
@@ -1368,9 +1369,6 @@ export const portalVSText = `
         vec4 worldPos = aVertPos + aOffset;
         gl_Position = uProj * uView * worldPos;
 
-        // Project vertex onto the source portal plane, then compute
-        // portal-local UV in [0,1]. The off-axis frustum ensures the
-        // destination portal fills the entire FBO, so this UV maps directly.
         vec3 srcNormal = cross(uSrcRight, uSrcUp);
         vec3 relPos = worldPos.xyz - uSrcOrigin;
         float distFromPlane = dot(relPos, srcNormal);
@@ -1379,7 +1377,11 @@ export const portalVSText = `
         float u = dot(onPlane, uSrcRight);
         float v = dot(onPlane, uSrcUp);
 
-        vPortalUV = vec2((u + 0.5) / uPortalSize.x, (v + 0.5) / uPortalSize.y);
+        float portalU = (u + 0.5) / uPortalSize.x;
+        float portalV = (v + 0.5) / uPortalSize.y;
+        if (uFlipU > 0.5) portalU = 1.0 - portalU;
+
+        vPortalUV = vec2(portalU, portalV);
     }
 `;
 

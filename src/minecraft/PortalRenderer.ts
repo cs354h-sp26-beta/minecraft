@@ -15,6 +15,7 @@ export class PortalRenderer {
   private fbos: WebGLFramebuffer[] = [];
   private colorTextures: WebGLTexture[] = [];
   private depthRBs: WebGLRenderbuffer[] = [];
+  private cachedFlipU: boolean[] = [];
 
   private width: number;
   private height: number;
@@ -66,6 +67,7 @@ export class PortalRenderer {
     this.renderPass.addUniform("uSrcRight", (_gl, _loc) => {});
     this.renderPass.addUniform("uSrcUp", (_gl, _loc) => {});
     this.renderPass.addUniform("uPortalSize", (_gl, _loc) => {});
+    this.renderPass.addUniform("uFlipU", (_gl, _loc) => {});
     this.renderPass.addUniform("uPortalTex", (gl, loc) => {
       gl.uniform1i(loc, 0);
     });
@@ -177,6 +179,8 @@ export class PortalRenderer {
       const cam = portal.computeFramingCamera(playerPos);
       if (!cam) continue;
 
+      this.cachedFlipU[i] = cam.flipU;
+
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[i]);
       gl.clearColor(0.6, 0.2, 0.3, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -231,6 +235,10 @@ export class PortalRenderer {
       });
       this.renderPass.addUniform("uPortalSize", (gl, loc) => {
         gl.uniform2f(loc, portal.width, portal.height);
+      });
+      const flip = this.cachedFlipU[i] ? 1.0 : 0.0;
+      this.renderPass.addUniform("uFlipU", (gl, loc) => {
+        gl.uniform1f(loc, flip);
       });
 
       const positions = portal.getBlockPositions();
