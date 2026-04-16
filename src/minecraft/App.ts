@@ -9,6 +9,8 @@ import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
+import { PortalRenderer } from "./PortalRenderer.js";
+import { Portal } from "./Portal.js";
 import { DecorationGenerator, type DecorBuffer } from "./Decorations.js";
 import {
   blankCubeFSText,
@@ -62,7 +64,12 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private chunkCache: LruCache<string, Chunk>;
   private renderedChunks: Map<string, Chunk>;
-  private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
+  private deltaMaps: Map<string, Map<number, number>>; // save map of changes for modified chunks
+
+  // Nether dimension state — separate caches so overworld and nether chunks don't collide
+  public playerInNether: boolean = false;
+  private netherChunkCache: LruCache<string, Chunk>;
+  private netherDeltaMaps: Map<string, Map<number, number>>;
 
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
@@ -81,6 +88,12 @@ export class MinecraftAnimation extends CanvasAnimation {
   private enemyBoneTransTex: WebGLTexture;
   private enemyBoneRotTex: WebGLTexture;
 
+  /* Portal Rendering */
+  private portalRenderer: PortalRenderer;
+  private portals: Portal[];
+  private tempPortal: Portal | null;
+  private playerInPortal: Portal | null = null;
+
   /* Global Rendering Info */
   private lightPosition: Vec4;
   private backgroundColor: Vec4;
@@ -92,7 +105,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private foodBitmap: ImageBitmap | null = null;
   private crosshairBitmap: ImageBitmap | null = null;
 
-  private player: Player;
+  public player: Player;
   private spawnPosition: Vec3;
   private decorationGenerator: DecorationGenerator;
   private decorationCache: Map<string, DecorBuffer>;
@@ -111,6 +124,10 @@ export class MinecraftAnimation extends CanvasAnimation {
   private blocksBroken: number;
   private blocksPlaced: number;
   private successfulJumps: number;
+  private blasterHits: number;
+  private starvationDamageTaken: number;
+  private jetpackUsed: boolean;
+  private enemiesKilled: number;
 
   /* Inventory */
   public inventory: Inventory;
@@ -129,6 +146,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     { enemies: Enemy[]; blocks: Block[] }
   >;
 
+  /** Chunk keys for which initial enemies have already been spawned. */
+  private spawnedChunkKeys: Set<string> = new Set();
+  private static readonly enemiesPerChunk: number = 1;
+
   /* Water simulation */
   private static readonly waterTickInterval: number = 30;
   private frameCount: number = 0;
@@ -138,11 +159,14 @@ export class MinecraftAnimation extends CanvasAnimation {
   private minimapPixelSize = 135;
   private minimapColors: Map<number, [number, number, number]>;
 
-  /* Hunger */
+  /* Hunger and health*/
   private hungerTimer: number;
   private starvationTimer: number;
+  private regenHealthTimer: number;
+  private readonly regenHealthFoodThreshold: number = 0.9; // player must have at least 90% food to regen health
   private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
   private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
+  private readonly regenHealthInterval: number = 4; // player regenerates health at this interval when the threshold is met
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -170,6 +194,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+    this.netherChunkCache = new LruCache();
+    this.netherDeltaMaps = new Map();
     this.decorationGenerator = new DecorationGenerator();
     this.decorationCache = new Map();
 
@@ -182,6 +208,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
+
+    // Must be initialized before loadChunksAroundPlayer, since that now
+    // spawns enemies as chunks come online.
+    this.enemies = [];
+    this.selectedEnemy = null;
+    this.enemyMesh = null;
 
     this.loadChunksAroundPlayer();
 
@@ -203,18 +235,23 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initBlankCube();
     this.initDecorBillboards();
 
-    this.enemies = [];
-    this.selectedEnemy = null;
+    // Portal rendering setup
+    this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
+    this.portals = [];
+    this.tempPortal = null;
     this.achievements = this.createAchievements();
     this.achievementToast = null;
     this.showAchievements = false;
     this.blocksBroken = 0;
     this.blocksPlaced = 0;
     this.successfulJumps = 0;
+    this.blasterHits = 0;
+    this.starvationDamageTaken = 0;
+    this.jetpackUsed = false;
+    this.enemiesKilled = 0;
 
     this.isInInventory = false;
 
-    this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
 
@@ -229,6 +266,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
+    this.regenHealthTimer = 0;
 
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
@@ -293,6 +331,41 @@ export class MinecraftAnimation extends CanvasAnimation {
         completed: false,
         completedAt: null,
       },
+      {
+        id: "blaster_hit",
+        title: "In My Sights",
+        description: "Shoot an enemy with a blaster.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "starvation",
+        title: "Rumbling Stomach",
+        description: "Take damage from starvation.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "jetpack",
+        title: "Jetpack Joyride",
+        description: "Use a jetpack.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "craft",
+        title: "Crafty",
+        description: "Craft anything.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "kill",
+        title: "Murderous",
+        description: "Ruthlessly kill an enemy.",
+        completed: false,
+        completedAt: null,
+      },
     ];
   }
 
@@ -338,6 +411,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.isNightTime()) {
       this.completeAchievement("night");
     }
+    if (this.blasterHits > 0) {
+      this.completeAchievement("blaster_hit");
+    }
+    if (this.starvationDamageTaken > 0) {
+      this.completeAchievement("starvation");
+    }
+    if (this.jetpackUsed) {
+      this.completeAchievement("jetpack");
+    }
+    if (this.inventory.itemsCrafted > 0) {
+      this.completeAchievement("craft");
+    }
+    if (this.enemiesKilled > 0) {
+      this.completeAchievement("kill");
+    }
 
     if (this.achievementToast !== null) {
       this.achievementToast.timeLeft -= dt;
@@ -376,6 +464,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     putColor(Chunk.blockTypeNetherite, "443a3a");
     putColor(Chunk.blockTypeBedrock, "555555");
     putColor(Chunk.blockTypePortal, "8b00d4");
+    putColor(Chunk.blockTypePortalFrame, "3a1a4d");
 
     putColor(DecorationGenerator.blockTypeWood, "6b4226");
     putColor(DecorationGenerator.blockTypeLeaves, "2d5a1e");
@@ -391,6 +480,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.gui.reset();
 
     this.player.position = this.spawnPosition.copy();
+    this.playerInNether = false;
     this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     this.player.health = this.player.maxHealth;
     this.player.food = this.player.maxFood;
@@ -400,6 +490,154 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.fallDamageArmed = false;
     this.gui.getCamera().setPos(this.player.position);
     this.loadChunksAroundPlayer();
+  }
+
+  /** Toggle between the overworld and the Nether. Clears rendered chunks so
+   *  the new dimension's terrain loads immediately on the next frame. */
+  public toggleNether(): void {
+    this.playerInNether = !this.playerInNether;
+    this.renderedChunks.clear();
+    this.decorationCache.clear();
+  }
+
+  /** Write a single block into a dimension's delta maps without requiring a loaded chunk. */
+  private writeDeltaBlock(
+    dimension: "overworld" | "nether",
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+    blockType: number,
+  ): void {
+    const step = MinecraftAnimation.chunkSize;
+    const chunkX = Chunk.worldToChunkAxis(worldX, step);
+    const chunkZ = Chunk.worldToChunkAxis(worldZ, step);
+    const chunkKey = `${chunkX},${chunkZ}`;
+
+    const targetDeltaMaps =
+      dimension === "nether" ? this.netherDeltaMaps : this.deltaMaps;
+    if (!targetDeltaMaps.has(chunkKey)) {
+      targetDeltaMaps.set(chunkKey, new Map());
+    }
+    const deltaMap = targetDeltaMaps.get(chunkKey)!;
+
+    const originX = chunkX - step / 2;
+    const originZ = chunkZ - step / 2;
+    const localJ = Math.round(worldX - originX);
+    const localI = Math.round(worldZ - originZ);
+    const localY = Math.round(worldY);
+
+    deltaMap.set(localJ + localI * step + localY * step * step, blockType);
+  }
+
+  /** Write a portal frame, interior blocks, and surrounding air pocket
+   *  into the target dimension's delta maps. Returns the destination Portal. */
+  private writeDestinationPortal(
+    srcPortal: Portal,
+    srcMinX: number,
+    srcMinZ: number,
+    srcMinY: number,
+    isXAligned: boolean,
+  ): Portal {
+    const destDimension: "overworld" | "nether" = this.playerInNether
+      ? "overworld"
+      : "nether";
+    const destY = this.playerInNether ? srcMinY : 20;
+
+    // Carve air pocket: extends 1 block beyond frame on each side, 2 blocks deep
+    // on both sides of the portal plane so the player can approach from either direction
+    for (let dy = 0; dy < 7; dy++) {
+      for (let along = -1; along < 5; along++) {
+        for (let perp = -2; perp <= 2; perp++) {
+          const wx = isXAligned ? srcMinX + along : srcMinX + perp;
+          const wz = isXAligned ? srcMinZ + perp : srcMinZ + along;
+          this.writeDeltaBlock(
+            destDimension,
+            wx,
+            destY + dy,
+            wz,
+            Chunk.blockTypeAir,
+          );
+        }
+      }
+    }
+
+    // Write portal frame (4 wide x 5 tall) and interior (2 wide x 3 tall)
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 5; j++) {
+        const isFrame = i === 0 || i === 3 || j === 0 || j === 4;
+        // const isInterior = i >= 1 && i <= 2 && j >= 1 && j <= 3;
+        if (!isFrame) continue;
+
+        const blockType = Chunk.blockTypePortalFrame;
+
+        if (isXAligned) {
+          this.writeDeltaBlock(
+            destDimension,
+            srcMinX + i,
+            destY + j,
+            srcMinZ,
+            blockType,
+          );
+        } else {
+          this.writeDeltaBlock(
+            destDimension,
+            srcMinX,
+            destY + j,
+            srcMinZ + i,
+            blockType,
+          );
+        }
+      }
+    }
+
+    // Add a floor under the portal
+    const floorType =
+      destDimension === "nether"
+        ? Chunk.blockTypeNetherRack
+        : Chunk.blockTypeCobble;
+    for (let i = 0; i < 4; i++) {
+      if (isXAligned) {
+        this.writeDeltaBlock(
+          destDimension,
+          srcMinX + i,
+          destY - 1,
+          srcMinZ,
+          floorType,
+        );
+      } else {
+        this.writeDeltaBlock(
+          destDimension,
+          srcMinX,
+          destY - 1,
+          srcMinZ + i,
+          floorType,
+        );
+      }
+    }
+
+    // Create destination Portal object
+    let destPortal: Portal;
+    if (isXAligned) {
+      destPortal = new Portal(
+        new Vec3([srcMinX + 1, destY + 1, srcMinZ]),
+        new Vec3([0, 0, 1]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        destDimension,
+      );
+    } else {
+      destPortal = new Portal(
+        new Vec3([srcMinX, destY + 1, srcMinZ + 2]),
+        new Vec3([1, 0, 0]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        destDimension,
+      );
+    }
+
+    return destPortal;
   }
 
   private isPlayerGrounded(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -487,7 +725,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           0,
           fallDistance - MinecraftAnimation.safeFallDistance,
         );
-        if (damage > 0) {
+        if (damage > 0 && !this.inventory.hasEquipmentById("jetpack")) {
           this.player.takeDamage(damage);
         }
       }
@@ -553,6 +791,12 @@ export class MinecraftAnimation extends CanvasAnimation {
         gl.uniform1f(loc, this.getTimeValue());
       },
     );
+    this.skyboxRenderPass.addUniform(
+      "uIsNether",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, this.playerInNether ? 1.0 : 0.0);
+      },
+    );
 
     this.skyboxRenderPass.setDrawData(
       this.ctx.TRIANGLES,
@@ -610,6 +854,17 @@ export class MinecraftAnimation extends CanvasAnimation {
       false,
       1 * Float32Array.BYTES_PER_ELEMENT, // stride (1 float)
       0, // offset
+      undefined,
+      new Float32Array(0),
+    );
+
+    this.blankCubeRenderPass.addInstancedAttribute(
+      "aAO",
+      2,
+      this.ctx.FLOAT,
+      false,
+      2 * Float32Array.BYTES_PER_ELEMENT,
+      0,
       undefined,
       new Float32Array(0),
     );
@@ -1013,46 +1268,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     this.enemyRenderPass.setup();
 
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
+    // The mesh may have finished loading after the initial chunk batch was
+    // rendered (the load is async), so retroactively spawn in every chunk
+    // that's already live.
+    for (const [key, chunk] of this.renderedChunks) {
+      this.spawnEnemiesInChunk(key, chunk);
+    }
   }
 
   private loadEnemyBoneTranslations(gl: WebGLRenderingContext): void {
@@ -1210,6 +1431,113 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
+  /**
+   * Drop a couple of enemies onto random walkable surface blocks in this
+   * chunk. No-op if the enemy mesh isn't loaded yet, or if this chunk has
+   * already been populated. When the mesh finishes loading `initEnemies`
+   * retroactively spawns for any chunks that were skipped.
+   */
+  private spawnEnemiesInChunk(chunkKey: string, chunk: Chunk): void {
+    if (!this.enemyMesh) return;
+    if (this.spawnedChunkKeys.has(chunkKey)) return;
+    this.spawnedChunkKeys.add(chunkKey);
+
+    const size = chunk.chunkSize();
+    const topLeftX = chunk.topLeftX();
+    const topLeftZ = chunk.topLeftZ();
+    const target = MinecraftAnimation.enemiesPerChunk;
+    let spawned = 0;
+    let attempts = 0;
+    while (spawned < target && attempts < 20) {
+      attempts++;
+      const wx = topLeftX + Math.floor(Math.random() * size);
+      const wz = topLeftZ + Math.floor(Math.random() * size);
+      const top = chunk.topBlockAt(wx, wz);
+      if (!top || top.height < 0) continue;
+      const t = top.type;
+      if (
+        t === Chunk.blockTypeAir ||
+        t === Chunk.blockTypeWater ||
+        t === Chunk.blockTypeWaterFalling ||
+        (t >= Chunk.blockTypeWaterFlowLevel3 &&
+          t <= Chunk.blockTypeWaterFlowLevel1)
+      ) {
+        continue;
+      }
+      // Enemy position is head-based; hitboxHeight is 1. Spawn with feet just
+      // above the surface block's top face (stepPhysics will snap cleanly).
+      const headY = top.height + 1.5;
+      this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])));
+      spawned++;
+    }
+  }
+
+  private removeDecorInstancesAtColumn(
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+  ): void {
+    const ix = Math.round(worldX);
+    const iy = Math.round(worldY);
+    const iz = Math.round(worldZ);
+    const key = `${this.worldToChunkCoord(ix)},${this.worldToChunkCoord(iz)}`;
+    {
+      const buffer = this.decorationCache.get(key);
+      if (!buffer || buffer.count === 0) {
+        return;
+      }
+
+      const keepIndices: number[] = [];
+      for (let i = 0; i < buffer.count; i++) {
+        const x = Math.round(buffer.offsets[i * 4 + 0]);
+        const y = buffer.offsets[i * 4 + 1];
+        const z = Math.round(buffer.offsets[i * 4 + 2]);
+
+        // Remove only decorations anchored on this exact column, and only when
+        // the edited block is at/near their support height.
+        const sameColumn = x === ix && z === iz;
+        const affectedByEdit = y <= iy + 1.0;
+        if (sameColumn && affectedByEdit) {
+          continue;
+        }
+        keepIndices.push(i);
+      }
+
+      if (keepIndices.length === buffer.count) {
+        return;
+      }
+
+      const nextOffsets = new Float32Array(keepIndices.length * 4);
+      const nextScales = new Float32Array(keepIndices.length);
+      const nextVariants = new Float32Array(keepIndices.length);
+      const nextTypes = new Float32Array(keepIndices.length);
+      const nextAngles = new Float32Array(keepIndices.length);
+      const nextTilts = new Float32Array(keepIndices.length);
+
+      for (let n = 0; n < keepIndices.length; n++) {
+        const i = keepIndices[n];
+        nextOffsets.set(buffer.offsets.subarray(i * 4, i * 4 + 4), n * 4);
+        nextScales[n] = buffer.scales[i];
+        nextVariants[n] = buffer.variants[i];
+        nextTypes[n] = buffer.types[i];
+        nextAngles[n] = buffer.angles[i];
+        nextTilts[n] = buffer.tilts[i];
+      }
+
+      this.decorationCache.set(key, {
+        offsets: nextOffsets,
+        scales: nextScales,
+        variants: nextVariants,
+        types: nextTypes,
+        angles: nextAngles,
+        tilts: nextTilts,
+        treeCubePositions: buffer.treeCubePositions,
+        treeCubeTypes: buffer.treeCubeTypes,
+        count: keepIndices.length,
+      });
+    }
+  }
+
   private loadChunksAroundPlayer(): void {
     const prevLoadedKeys = new Set(this.renderedChunks.keys());
     const nextLoadedKeys = new Set<string>();
@@ -1228,14 +1556,23 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         nextLoadedKeys.add(key);
-        if (!this.chunkCache.has(key)) {
-          let deltaMap = this.deltaMaps.has(key)
-            ? this.deltaMaps.get(key)
+        const activeCache = this.playerInNether
+          ? this.netherChunkCache
+          : this.chunkCache;
+        const activeDeltaMaps = this.playerInNether
+          ? this.netherDeltaMaps
+          : this.deltaMaps;
+        if (!activeCache.has(key)) {
+          let deltaMap = activeDeltaMaps.has(key)
+            ? activeDeltaMaps.get(key)
             : new Map();
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
+          activeCache.set(
+            key,
+            new Chunk(chunkX, chunkZ, step, deltaMap, this.playerInNether),
+          );
           this.decorationCache.delete(key);
         }
-        const cachedChunk = this.chunkCache.get(key)!;
+        const cachedChunk = activeCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
         if (!this.decorationCache.has(key)) {
           this.decorationCache.set(
@@ -1255,6 +1592,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (!prevLoadedKeys.has(key)) {
         this.loadEntitiesForChunk(key);
       }
+      this.spawnEnemiesInChunk(key, this.renderedChunks.get(key)!);
     }
   }
 
@@ -1299,6 +1637,30 @@ export class MinecraftAnimation extends CanvasAnimation {
     for (const block of this.fallingBlocks) {
       combined.set([block.type], offset);
       offset += 1;
+    }
+    return combined;
+  }
+
+  private getAllCubeAO(): Float32Array {
+    let totalCubes = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      totalCubes += chunk.numCubes();
+    }
+    totalCubes += this.fallingBlocks.length;
+
+    const combined = new Float32Array(totalCubes * 2);
+    let offset = 0;
+    for (const chunk of this.renderedChunks.values()) {
+      const ao = chunk.cubeAO();
+      combined.set(ao, offset);
+      offset += ao.length;
+    }
+    // Falling blocks: fully lit (AO=3 at every corner).
+    // Each face byte = 0xFF (all 4 corners at value 3), 3 faces per float = 0xFFFFFF = 16777215.
+    const fullyLit = 16777215.0;
+    for (let i = 0; i < this.fallingBlocks.length; i++) {
+      combined[offset++] = fullyLit;
+      combined[offset++] = fullyLit;
     }
     return combined;
   }
@@ -1395,13 +1757,18 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.jetpackFuel > 0 &&
         !this.isPlayerGrounded(prov)
       ) {
-        this.player.velocity.y += 18.0 * dt;
+        if (this.player.velocity.y < 0) {
+          this.player.velocity.y += -0.9 * this.player.velocity.y * dt;
+        }
+        this.player.velocity.y += 35.0 * dt;
         this.jetpackFuel = Math.max(0, this.jetpackFuel - 20.0 * dt);
+        this.jetpackUsed = true;
       } else {
         this.jetpackFuel = Math.min(100, this.jetpackFuel + 12.0 * dt);
       }
 
       this.player.update(this.gui.walkDir(), prov, dt);
+      this.checkPortalTeleport();
       this.updatePlayerFallDamage(prov);
       if (this.isPlayerGrounded(prov)) {
         this.doubleJumpAvailable = true;
@@ -1427,9 +1794,24 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (this.starvationTimer >= this.starvationInterval) {
         this.starvationTimer = 0;
         this.player.takeDamage(1);
+        this.starvationDamageTaken++;
       }
     } else {
       this.starvationTimer = 0;
+    }
+
+    // Update health
+    if (
+      this.player.food >=
+      this.player.maxFood * this.regenHealthFoodThreshold
+    ) {
+      this.regenHealthTimer += dt;
+      if (this.regenHealthTimer >= this.regenHealthInterval) {
+        this.regenHealthTimer = 0;
+        this.player.heal(1);
+      }
+    } else {
+      this.regenHealthTimer = 0;
     }
 
     this.updateAchievements(dt);
@@ -1471,18 +1853,113 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     // Drawing
-    const gl: WebGLRenderingContext = this.ctx;
-    const bg: Vec4 = this.backgroundColor;
-    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const gl = this.ctx as WebGL2RenderingContext;
+    const bg: Vec4 = this.playerInNether
+      ? new Vec4([0.33, 0.0, 0.0, 1.0])
+      : this.backgroundColor;
+
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
     gl.frontFace(gl.CCW);
     gl.cullFace(gl.BACK);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
+    // --- Portal FBO pass: render destination scene from portal camera ---
+    const currentDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
+    this.portalRenderer.renderPortalFBOs(
+      this.gui.getCamera().pos(),
+      (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
+      currentDimension,
+    );
+
+    // --- Main pass: render overworld to screen ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.drawScene(0, 0, 1280, 960);
+
+    // --- Portal blocks pass: draw portal surface sampling the FBO ---
+    this.portalRenderer.drawPortalBlocks(
+      this.gui.viewMatrix(),
+      this.gui.projMatrix(),
+      currentDimension,
+    );
+
     this.drawOverlay();
+  }
+
+  private setMatrixUniform(pass: RenderPass, name: string, matrix: Mat4): void {
+    pass.addUniform(
+      name,
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(loc, false, new Float32Array(matrix.all()));
+      },
+    );
+  }
+
+  private drawSceneWithCamera(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    viewMatrix: Mat4,
+    projMatrix: Mat4,
+  ): void {
+    const gl = this.ctx as WebGL2RenderingContext;
+    gl.viewport(x, y, width, height);
+
+    // Skybox with portal camera (zero out translation)
+    const skyVals = viewMatrix.copy().all();
+    skyVals[12] = 0;
+    skyVals[13] = 0;
+    skyVals[14] = 0;
+    this.setMatrixUniform(this.skyboxRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.skyboxRenderPass, "uView", new Mat4(skyVals));
+
+    gl.depthMask(false);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.CULL_FACE);
+    this.skyboxRenderPass.draw();
+
+    gl.depthMask(true);
+    gl.depthFunc(gl.LESS);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+
+    // Terrain with portal camera
+    this.setMatrixUniform(this.blankCubeRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.blankCubeRenderPass, "uView", viewMatrix);
+
+    const allPositions = this.getAllCubePositions();
+    const allTypes = this.getAllCubeTypes();
+    const allAO = this.getAllCubeAO();
+    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
+    this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.updateAttributeBuffer("aAO", allAO);
+    this.blankCubeRenderPass.drawInstanced(allTypes.length);
+
+    // Restore player camera uniforms
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uView",
+      this.gui.viewMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uView",
+      this.getSkyboxViewMatrix(),
+    );
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
@@ -1516,8 +1993,10 @@ export class MinecraftAnimation extends CanvasAnimation {
       );
     }
 
+    const allAO = this.getAllCubeAO();
     this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
     this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.updateAttributeBuffer("aAO", allAO);
     this.blankCubeRenderPass.drawInstanced(instanceCount);
 
     // Enemies
@@ -1852,6 +2331,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     const queue = [[cubeX, cubeY, cubeZ]];
     const blocksToUpdate = [];
     let foundGround = false;
+    let queueHead = 0;
 
     const directions = [
       [0, -1, 0],
@@ -2074,7 +2554,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         continue;
       }
       const deltaMap = chunk.changeCubeTypeNoUpdate(x, z, y, blockType);
-      this.deltaMaps.set(chunkKey, deltaMap);
+      (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+        chunkKey,
+        deltaMap,
+      );
       writtenThisTick.set(posKey, blockType);
       this.waterDirty.add(posKey);
       updatedChunks.add(chunk);
@@ -2087,13 +2570,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   public leftClick(cubeSelected: boolean): void {
     if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
       const enemy = this.selectedEnemy;
-      enemy.takeDamage(5);
-      if (enemy.isDead()) {
-        const idx = this.enemies.indexOf(enemy);
-        if (idx >= 0) {
-          this.enemies.splice(idx, 1);
-        }
-      }
+      this.attackEnemy(enemy, 5);
       this.selectedEnemy = null;
       return;
     }
@@ -2123,12 +2600,13 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.selectedCubePosition.z,
         this.selectedCubePosition.y,
       ) ||
-      brokenCubeType === Chunk.blockTypePortal
+      brokenCubeType === Chunk.blockTypePortal ||
+      brokenCubeType === Chunk.blockTypePortalFrame
     ) {
       return;
     }
 
-    let chunkDeltaMap = chunk.changeCubeType(
+    let chunkDeltaMap = chunk.changeCubeTypeNoUpdate(
       cubeX,
       cubeZ,
       cubeY,
@@ -2147,7 +2625,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY, connectedBlocks);
     this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY, connectedBlocks);
 
-    this.deltaMaps.set(key, chunkDeltaMap);
+    // Single rebuild after all modifications (avoids duplicate rebuild from changeCubeType)
+    chunk.updateCubePositionsAndTypes();
+    this.removeDecorInstancesAtColumn(cubeX, cubeY, cubeZ);
+
+    (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+      key,
+      chunkDeltaMap,
+    );
     if (
       brokenCubeType !== undefined &&
       brokenCubeType !== Chunk.blockTypeAir &&
@@ -2189,7 +2674,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(this, item!, this.player);
+        itemType.useAction(this, new Vec3(this.selectedCubePosition.xyz));
         return;
       }
       case ItemAction.Place: {
@@ -2215,9 +2700,17 @@ export class MinecraftAnimation extends CanvasAnimation {
           cubeY,
           blockType,
         );
+        this.removeDecorInstancesAtColumn(cubeX, cubeY, cubeZ);
 
-        this.deltaMaps.set(key, chunkDeltaMap);
+        (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+          key,
+          chunkDeltaMap,
+        );
         this.blocksPlaced++;
+
+        if (blockType === Chunk.blockTypePortalFrame) {
+          this.checkPortal(cubeX, cubeZ, cubeY);
+        }
 
         // The placed block and all its neighbors may now trigger water flow updates
         for (const [dx, dy, dz] of [
@@ -2238,6 +2731,196 @@ export class MinecraftAnimation extends CanvasAnimation {
         );
       }
     }
+  }
+
+  /** If the player is inside a portal's interior, teleport them to the linked portal.
+   *  If the portals are in different dimensions, switch dimensions first. */
+  private checkPortalTeleport(): void {
+    const currentDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
+    let currentPortal: Portal | null = null;
+    for (const portal of this.portals) {
+      if (portal.dimension !== currentDimension) continue;
+      if (this.isPlayerInPortal(portal)) {
+        currentPortal = portal;
+        break;
+      }
+    }
+
+    if (currentPortal === null) {
+      this.playerInPortal = null;
+      return;
+    }
+
+    // Don't re-teleport if the player was already inside a portal last frame
+    if (this.playerInPortal === currentPortal) {
+      return;
+    }
+
+    const linked = currentPortal.linked;
+    if (linked === null) {
+      this.playerInPortal = currentPortal;
+      return;
+    }
+
+    // Switch dimension if crossing between overworld and nether
+    if (linked.dimension !== currentPortal.dimension) {
+      this.toggleNether();
+    }
+
+    // Add the offset between the two portals to the player's position
+    this.player.position.x += linked.position.x - currentPortal.position.x;
+    this.player.position.y += linked.position.y - currentPortal.position.y;
+    this.player.position.z += linked.position.z - currentPortal.position.z;
+
+    // Rotate the camera based on the two portal normals.
+    const srcAngle = Math.atan2(currentPortal.normal.x, currentPortal.normal.z);
+    const dstAngle = Math.atan2(linked.normal.x, linked.normal.z);
+    const deltaYaw = dstAngle - srcAngle;
+    if (deltaYaw !== 0) {
+      this.gui.getCamera().rotate(new Vec3([0, 1, 0]), deltaYaw);
+    }
+
+    // Mark the player as being in the linked portal so we don't teleport again
+    this.playerInPortal = linked;
+  }
+
+  private isPlayerInPortal(portal: Portal): boolean {
+    const right = portal.right();
+    const up = portal.up;
+    const normal = portal.normal;
+    const pos = portal.position;
+
+    const relX = this.player.position.x - pos.x;
+    const relY = this.player.position.y - pos.y;
+    const relZ = this.player.position.z - pos.z;
+
+    const alongRight = relX * right.x + relY * right.y + relZ * right.z;
+    const alongUp = relX * up.x + relY * up.y + relZ * up.z;
+    const alongNormal = relX * normal.x + relY * normal.y + relZ * normal.z;
+
+    // Player is inside the portal's 2D rectangle (with vertical slack for height)
+    // and close enough to the portal plane
+    return (
+      alongRight >= 0 &&
+      alongRight <= portal.width &&
+      alongUp >= -portal.height &&
+      alongUp <= portal.height &&
+      Math.abs(alongNormal) < 0.5
+    );
+  }
+
+  private checkPortal(blockX: number, blockZ: number, blockY: number) {
+    for (let x = blockX - 3; x <= blockX; x++) {
+      for (let z = blockZ - 3; z <= blockZ; z++) {
+        for (let y = blockY - 4; y <= blockY; y++) {
+          if (this.checkPortalSpot(x, z, y)) {
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  private checkPortalSpot(minX: number, minZ: number, minY: number): boolean {
+    const blockIsPortalX = (x: number, y: number): boolean => {
+      x += minX;
+      const z = minZ;
+      y += minY;
+      const chunk = this.chunkAt(x, z);
+      return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
+    };
+
+    const blockIsPortalZ = (z: number, y: number): boolean => {
+      const x = minX;
+      z += minZ;
+      y += minY;
+      const chunk = this.chunkAt(x, z);
+      return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
+    };
+
+    const check = (blockIsPortal: (x: number, y: number) => boolean) =>
+      blockIsPortal(0, 0) &&
+      blockIsPortal(1, 0) &&
+      blockIsPortal(2, 0) &&
+      blockIsPortal(3, 0) &&
+      blockIsPortal(0, 4) &&
+      blockIsPortal(1, 4) &&
+      blockIsPortal(2, 4) &&
+      blockIsPortal(3, 4) &&
+      blockIsPortal(0, 1) &&
+      blockIsPortal(0, 2) &&
+      blockIsPortal(0, 3) &&
+      blockIsPortal(3, 1) &&
+      blockIsPortal(3, 2) &&
+      blockIsPortal(3, 3);
+
+    const srcDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
+
+    if (check(blockIsPortalX)) {
+      const newPortal = new Portal(
+        new Vec3([minX + 1, minY + 1, minZ]),
+        new Vec3([0, 0, 1]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        srcDimension,
+      );
+      this.portals.push(newPortal);
+      if (this.tempPortal !== null) {
+        this.portalRenderer.addPortalPair(this.tempPortal, newPortal);
+        this.tempPortal = null;
+      } else {
+        this.tempPortal = newPortal;
+      }
+      return true;
+    }
+    if (check(blockIsPortalZ)) {
+      const newPortal = new Portal(
+        new Vec3([minX, minY + 1, minZ + 2]),
+        new Vec3([1, 0, 0]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        srcDimension,
+      );
+      this.portals.push(newPortal);
+      if (this.tempPortal !== null) {
+        this.portalRenderer.addPortalPair(this.tempPortal, newPortal);
+        this.tempPortal = null;
+      } else {
+        this.tempPortal = newPortal;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  public checkCreateDimensionPortal(pos: Vec3): boolean {
+    if (this.tempPortal === null) {
+      return false;
+    }
+
+    if (Math.abs(Vec3.dot(pos, this.tempPortal.normal) - Vec3.dot(this.tempPortal.position, this.tempPortal.normal)) < 0.5
+        && Vec3.distance(pos, this.tempPortal.position) <= 5.1) {
+
+      const destPortal = this.writeDestinationPortal(
+          this.tempPortal,
+          this.tempPortal.position.x,
+          this.tempPortal.position.z,
+          this.tempPortal.position.y,
+          this.tempPortal.normal.x === 0,
+      );
+      this.portalRenderer.addPortalPair(this.tempPortal, destPortal);
+      this.tempPortal = null;
+      return true;
+    }
+
+    return false;
   }
 
   private drawOverlay(): void {
@@ -2375,7 +3058,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private getTimeValue(): number {
-    return performance.now() / 1000;
+    return performance.now() / 1000 + MinecraftAnimation.dayDuration * 0.3;
   }
 
   private wrapDayTime(value: number): number {
@@ -2510,6 +3193,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
   }
 
+  public attackEnemy(enemy: Enemy, amount: number): void {
+    enemy.takeDamage(5);
+    if (enemy.isDead()) {
+      const idx = this.enemies.indexOf(enemy);
+      if (idx >= 0) {
+        this.enemies.splice(idx, 1);
+      }
+      this.inventory.insertItemById("food", 3);
+      this.enemiesKilled++;
+    }
+  }
+
   public fireBlaster(): void {
     if (this.blasterCooldown > 0) {
       return;
@@ -2520,11 +3215,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     if (this.selectedEnemy !== null) {
-      this.selectedEnemy.takeDamage(8);
-      if (this.selectedEnemy.isDead()) {
-        const idx = this.enemies.indexOf(this.selectedEnemy);
-        this.enemies.splice(idx, 1);
-      }
+      this.attackEnemy(this.selectedEnemy, 8);
+      this.blasterHits++;
     }
 
     this.blasterCooldown = 0.35;

@@ -11,8 +11,10 @@ export const blankCubeVSText = `
     attribute vec4 aOffset;
     attribute vec2 aUV;
     attribute float aBlockType;
-    
+    attribute highp vec2 aAO;
+
     varying float vBlockType;
+    varying float vAO;
     varying vec4 normal;
     varying vec4 wsPos;
     varying vec2 uv;
@@ -36,6 +38,35 @@ export const blankCubeVSText = `
         uv = aUV;
         selected = uSelectedCubePos == aOffset ? 1.0 : 0.0;
         vBlockType = aBlockType;
+
+        // Decode per-vertex AO from packed vec2.
+        // Float 0 packs faces: Top(+Y)=byte0, Left(-X)=byte1, Right(+X)=byte2
+        // Float 1 packs faces: Front(+Z)=byte0, Back(-Z)=byte1, Bottom(-Y)=byte2
+        // Each face byte: 4 corners × 2 bits, corner idx = step(t1) + step(t2)*2
+        {
+            vec3 an = abs(aNorm.xyz);
+            highp float faceIdx;
+            float c1, c2;
+            if (an.y > 0.5) {
+                faceIdx = aNorm.y > 0.0 ? 0.0 : 5.0;
+                c1 = step(0.0, aVertPos.x);
+                c2 = step(0.0, aVertPos.z);
+            } else if (an.x > 0.5) {
+                faceIdx = aNorm.x < 0.0 ? 1.0 : 2.0;
+                c1 = step(0.0, aVertPos.z);
+                c2 = step(0.0, aVertPos.y);
+            } else {
+                faceIdx = aNorm.z > 0.0 ? 3.0 : 4.0;
+                c1 = step(0.0, aVertPos.x);
+                c2 = step(0.0, aVertPos.y);
+            }
+            float cornerIdx = c1 + c2 * 2.0;
+            highp float packedV = faceIdx < 3.0 ? aAO.x : aAO.y;
+            highp float localFace = faceIdx < 3.0 ? faceIdx : faceIdx - 3.0;
+            highp float faceData = mod(floor(packedV / exp2(localFace * 8.0)), 256.0);
+            highp float aoVal = mod(floor(faceData / exp2(cornerIdx * 2.0)), 4.0);
+            vAO = aoVal / 3.0;
+        }
 
         vLocalPos = aVertPos.xyz + vec3(0.5); // convert from [-0.5, 0.5] to [0, 1] for easier texturing
     }
@@ -124,14 +155,14 @@ const noiseUtils = `
 `;
 
 const dirtTexture = `
-    vec3 makeDirt(vec2 uv) {
+    vec3 makeDirt(vec2 uv, vec3 local, vec3 world) {
         // dirt block: add some noise to brown
-        // TODO: make it tile better with world coordinates
 
         vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
+        vec2 worldSeed = hash2(floor(world.xz)); // add world-based seed to make different blocks look different
 
         vec3 baseColor = vec3(0.845, 0.471, 0.18);
-        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) + hash(pixelUV) * 0.3;
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5) + worldSeed * 5.0, 1) + hash(pixelUV + worldSeed) * 0.3;
         vec3 textureColor = baseColor * noise; // add subtle noise
         if (noise < 0.2) textureColor -= vec3(0.14, 0.08, 0.04); // add some darker spots
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
@@ -139,12 +170,22 @@ const dirtTexture = `
     }
 `;
 
-const terrainDetailTextures = `
-    vec3 makeSandstone(vec2 uv) {
+const sandStoneTexture = `
+    vec3 makeSandstone(vec2 uv, vec3 local, vec3 world) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float band = step(0.5, fract(pixelUV.y * 8.0 + fbm(pixelUV * 4.0, 2) * 0.5));
-        return mix(vec3(0.64, 0.56, 0.39), vec3(0.80, 0.71, 0.52), band);
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        vec2 worldSeed = hash2(floor(world.xz) * 8.0);
+        float layer = fract(pixelWorld.y * 3.0) * 2.0 - 1.0;
+
+        layer = pow(layer, 4.0);
+
+        vec3 stones = makeCobble(uv, world, 1.0) * vec3(1.4, 1.3, 1.05);
+
+        return mix(1.2 * stones, stones, layer);
     }
+`;
+
+const terrainDetailTextures = `
 
     vec3 makeSnow(vec2 uv) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
@@ -161,16 +202,19 @@ const terrainDetailTextures = `
 const treeTextures = `
     vec3 makeWood(vec2 uv, vec3 world) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float grain = valueNoise(vec2(pixelUV.x * 3.0, world.y * 0.35));
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float grain = fbm(vec2(pixelUV.xy * 15.0 + vec2(pixelWorld.y * 1.7)), 2);
         float stripe = step(0.55, fract(pixelUV.x * 5.0 + grain * 0.45));
-        return mix(vec3(0.28, 0.15, 0.07), vec3(0.47, 0.28, 0.12), stripe);
+        return mix(vec3(0.28, 0.15, 0.07), vec3(0.47, 0.28, 0.12), stripe) * (1.1 - grain);
     }
 
     vec3 makeBirchWood(vec2 uv, vec3 world) {
-        vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float spot = step(0.76, hash(floor(pixelUV * 10.0) + vec2(world.y, world.x)));
-        vec3 bark = mix(vec3(0.72, 0.66, 0.52), vec3(0.92, 0.86, 0.68), pixelUV.y);
-        return mix(bark, vec3(0.08, 0.07, 0.06), spot);
+        vec3 base = makeWood(uv, world);
+        vec2 pixelUv = floor(uv * 16.0) / 16.0;
+        vec2 worldSeed = hash2(floor(world.xz) * 8.0);
+        float spot = fbm(uv * 10.0 + worldSeed, 2);
+        spot = 1.0 - pow(spot, 3.0); // mostly 1, with some darker spots
+        return base + vec3(0.2, 0.2, 0.2) * spot;
     }
 
     vec3 makeLeaves(vec2 uv, vec3 world) {
@@ -252,9 +296,9 @@ const grassTexture = `
 
     nearTop = pow(nearTop, 10.0);   
 
-    vec3 dirtColor = makeDirt(uv);
+    vec3 dirtColor = makeDirt(uv, local, world);
 
-    vec3 grassColor = makeDirt(uv) * vec3(0.3, 0.8, 0.3) + vec3(0.02, 0.1, 0.02); // base dirt color tinted green
+    vec3 grassColor = makeDirt(uv, local, world) * vec3(0.3, 0.8, 0.3) + vec3(0.02, 0.1, 0.02); // base dirt color tinted green
 
     return mix(dirtColor, grassColor, nearTop);
 }
@@ -263,13 +307,30 @@ const grassTexture = `
 const cobbleTexture = `
     vec3 makeCobble(vec2 uv, vec3 world, float scale) {
       vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
-      vec3 p = pixelatedWorld.xyz * (3.0);          // scale controls stone size
+      vec3 p = pixelatedWorld.xyz * scale;          // scale controls stone size
       float v = 0.3 * voronoi(p);              // cell distance → grooves
       float groove = smoothstep(0.35, -0.55, v * 0.5);  // dark at edges
       float noise = fbm(pixelatedWorld.xz * 8.0, 2);     // surface variation
       vec3 baseColor = vec3(0.65, 0.63, 0.6);
     return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
 }
+`;
+
+const portalFrameTexture = `
+    vec3 makePortalFrame(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+
+        vec3 purple   = vec3(0.42, 0.10, 0.58);
+        vec3 magenta  = vec3(0.78, 0.18, 0.62);
+        vec3 darkBlue = vec3(0.06, 0.04, 0.32);
+
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) + hash(pixelUV) * 0.3;
+        vec3 textureColor = mix(purple, magenta, clamp(noise, 0.0, 1.0));
+        textureColor = mix(darkBlue, textureColor, smoothstep(0.0, 0.55, noise));
+        if (noise < 0.2) textureColor -= vec3(0.05, 0.03, 0.08); // darker spots
+        if (noise > 0.85) textureColor += vec3(0.15, 0.10, 0.20); // bright magenta highlights
+        return textureColor;
+    }
 `;
 
 const oreTexture = `
@@ -292,6 +353,58 @@ const oreTexture = `
 
     return mix(noColor, colored, coloredGroove);
 }
+`;
+
+const netheriteTexture = `
+    vec3 makeNetherite(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float v = voronoi(pixelWorld * 3.5);
+        float groove = smoothstep(0.3, 0.0, v * 0.4);
+        float shine = fbm(uv * 6.0, 2) * 0.3;
+        float vein = perlin(uv * 3.0 + pixelWorld.xz * 0.5);
+        vein = pow(clamp(vein, 0.0, 1.0), 4.0);
+        vec3 baseColor = vec3(0.2, 0.18, 0.22);
+        vec3 veinColor = vec3(0.6, 0.25, 0.0);
+        vec3 color = mix(baseColor * (0.4 + groove + shine), veinColor, vein * 0.7);
+        return color;
+    }
+`;
+
+// Animated glowing lava with slow churning motion
+const lavaTexture = `
+    vec3 makeLava(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 8.0) / 8.0;
+        vec2 p = pixelWorld.xz * 2.0;
+        float flow1 = perlin(p * 1.2 + vec2(uTime * 0.04, uTime * 0.02));
+        float flow2 = perlin(p * 2.5 + vec2(-uTime * 0.025, uTime * 0.035));
+        float flow = (flow1 + flow2) * 0.5;
+        float hot = pow(clamp(perlin(p * 1.8 + vec2(uTime * 0.015, 0.0)), 0.0, 1.0), 3.5);
+        vec3 coolColor  = vec3(0.55, 0.04, 0.0);
+        vec3 warmColor  = vec3(0.95, 0.35, 0.0);
+        vec3 hotColor   = vec3(1.0,  0.85, 0.2);
+        vec3 color = mix(coolColor, warmColor, pow(flow, 1.5));
+        color = mix(color, hotColor, hot * 0.6);
+        return color;
+    }
+`;
+
+// Dark porous volcanic rock with faint lava-glow cracks
+const netherRackTexture = `
+    vec3 makeNetherRack(vec2 uv, vec3 world, float scale) {
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float v = voronoi(pixelWorld * scale);
+        float groove = smoothstep(0.35, 0.0, v * 0.5);
+        float noise = fbm3(pixelWorld, 2);
+        float veinNoise = perlin(uv * 6.0 + pixelWorld.xz);
+        float lavaVein = smoothstep(0.72, 0.85, veinNoise) * groove;
+        vec3 baseColor = vec3(0.38, 0.05, 0.04);
+        vec3 darkColor = vec3(0.16, 0.02, 0.02);
+        vec3 lavaColor = vec3(0.8, 0.2, 0.0);
+        vec3 color = mix(darkColor, baseColor, noise * 0.6 + 0.4);
+        color *= (0.3 + 0.8 * groove + 0.4 * noise);
+        color = mix(color, lavaColor, lavaVein * 0.7);
+        return color;
+    }
 `;
 
 // const cellsTexture = `
@@ -341,6 +454,7 @@ export const blankCubeFSText = `
     varying vec2 uv;
     varying float selected;
     varying float vBlockType;
+    varying float vAO;
 
     ${noiseUtils}
 
@@ -359,23 +473,39 @@ export const blankCubeFSText = `
     ${waterTexture}
 
     ${oreTexture}
+
+    ${netheriteTexture}
+
+    ${lavaTexture}
+
+    ${netherRackTexture}
+
+    ${sandStoneTexture}
+
+    ${portalFrameTexture}
     
     void main() {
         vec3 kd = vec3(1.0, 1.0, 1.0);
-        vec3 ka = vec3(0.1, 0.1, 0.1);
+
+        /* Time-dependent ambient: brighter during day, dimmer at night */
+        float dayProgress = mod(uTime, 1440.0) / 1440.0;
+        float sunArc = dayProgress * 6.28318530718;
+        float sunY = -cos(sunArc);
+        float dayFactor = smoothstep(-0.1, 0.3, sunY);
+        vec3 ka = mix(vec3(0.05, 0.05, 0.08), vec3(0.3, 0.3, 0.25), dayFactor);
 
         /* Compute light fall off */
         vec4 lightDirection = uLightPos - wsPos;
         float dot_nl = dot(normalize(lightDirection), normalize(normal));
 	    dot_nl = clamp(dot_nl, 0.0, 1.0);
-	
+
         float highlight = selected == 1.0 ? 1.2 : 1.0;
         vec3 textureColor = vec3(1.0, 0.5, 1.0);
 
         if (vBlockType == 0.0) {
-            textureColor = makeDirt(uv);
+            textureColor = makeDirt(uv, vLocalPos, wsPos.xyz);
         } else if (vBlockType == 1.0) {
-            textureColor = makeCobble(uv, wsPos.xyz, 3.5);
+            textureColor = makeCobble(uv, wsPos.xyz, 3.0);
         } else if (vBlockType == 2.0 || (vBlockType >= 99.0 && vBlockType <= 102.0)) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 3.0) {
@@ -391,15 +521,21 @@ export const blankCubeFSText = `
         } else if (vBlockType == 8.0) {
             textureColor = makeSand(uv, vLocalPos, wsPos.xyz);
         } else if (vBlockType == 9.0) {
-            textureColor = makeSandstone(uv);
+            textureColor = makeSandstone(uv, vLocalPos, wsPos.xyz);
         } else if (vBlockType == 10.0) {
             textureColor = makeSnow(uv);
         } else if (vBlockType == 11.0) {
-            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.24, 0.20, 0.20));
+            textureColor = makeNetherite(uv, wsPos.xyz);
         } else if (vBlockType == 12.0) {
-            textureColor = makeCobble(uv, wsPos.xyz, 6.0) * vec3(0.55, 0.55, 0.55);
+            textureColor = makeCobble(uv, wsPos.xyz, 3.0) * vec3(0.55, 0.55, 0.55);
         } else if (vBlockType == 13.0) {
             textureColor = makePortal(wsPos.xyz);
+        } else if (vBlockType == 14.0) {
+            // Lava: slow animated orange-red glow
+            textureColor = makeLava(uv, wsPos.xyz);
+        } else if (vBlockType == 15.0) {
+            // Nether rack: dark volcanic rock with faint lava cracks
+            textureColor = makeNetherRack(uv, wsPos.xyz, 3.0);
         } else if (vBlockType == 20.0) {
             textureColor = makeWood(uv, wsPos.xyz);
         } else if (vBlockType == 21.0) {
@@ -410,9 +546,14 @@ export const blankCubeFSText = `
             textureColor = makeSpruceLeaves(uv, wsPos.xyz);
         } else if (vBlockType == 24.0) {
             textureColor = makeDecorRock(uv, wsPos.xyz);
+        } else if (vBlockType == 30.0) {
+            textureColor = makePortalFrame(uv);
         }
 
-        gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
+        // Per-vertex ambient occlusion (interpolated across face by rasterizer)
+        float aoFactor = mix(0.55, 1.0, vAO);
+
+        gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor * aoFactor, 1.0);
     }
 `;
 
@@ -443,7 +584,8 @@ export const decorBillboardVSText = `
     void main() {
         vec3 right = normalize(uCameraRight);
         vec3 up = normalize(uCameraUp);
-        vec3 forward = normalize(cross(up, right));
+        // Keep billboard normal aligned with camera forward.
+        vec3 forward = normalize(cross(right, up));
         float globalScale = 1.12;
 
         float c = cos(aAngle);
@@ -777,6 +919,7 @@ export const skyboxFSText = `
     precision highp float;
 
     uniform float uTime;
+    uniform float uIsNether;
 
     varying vec3 vDirection;
 
@@ -1100,6 +1243,14 @@ export const skyboxFSText = `
             color = cloudAccum + transmittance * skyBackground + starTransmittance * starBackground;
         }
 
+        // Nether
+        if (uIsNether > 0.5) {
+            vec3 netherHorizon = vec3(0.35, 0.04, 0.02);
+            vec3 netherZenith  = vec3(0.5, 0.0, 0.0);
+            float nh = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+            color = mix(netherHorizon, netherZenith, pow(nh, 0.6));
+        }
+
         gl_FragColor = vec4(color, 1.0);
     }
 `;
@@ -1203,41 +1354,46 @@ export const portalVSText = `
 
     uniform mat4 uView;
     uniform mat4 uProj;
+    uniform vec3 uSrcOrigin;
+    uniform vec3 uSrcRight;
+    uniform vec3 uSrcUp;
+    uniform vec2 uPortalSize;
 
     attribute vec4 aVertPos;
     attribute vec4 aOffset;
-    attribute vec2 aUV;
 
-    varying vec2 vUV;
+    varying vec2 vPortalUV;
 
     void main () {
-        gl_Position = uProj * uView * (aVertPos + aOffset);
-        vUV = aUV;
+        vec4 worldPos = aVertPos + aOffset;
+        gl_Position = uProj * uView * worldPos;
+
+        // Project vertex onto the source portal plane, then compute
+        // portal-local UV in [0,1]. The off-axis frustum ensures the
+        // destination portal fills the entire FBO, so this UV maps directly.
+        vec3 srcNormal = cross(uSrcRight, uSrcUp);
+        vec3 relPos = worldPos.xyz - uSrcOrigin;
+        float distFromPlane = dot(relPos, srcNormal);
+        vec3 onPlane = relPos - distFromPlane * srcNormal;
+
+        float u = dot(onPlane, uSrcRight);
+        float v = dot(onPlane, uSrcUp);
+
+        vPortalUV = vec2((u + 0.5) / uPortalSize.x, (v + 0.5) / uPortalSize.y);
     }
 `;
 
 export const portalFSText = `
     precision mediump float;
 
-    uniform sampler2D uPortalTex; // FBO for destination scene
-    uniform vec2 uResolution;
-    // uniform float uTime; Could use in animated portal effect
+    uniform sampler2D uPortalTex;
 
-    varying vec2 vUV;
+    varying vec2 vPortalUV;
 
     void main() {
-        // Sample the portal FBO using screen-space UVs
-        vec2 screenUV = gl_FragCoord.xy / uResolution; // [0, 1]
-        vec4 color = texture2D(uPortalTex, screenUV);
+        vec4 color = texture2D(uPortalTex, vPortalUV);
 
-        // Nether portal tint, light purple rn
         color.rgb *= vec3(0.85, 0.65, 0.8);
-
-        // Vignette using block-local UVs (edges darken)
-        vec2 centered = vUV - 0.5;
-        float vignette = 1.0 - dot(centered, centered) * 2.0; // distance^2 from center
-        vignette = clamp(vignette, 0.3, 1.0);
-        color.rgb *= vignette;
 
         gl_FragColor = color;
     }

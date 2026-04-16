@@ -3,6 +3,7 @@ import { Chunk } from "./Chunk.js";
 import { DecorationGenerator } from "./Decorations.js";
 import { CRAFTING_RECIPES, CraftingRecipe } from "./Crafting.js";
 import { MinecraftAnimation } from "./App.js";
+import {Vec3} from "../lib/tsm/Vec3.js";
 
 export enum ItemAction {
   None,
@@ -16,10 +17,7 @@ export class ItemType {
   public name: string;
   public maxStackSize: number;
   public actionType: ItemAction;
-  private action:
-    | null
-    | number
-    | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void);
+  private action: null | number | ((app: MinecraftAnimation, pos: Vec3) => void);
   public img: ImageBitmap | null;
 
   constructor(id: string, name: string, image: string, maxStackSize: number) {
@@ -52,14 +50,12 @@ export class ItemType {
   public setAction(actionType: ItemAction.Equip): ItemType;
   public setAction(
     actionType: ItemAction.Use,
-    action: (app: MinecraftAnimation, stack: ItemStack, player: Player) => void,
+    action: (app: MinecraftAnimation, pos: Vec3) => void,
   ): ItemType;
   public setAction(actionType: ItemAction.Place, blockType: number): ItemType;
   public setAction(
     actionType: ItemAction,
-    action?:
-      | number
-      | ((app: MinecraftAnimation, stack: ItemStack, p: Player) => void),
+    action?: number | ((app: MinecraftAnimation, pos: Vec3) => void),
   ): ItemType {
     this.actionType = actionType;
     if (action !== undefined) {
@@ -70,18 +66,10 @@ export class ItemType {
     return this;
   }
 
-  public useAction(
-    app: MinecraftAnimation,
-    itemStack: ItemStack,
-    player: Player,
-  ) {
+  public useAction(app: MinecraftAnimation, pos: Vec3) {
     if (this.actionType === ItemAction.Use) {
-      const actionFunc = this.action as (
-        app: MinecraftAnimation,
-        stack: ItemStack,
-        p: Player,
-      ) => void;
-      actionFunc(app, itemStack, player);
+      const actionFunc = this.action as (app: MinecraftAnimation, pos: Vec3) => void;
+      actionFunc(app, pos);
     }
   }
 
@@ -126,6 +114,10 @@ export function registerItemTypes() {
     ItemAction.Place,
     Chunk.blockTypeNetherite,
   );
+  registerItem("portal_frame", "Portal Frame", 32).setAction(
+    ItemAction.Place,
+    Chunk.blockTypePortalFrame,
+  );
 
   registerItem("water_bucket", "Water Bucket", 1).setAction(
     ItemAction.Place,
@@ -143,8 +135,24 @@ export function registerItemTypes() {
   registerItem("jetpack", "Jetpack", 1).setAction(ItemAction.Equip);
   registerItem("blaster", "Blaster", 1).setAction(
     ItemAction.Use,
-    (app: MinecraftAnimation, stack: ItemStack, p: Player) => {
+    (app: MinecraftAnimation, pos: Vec3) => {
       app.fireBlaster();
+    },
+  );
+
+  registerItem("nether_star", "Nether Star", 1).setAction(ItemAction.Use, (app: MinecraftAnimation, pos: Vec3) => {
+    if (app.checkCreateDimensionPortal(pos)) {
+      const count = app.inventory.getHeldItem()!.count;
+      app.inventory.editSlotCount(app.inventory.selectedHotbarIdx, count - 1);
+    }
+  });
+
+  registerItem("food", "Food").setAction(
+    ItemAction.Use,
+    (app: MinecraftAnimation, pos: Vec3) => {
+      app.player.eat(5);
+      const count = app.inventory.getHeldItem()!.count;
+      app.inventory.editSlotCount(app.inventory.selectedHotbarIdx, count - 1);
     },
   );
 }
@@ -206,6 +214,7 @@ export class Inventory {
   private craftingRecipes: CraftingRecipe[];
   private selectedCraftingRecipeIdx: number;
   public selectedHotbarIdx: number;
+  public itemsCrafted: number;
 
   constructor() {
     this.items = new Array(Inventory.width * Inventory.height).fill(null);
@@ -215,6 +224,9 @@ export class Inventory {
     this.craftingRecipes = CRAFTING_RECIPES;
     this.selectedCraftingRecipeIdx = 0;
     this.selectedHotbarIdx = 0;
+    this.itemsCrafted = 0;
+
+    this.insertItemById("portal_frame", 32);
   }
 
   public insertStack(itemStack: ItemStack | null): boolean {
@@ -254,7 +266,7 @@ export class Inventory {
     if (!itemType) {
       throw Error("Item type not found: " + itemType);
     }
-    return this.insertStack(new ItemStack(itemType, 1));
+    return this.insertStack(new ItemStack(itemType, count));
   }
 
   public removeItem(itemType: ItemType, count: number): boolean {
@@ -280,7 +292,7 @@ export class Inventory {
     if (!itemType) {
       throw Error("Item type not found: " + itemType);
     }
-    return this.removeItem(itemType, 1);
+    return this.removeItem(itemType, count);
   }
 
   public static slotIndex(x: number, y: number): number {
@@ -405,7 +417,7 @@ export class Inventory {
     if (!itemType) {
       throw Error("Item type not found: " + itemType);
     }
-    return this.canFitStack(new ItemStack(itemType, 1));
+    return this.canFitStack(new ItemStack(itemType, count));
   }
 
   private static readonly SLOT_SIZE = 60;
@@ -435,7 +447,7 @@ export class Inventory {
   }
 
   private static readonly PANEL_GAP = 50;
-  private static readonly CRAFTING_PANEL_HEIGHT = 280;
+  private static readonly CRAFTING_PANEL_HEIGHT = 350;
   private static readonly CRAFTING_PANEL_GAP = 75;
 
   /** Returns the width of the inventory grid. */
@@ -889,7 +901,14 @@ export class Inventory {
       }
     }
 
-    return this.insertItemById(recipe.outputItemId, recipe.outputCount);
+    const inserted = this.insertItemById(
+      recipe.outputItemId,
+      recipe.outputCount,
+    );
+    if (inserted) {
+      this.itemsCrafted++;
+    }
+    return inserted;
   }
 
   // private seedStarterInventory(): void {

@@ -1,4 +1,4 @@
-import { Mat4, Vec3, Vec4 } from "../lib/TSM.js";
+import { Mat4, Vec3 } from "../lib/TSM.js";
 
 export class Portal {
   public position: Vec3; // world position of portal center
@@ -7,6 +7,7 @@ export class Portal {
   public width: number; // portal width in blocks
   public height: number; // portal height in blocks
   public linked: Portal | null = null;
+  public dimension: "overworld" | "nether";
 
   constructor(
     position: Vec3,
@@ -14,12 +15,14 @@ export class Portal {
     up: Vec3,
     width: number,
     height: number,
+    dimension: "overworld" | "nether",
   ) {
     this.position = position;
     this.normal = normal;
     this.up = up;
     this.width = width;
     this.height = height;
+    this.dimension = dimension;
   }
 
   public link(other: Portal): void {
@@ -27,25 +30,22 @@ export class Portal {
     other.linked = this;
   }
 
-  // Compute the view matrix for looking through this portal's linked destination.
-  // Mirrors the player camera across the source portal and transforms to the destination.
-  public computePortalView(
-    playerPos: Vec3,
-    playerViewMatrix: Mat4,
-  ): Mat4 | null {
+  /**
+   * Compute the camera position for looking through this portal.
+   * Mirrors the player position across the source portal and transforms to destination space.
+   */
+  private computePortalCamPos(playerPos: Vec3): Vec3 | null {
     if (!this.linked) return null;
 
     const src = this;
     const dst = this.linked;
 
-    // Player position relative to source portal
     const relPos = new Vec3([
       playerPos.x - src.position.x,
       playerPos.y - src.position.y,
       playerPos.z - src.position.z,
     ]);
 
-    // Mirror across source portal plane (reflect along normal)
     const dotN = Vec3.dot(relPos, src.normal);
     const mirrored = new Vec3([
       relPos.x - 2 * dotN * src.normal.x,
@@ -53,34 +53,27 @@ export class Portal {
       relPos.z - 2 * dotN * src.normal.z,
     ]);
 
-    // 3. Build rotation from source's local frame to destination's local frame
     const srcRight = Vec3.cross(src.up, src.normal);
     const dstRight = Vec3.cross(dst.up, dst.normal);
 
     const srcBasis = new Mat4([
-      // RIGHT
       srcRight.x,
       srcRight.y,
       srcRight.z,
       0,
-      // UP
       src.up.x,
       src.up.y,
       src.up.z,
       0,
-      // NORMAL
       src.normal.x,
       src.normal.y,
       src.normal.z,
       0,
-      // translation
       0,
       0,
       0,
       1,
     ]);
-
-    // Destination basis matrix (columns: -right, up, -normal) — flipped to face into the portal
     const dstBasis = new Mat4([
       -dstRight.x,
       -dstRight.y,
@@ -100,87 +93,100 @@ export class Portal {
       1,
     ]);
 
-    // Rotation = dstBasis * srcBasis^T (srcBasis is orthonormal, so inverse = transpose)
-    const srcBasisT = srcBasis.copy().transpose();
-    const rotation = dstBasis.copy().multiply(srcBasisT);
-
-    // 4. Rotate the mirrored offset and translate to destination
+    const rotation = dstBasis.copy().multiply(srcBasis.copy().transpose());
     const rotatedOffset = rotation.multiplyVec3(mirrored);
-    const portalCamPos = new Vec3([
+
+    return new Vec3([
       dst.position.x + rotatedOffset.x,
       dst.position.y + rotatedOffset.y,
       dst.position.z + rotatedOffset.z,
     ]);
-
-    // 5. Compute look direction: rotate the player's forward through the same transform
-    const viewVals = playerViewMatrix.all();
-    // get forward vector from view matrix
-    const playerForward = new Vec3([-viewVals[2], -viewVals[6], -viewVals[10]]);
-
-    // Mirror the forward vector across source normal
-    const fDotN = Vec3.dot(playerForward, src.normal);
-    const mirroredForward = new Vec3([
-      playerForward.x - 2 * fDotN * src.normal.x,
-      playerForward.y - 2 * fDotN * src.normal.y,
-      playerForward.z - 2 * fDotN * src.normal.z,
-    ]);
-    const rotatedForward = rotation.multiplyVec3(mirroredForward);
-
-    // Similarly rotate the up vector
-    const playerUp = new Vec3([viewVals[1], viewVals[5], viewVals[9]]);
-    const uDotN = Vec3.dot(playerUp, src.normal);
-    const mirroredUp = new Vec3([
-      playerUp.x - 2 * uDotN * src.normal.x,
-      playerUp.y - 2 * uDotN * src.normal.y,
-      playerUp.z - 2 * uDotN * src.normal.z,
-    ]);
-    const rotatedUp = rotation.multiplyVec3(mirroredUp);
-
-    // 6. Build view matrix: lookAt(eye, target, up)
-    const target = new Vec3([
-      portalCamPos.x + rotatedForward.x,
-      portalCamPos.y + rotatedForward.y,
-      portalCamPos.z + rotatedForward.z,
-    ]);
-
-    return Mat4.lookAt(portalCamPos, target, rotatedUp);
   }
 
-  // Compute an oblique projection matrix that clips at the destination portal plane.
-  // This prevents rendering geometry behind the portal.
-  // math follows https://terathon.com/lengyel/Lengyel-Oblique.pdf
-  public computeObliqueProj(projMatrix: Mat4, viewMatrix: Mat4): Mat4 {
-    if (!this.linked) return projMatrix.copy();
+  /**
+   * Compute view + projection matrices using an off-axis frustum that exactly
+   * frames the destination portal. The FBO rendered with these matrices will
+   * have the portal filling the entire texture, so portal-local UVs map
+   * directly to [0,1] FBO coordinates.
+   */
+  public computeFramingCamera(
+    playerPos: Vec3,
+  ): { view: Mat4; proj: Mat4 } | null {
+    const eyePos = this.computePortalCamPos(playerPos);
+    if (!eyePos || !this.linked) return null;
 
     const dst = this.linked;
+    const dstRight = dst.right();
 
-    const d = Vec3.dot(dst.normal, dst.position);
-    // clip plane equation in world space: ax + by + cz + d = 0
-    const planeWorld = new Vec4([dst.normal.x, dst.normal.y, dst.normal.z, -d]);
+    // Bottom-left corner of the full portal rectangle (including half-block margins)
+    const bl = new Vec3([
+      dst.position.x - dstRight.x * 0.5 - dst.up.x * 0.5,
+      dst.position.y - dstRight.y * 0.5 - dst.up.y * 0.5,
+      dst.position.z - dstRight.z * 0.5 - dst.up.z * 0.5,
+    ]);
 
-    const viewInvT = viewMatrix.copy().inverse().transpose();
-    // plane equation in view space: ax + by + cz + d = 0
-    const planeView = viewInvT.multiplyVec4(planeWorld);
+    // Vector from eye to bottom-left corner
+    const va = new Vec3([bl.x - eyePos.x, bl.y - eyePos.y, bl.z - eyePos.z]);
 
-    const proj = projMatrix.copy();
-    const projVals = proj.all();
+    // Distance from eye to portal plane. If negative, eye is on the back side —
+    // flip the view normal so we look through from the other direction.
+    let d = -Vec3.dot(va, dst.normal);
+    let viewNormal = dst.normal.copy();
+    let viewRight = dstRight.copy();
+    if (d < 0.01) {
+      d = -d;
+      viewNormal = new Vec3([-dst.normal.x, -dst.normal.y, -dst.normal.z]);
+      viewRight = new Vec3([-dstRight.x, -dstRight.y, -dstRight.z]);
+      if (d < 0.01) return null;
+    }
 
-    // Take 3rd row and replace values with scaled values from clip plane
-    const qx = (Math.sign(planeView.x) + projVals[8]) / projVals[0];
-    const qy = (Math.sign(planeView.y) + projVals[9]) / projVals[5];
-    const qz = -1.0;
-    const qw = (1.0 + projVals[10]) / projVals[14];
+    const near = d;
+    const far = 1000.0;
 
-    const dotQC =
-      planeView.x * qx + planeView.y * qy + planeView.z * qz + planeView.w * qw;
-    const scale = 2.0 / dotQC;
+    // Frustum extents: project portal corners onto the near plane
+    // Since near == d, scale factor is 1.0
+    const l = Vec3.dot(va, viewRight);
+    const r = l + dst.width;
+    const b = Vec3.dot(va, dst.up);
+    const t = b + dst.height;
 
-    projVals[2] = planeView.x * scale;
-    projVals[6] = planeView.y * scale;
-    projVals[10] = planeView.z * scale + 1.0;
-    projVals[14] = planeView.w * scale;
+    // Build frustum projection matrix (column-major)
+    const p = new Float32Array(16);
+    p[0] = (2 * near) / (r - l);
+    p[5] = (2 * near) / (t - b);
+    p[8] = (r + l) / (r - l);
+    p[9] = (t + b) / (t - b);
+    p[10] = -(far + near) / (far - near);
+    p[11] = -1;
+    p[14] = (-2 * far * near) / (far - near);
+    const proj = new Mat4(Array.from(p));
 
-    return new Mat4(projVals);
+    // Build view matrix: camera axes aligned with portal frame
+    // x = right, y = up, z = normal (toward viewer)
+    const view = new Mat4([
+      viewRight.x,
+      dst.up.x,
+      viewNormal.x,
+      0,
+      viewRight.y,
+      dst.up.y,
+      viewNormal.y,
+      0,
+      viewRight.z,
+      dst.up.z,
+      viewNormal.z,
+      0,
+      -Vec3.dot(viewRight, eyePos),
+      -Vec3.dot(dst.up, eyePos),
+      -Vec3.dot(viewNormal, eyePos),
+      1,
+    ]);
+
+    return { view, proj };
+  }
+
+  public right(): Vec3 {
+    return Vec3.cross(this.up, this.normal);
   }
 
   // Returns the positions of all blocks that make up this portal's interior
