@@ -1472,6 +1472,72 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
+  private removeDecorInstancesAtColumn(
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+  ): void {
+    const ix = Math.round(worldX);
+    const iy = Math.round(worldY);
+    const iz = Math.round(worldZ);
+    const key = `${this.worldToChunkCoord(ix)},${this.worldToChunkCoord(iz)}`;
+    {
+      const buffer = this.decorationCache.get(key);
+      if (!buffer || buffer.count === 0) {
+        return;
+      }
+
+      const keepIndices: number[] = [];
+      for (let i = 0; i < buffer.count; i++) {
+        const x = Math.round(buffer.offsets[i * 4 + 0]);
+        const y = buffer.offsets[i * 4 + 1];
+        const z = Math.round(buffer.offsets[i * 4 + 2]);
+
+        // Remove only decorations anchored on this exact column, and only when
+        // the edited block is at/near their support height.
+        const sameColumn = x === ix && z === iz;
+        const affectedByEdit = y <= iy + 1.0;
+        if (sameColumn && affectedByEdit) {
+          continue;
+        }
+        keepIndices.push(i);
+      }
+
+      if (keepIndices.length === buffer.count) {
+        return;
+      }
+
+      const nextOffsets = new Float32Array(keepIndices.length * 4);
+      const nextScales = new Float32Array(keepIndices.length);
+      const nextVariants = new Float32Array(keepIndices.length);
+      const nextTypes = new Float32Array(keepIndices.length);
+      const nextAngles = new Float32Array(keepIndices.length);
+      const nextTilts = new Float32Array(keepIndices.length);
+
+      for (let n = 0; n < keepIndices.length; n++) {
+        const i = keepIndices[n];
+        nextOffsets.set(buffer.offsets.subarray(i * 4, i * 4 + 4), n * 4);
+        nextScales[n] = buffer.scales[i];
+        nextVariants[n] = buffer.variants[i];
+        nextTypes[n] = buffer.types[i];
+        nextAngles[n] = buffer.angles[i];
+        nextTilts[n] = buffer.tilts[i];
+      }
+
+      this.decorationCache.set(key, {
+        offsets: nextOffsets,
+        scales: nextScales,
+        variants: nextVariants,
+        types: nextTypes,
+        angles: nextAngles,
+        tilts: nextTilts,
+        treeCubePositions: buffer.treeCubePositions,
+        treeCubeTypes: buffer.treeCubeTypes,
+        count: keepIndices.length,
+      });
+    }
+  }
+
   private loadChunksAroundPlayer(): void {
     const prevLoadedKeys = new Set(this.renderedChunks.keys());
     const nextLoadedKeys = new Set<string>();
@@ -2543,6 +2609,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Single rebuild after all modifications (avoids duplicate rebuild from changeCubeType)
     chunk.updateCubePositionsAndTypes();
+    this.removeDecorInstancesAtColumn(cubeX, cubeY, cubeZ);
 
     (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
       key,
@@ -2615,6 +2682,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           cubeY,
           blockType,
         );
+        this.removeDecorInstancesAtColumn(cubeX, cubeY, cubeZ);
 
         (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
           key,

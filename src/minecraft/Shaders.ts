@@ -584,7 +584,8 @@ export const decorBillboardVSText = `
     void main() {
         vec3 right = normalize(uCameraRight);
         vec3 up = normalize(uCameraUp);
-        vec3 forward = normalize(cross(up, right));
+        // Keep billboard normal aligned with camera forward.
+        vec3 forward = normalize(cross(right, up));
         float globalScale = 1.12;
 
         float c = cos(aAngle);
