@@ -133,7 +133,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
-        (Date.now() >>> 0),
+        Date.now() >>> 0,
     );
 
     this.loadMinimapColors();
@@ -189,7 +189,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
-    
+
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
     heartImg.src = "./static/assets/heart.png";
@@ -199,12 +199,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       });
     };
 
-    const foodImg = new Image(); 
+    const foodImg = new Image();
     foodImg.src = "./static/assets/food.png";
     foodImg.onload = () => {
       createImageBitmap(foodImg).then((bmp) => {
         this.foodBitmap = bmp;
-      })
+      });
     };
 
     const crosshairImg = new Image();
@@ -1118,10 +1118,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     // Update hunger
     this.hungerTimer += dt;
     if (this.hungerTimer >= this.hungerInterval) {
-      this.hungerTimer = 0; 
+      this.hungerTimer = 0;
       this.player.experienceHunger(1);
     }
-    
+
     if (this.player.food <= 0) {
       this.starvationTimer += dt;
       if (this.starvationTimer >= this.starvationInterval) {
@@ -1407,6 +1407,95 @@ export class MinecraftAnimation extends CanvasAnimation {
     return hit;
   }
 
+  /**
+   *
+   */
+  private setFallingBlocksBFS(worldX: number, worldZ: number, worldY: number) {
+    const cubeX = Math.round(worldX);
+    const cubeY = Math.round(worldY);
+    const cubeZ = Math.round(worldZ);
+
+    // Only start search if block is not air
+    let chunk = this.getChunkAtWorld(worldX, worldZ);
+    if (
+      chunk === undefined ||
+      !chunk.isSolidBlockAtWorld(worldX, worldY, worldZ)
+    ) {
+      return;
+    }
+
+    const visited = new Set(); // track visited blocks
+    visited.add(`${cubeX},${cubeY},${cubeZ}`);
+    const queue = [[cubeX, cubeY, cubeZ]];
+    const blocksToUpdate = [];
+    let foundGround = false;
+
+    const directions = [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ];
+
+    while (queue.length > 0) {
+      const currBlockPos = queue.shift();
+      blocksToUpdate.push(currBlockPos);
+
+      // Check if current block is touching "ground" by checking y = 0
+      if (currBlockPos![1] === 0) {
+        foundGround = true;
+        break;
+      }
+
+      for (const [dx, dy, dz] of directions) {
+        const x = currBlockPos![0] + dx;
+        const y = currBlockPos![1] + dy;
+        const z = currBlockPos![2] + dz;
+
+        const blockKey = `${x},${y},${z}`;
+        let chunk = this.getChunkAtWorld(x, z);
+
+        // Only visit if cube contains a solid block
+        if (
+          chunk !== undefined &&
+          chunk.isSolidBlockAtWorld(x, y, z) &&
+          !visited.has(blockKey)
+        ) {
+          visited.add(blockKey);
+          queue.push([x, y, z]);
+        }
+        if (chunk === undefined) {
+          foundGround = true; // Assume block in unloaded chunk is connected to the ground
+          break;
+        }
+      }
+    }
+    // Do nothing if ground is found, but mark all blocks searched as falling if ground is not found
+    if (foundGround === false) {
+      for (const blockPos of blocksToUpdate) {
+        const fallingBlockType = chunk.cubeType(
+          blockPos![0],
+          blockPos![2],
+          blockPos![1],
+        )!; // x, z, y
+        this.fallingBlocks.push(
+          new Block(
+            new Vec3([blockPos![0], blockPos![1], blockPos![2]]),
+            fallingBlockType,
+          ),
+        );
+        chunk.changeCubeType(
+          blockPos![0],
+          blockPos![2],
+          blockPos![1],
+          Chunk.blockTypeAir,
+        );
+      }
+    }
+  }
+
   public leftClick(cubeSelected: boolean): void {
     if (!cubeSelected) {
       return;
@@ -1417,22 +1506,40 @@ export class MinecraftAnimation extends CanvasAnimation {
     let key = `${chunkX},${chunkZ}`;
     let chunk = this.renderedChunks.get(key)!;
 
+    const cubeX = this.selectedCubePosition.x;
+    const cubeY = this.selectedCubePosition.y;
+    const cubeZ = this.selectedCubePosition.z;
+
     let brokenCubeType = chunk.cubeType(
       this.selectedCubePosition.x,
       this.selectedCubePosition.z,
       this.selectedCubePosition.y,
     );
 
-    if (brokenCubeType === Chunk.blockTypeWater || brokenCubeType === Chunk.blockTypePortal) {
+    if (
+      brokenCubeType === Chunk.blockTypeWater ||
+      brokenCubeType === Chunk.blockTypePortal
+    ) {
       return;
     }
 
     let chunkDeltaMap = chunk.changeCubeType(
-      this.selectedCubePosition.x,
-      this.selectedCubePosition.z,
-      this.selectedCubePosition.y,
+      cubeX,
+      cubeZ,
+      cubeY,
       Chunk.blockTypeAir,
     );
+
+    // TODO: Set blocks to fall according to bottom support if sand or gravel
+
+    // Perform BFS beginning at each of the six surrounding cubes to update sets of blocks
+    // connected to the ground
+    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY + 1);
+    this.setFallingBlocksBFS(cubeX, cubeZ, cubeY - 1);
+    this.setFallingBlocksBFS(cubeX, cubeZ + 1, cubeY);
+    this.setFallingBlocksBFS(cubeX, cubeZ - 1, cubeY);
+    this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
+    this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
 
     this.deltaMaps.set(key, chunkDeltaMap);
     if (
@@ -1483,15 +1590,6 @@ export class MinecraftAnimation extends CanvasAnimation {
           cubeY,
           blockType,
         );
-
-        // Test falling blocks
-        if (chunk.cubeType(cubeX, cubeZ, cubeY - 1) === Chunk.blockTypeAir) {
-          const fallingBlockType = chunk.cubeType(cubeX, cubeZ, cubeY)!;
-          this.fallingBlocks.push(
-            new Block(new Vec3([cubeX, cubeY, cubeZ]), fallingBlockType),
-          );
-          chunk.changeCubeType(cubeX, cubeZ, cubeY, Chunk.blockTypeAir);
-        }
 
         this.deltaMaps.set(key, chunkDeltaMap);
         this.blocksPlaced++;
@@ -1906,7 +2004,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (!this.crosshairBitmap) return;
 
     const ctx = this.overlayCtx;
-    const centerX = this.canvas2d.width / 2; 
+    const centerX = this.canvas2d.width / 2;
     const centerY = this.canvas2d.height / 2;
     const size = 30;
 
@@ -1982,7 +2080,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           foodSize,
         );
       } else {
-        // Empty food 
+        // Empty food
         ctx.globalAlpha = 0.25;
         ctx.drawImage(this.foodBitmap, x, startY, foodSize, foodSize);
       }

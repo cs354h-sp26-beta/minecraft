@@ -354,7 +354,10 @@ export class Chunk {
         BIOME_BLEND_TUNING.defaultShapeHigh,
         normalized,
       );
-      return Math.min(100, Math.max(0, biome.baseHeight + shaped * biome.reliefScale));
+      return Math.min(
+        100,
+        Math.max(0, biome.baseHeight + shaped * biome.reliefScale),
+      );
     };
 
     // Blend nearby samples to soften sharp per-block transitions at biome borders.
@@ -373,7 +376,10 @@ export class Chunk {
       }
     }
 
-    return Math.min(100, Math.max(0, Math.floor(weightedHeightSum / weightSum)));
+    return Math.min(
+      100,
+      Math.max(0, Math.floor(weightedHeightSum / weightSum)),
+    );
   }
 
   private generateCubes() {
