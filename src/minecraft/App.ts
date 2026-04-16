@@ -86,6 +86,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   /* Portal Rendering */
   private portalRenderer: PortalRenderer;
   private portals: Portal[];
+  private playerInPortal: Portal | null = null;
 
   /* Global Rendering Info */
   private lightPosition: Vec4;
@@ -1492,6 +1493,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
 
       this.player.update(this.gui.walkDir(), prov, dt);
+      this.checkPortalTeleport();
       this.updatePlayerFallDamage(prov);
       if (this.isPlayerGrounded(prov)) {
         this.doubleJumpAvailable = true;
@@ -2408,6 +2410,78 @@ export class MinecraftAnimation extends CanvasAnimation {
         );
       }
     }
+  }
+
+  /** If the player is inside a portal's interior, teleport them to the linked portal
+   * by adding the offset between the portal positions to the player's position. */
+  private checkPortalTeleport(): void {
+    let currentPortal: Portal | null = null;
+    for (const portal of this.portals) {
+      if (this.isPlayerInPortal(portal)) {
+        currentPortal = portal;
+        break;
+      }
+    }
+
+    if (currentPortal === null) {
+      this.playerInPortal = null;
+      return;
+    }
+
+    // Don't re-teleport if the player was already inside a portal last frame
+    if (this.playerInPortal === currentPortal) {
+      return;
+    }
+
+    const linked = currentPortal.linked;
+    if (linked === null) {
+      this.playerInPortal = currentPortal;
+      return;
+    }
+
+    // Add the offset between the two portals to the player's position
+    this.player.position.x += linked.position.x - currentPortal.position.x;
+    this.player.position.y += linked.position.y - currentPortal.position.y;
+    this.player.position.z += linked.position.z - currentPortal.position.z;
+
+    // Rotate the camera based on the two portal normals.
+    const srcAngle = Math.atan2(
+      currentPortal.normal.x,
+      currentPortal.normal.z,
+    );
+    const dstAngle = Math.atan2(linked.normal.x, linked.normal.z);
+    const deltaYaw = dstAngle - srcAngle;
+    if (deltaYaw !== 0) {
+      this.gui.getCamera().rotate(new Vec3([0, 1, 0]), deltaYaw);
+    }
+
+    // Mark the player as being in the linked portal so we don't teleport again
+    this.playerInPortal = linked;
+  }
+
+  private isPlayerInPortal(portal: Portal): boolean {
+    const right = portal.right();
+    const up = portal.up;
+    const normal = portal.normal;
+    const pos = portal.position;
+
+    const relX = this.player.position.x - pos.x;
+    const relY = this.player.position.y - pos.y;
+    const relZ = this.player.position.z - pos.z;
+
+    const alongRight = relX * right.x + relY * right.y + relZ * right.z;
+    const alongUp = relX * up.x + relY * up.y + relZ * up.z;
+    const alongNormal = relX * normal.x + relY * normal.y + relZ * normal.z;
+
+    // Player is inside the portal's 2D rectangle (with vertical slack for height)
+    // and close enough to the portal plane
+    return (
+      alongRight >= 0 &&
+      alongRight <= portal.width &&
+      alongUp >= -portal.height &&
+      alongUp <= portal.height &&
+      Math.abs(alongNormal) < 0.5
+    );
   }
 
   private checkPortal(blockX: number, blockZ: number, blockY: number) {

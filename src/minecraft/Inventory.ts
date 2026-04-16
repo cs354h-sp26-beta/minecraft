@@ -126,7 +126,7 @@ export function registerItemTypes() {
     ItemAction.Place,
     Chunk.blockTypeNetherite,
   );
-  registerItem("portal_frame", "Portal Frame").setAction(
+  registerItem("portal_frame", "Portal Frame", 32).setAction(
     ItemAction.Place,
     Chunk.blockTypePortalFrame,
   );
