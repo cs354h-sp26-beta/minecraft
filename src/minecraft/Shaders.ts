@@ -152,9 +152,10 @@ const terrainDetailTextures = `
 const treeTextures = `
     vec3 makeWood(vec2 uv, vec3 world) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float grain = valueNoise(vec2(pixelUV.x * 3.0, world.y * 0.35));
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float grain = valueNoise(vec2(pixelUV.xy * 6.0 + vec2(pixelWorld.y * 0.7)));
         float stripe = step(0.55, fract(pixelUV.x * 5.0 + grain * 0.45));
-        return mix(vec3(0.28, 0.15, 0.07), vec3(0.47, 0.28, 0.12), stripe);
+        return mix(vec3(0.28, 0.15, 0.07), vec3(0.47, 0.28, 0.12), stripe) + grain * 0.2;
     }
 
     vec3 makeBirchWood(vec2 uv, vec3 world) {
