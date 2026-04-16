@@ -137,6 +137,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     { enemies: Enemy[]; blocks: Block[] }
   >;
 
+  /** Chunk keys for which initial enemies have already been spawned. */
+  private spawnedChunkKeys: Set<string> = new Set();
+  private static readonly enemiesPerChunk: number = 2;
+
   /* Water simulation */
   private static readonly waterTickInterval: number = 30;
   private frameCount: number = 0;
@@ -191,6 +195,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
 
+    // Must be initialized before loadChunksAroundPlayer, since that now
+    // spawns enemies as chunks come online.
+    this.enemies = [];
+    this.selectedEnemy = null;
+    this.enemyMesh = null;
+
     this.loadChunksAroundPlayer();
 
     this.blankCubeRenderPass = new RenderPass(
@@ -213,8 +223,6 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Portal rendering setup
     this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
-    this.enemies = [];
-    this.selectedEnemy = null;
     this.achievements = this.createAchievements();
     this.achievementToast = null;
     this.showAchievements = false;
@@ -228,7 +236,6 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.isInInventory = false;
 
-    this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
 
@@ -1077,46 +1084,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     this.enemyRenderPass.setup();
 
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
+    // The mesh may have finished loading after the initial chunk batch was
+    // rendered (the load is async), so retroactively spawn in every chunk
+    // that's already live.
+    for (const [key, chunk] of this.renderedChunks) {
+      this.spawnEnemiesInChunk(key, chunk);
+    }
   }
 
   private loadEnemyBoneTranslations(gl: WebGLRenderingContext): void {
@@ -1274,6 +1247,49 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
+  /**
+   * Drop a couple of enemies onto random walkable surface blocks in this
+   * chunk. No-op if the enemy mesh isn't loaded yet, or if this chunk has
+   * already been populated. When the mesh finishes loading `initEnemies`
+   * retroactively spawns for any chunks that were skipped.
+   */
+  private spawnEnemiesInChunk(chunkKey: string, chunk: Chunk): void {
+    if (!this.enemyMesh) return;
+    if (this.spawnedChunkKeys.has(chunkKey)) return;
+    this.spawnedChunkKeys.add(chunkKey);
+
+    const size = chunk.chunkSize();
+    const topLeftX = chunk.topLeftX();
+    const topLeftZ = chunk.topLeftZ();
+    const target = MinecraftAnimation.enemiesPerChunk;
+    let spawned = 0;
+    let attempts = 0;
+    while (spawned < target && attempts < 20) {
+      attempts++;
+      const wx = topLeftX + Math.floor(Math.random() * size);
+      const wz = topLeftZ + Math.floor(Math.random() * size);
+      const top = chunk.topBlockAt(wx, wz);
+      if (!top || top.height < 0) continue;
+      const t = top.type;
+      if (
+        t === Chunk.blockTypeAir || 
+        t === Chunk.blockTypeWater ||
+        t === Chunk.blockTypeWaterFalling ||
+        (t >= Chunk.blockTypeWaterFlowLevel3 &&
+         t <= Chunk.blockTypeWaterFlowLevel1)
+      ) {
+        continue;
+      }
+      // Enemy position is head-based; hitboxHeight is 1. Spawn with feet just
+      // above the surface block's top face (stepPhysics will snap cleanly).
+      const headY = top.height + 1.5;
+      this.enemies.push(
+        new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])),
+      );
+      spawned++;
+    }
+  }
+
   private loadChunksAroundPlayer(): void {
     const prevLoadedKeys = new Set(this.renderedChunks.keys());
     const nextLoadedKeys = new Set<string>();
@@ -1319,6 +1335,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (!prevLoadedKeys.has(key)) {
         this.loadEntitiesForChunk(key);
       }
+      this.spawnEnemiesInChunk(key, this.renderedChunks.get(key)!);
     }
   }
 
