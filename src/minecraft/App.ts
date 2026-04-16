@@ -8,7 +8,6 @@ import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
-import { Portal } from "./Portal.js";
 import { PortalRenderer } from "./PortalRenderer.js";
 import {
   blankCubeFSText,
@@ -173,8 +172,6 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Portal rendering setup
     this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
-    this.initTestPortals();
-
     this.enemies = [];
     this.achievements = this.createAchievements();
     this.achievementToast = null;
@@ -616,24 +613,6 @@ export class MinecraftAnimation extends CanvasAnimation {
       0,
     );
     this.blankCubeRenderPass.setup();
-  }
-
-  private initTestPortals(): void {
-    const src = new Portal(
-      new Vec3([5, 20, 5]),
-      new Vec3([0, 0, 1]),
-      new Vec3([0, 1, 0]),
-      4,
-      5,
-    );
-    const dst = new Portal(
-      new Vec3([40, 20, 40]),
-      new Vec3([0, 0, -1]),
-      new Vec3([0, 1, 0]),
-      4,
-      5,
-    );
-    this.portalRenderer.addPortalPair(src, dst);
   }
 
   /**
