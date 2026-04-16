@@ -1389,6 +1389,7 @@ export class Chunk {
     if (type === undefined || type === Chunk.blockTypeAir) return false;
     // Water is non-solid — the player walks and swims through it.
     if (this.isWater(wx, wz, wy)) return false;
+    if (this.isLava(wx, wz, wy)) return false;
     return true;
   }
 
