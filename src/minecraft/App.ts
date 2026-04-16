@@ -142,7 +142,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   /** Chunk keys for which initial enemies have already been spawned. */
   private spawnedChunkKeys: Set<string> = new Set();
-  private static readonly enemiesPerChunk: number = 2;
+  private static readonly enemiesPerChunk: number = 1;
 
   /* Water simulation */
   private static readonly waterTickInterval: number = 30;
@@ -2512,7 +2512,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
     }
 
-    const check = (blockIsPortal) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
+    const check = (blockIsPortal: (x: number, y: number) => boolean) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
         && blockIsPortal(0, 4) && blockIsPortal(1, 4) && blockIsPortal(2, 4) && blockIsPortal(3, 4)
         && blockIsPortal(0, 1) && blockIsPortal(0, 2) && blockIsPortal(0, 3)
         && blockIsPortal(3, 1) && blockIsPortal(3, 2) && blockIsPortal(3, 3);

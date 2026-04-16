@@ -236,8 +236,11 @@ class Entity {
 }
 
 export class Player extends Entity {
+  private speed: number;
+
   constructor(position: Vec3) {
     super(position, 0.4, 2.0, 20, 20);
+    this.speed = 0.2;
   }
 
   public update(
@@ -245,7 +248,7 @@ export class Player extends Entity {
     chunkProvider: Chunk.ColumnProvider,
     dt: number,
   ) {
-    super.stepPhysics(lookDir, 0.4, chunkProvider, dt);
+    super.stepPhysics(lookDir, this.speed, chunkProvider, dt);
   }
 
   public jump(chunkProvider: Chunk.ColumnProvider) {
