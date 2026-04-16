@@ -207,6 +207,7 @@ class Entity {
   }
 
   public heal(amount: number = 1) {
+    if (this.isDead()) return;
     this.health += amount;
     if (this.health > this.maxHealth) {
       this.health = this.maxHealth;

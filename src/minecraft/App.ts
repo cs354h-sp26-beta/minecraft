@@ -150,11 +150,14 @@ export class MinecraftAnimation extends CanvasAnimation {
   private minimapPixelSize = 135;
   private minimapColors: Map<number, [number, number, number]>;
 
-  /* Hunger */
+  /* Hunger and health*/
   private hungerTimer: number;
   private starvationTimer: number;
+  private regenHealthTimer: number;
+  private readonly regenHealthFoodThreshold: number = 0.9; // player must have at least 90% food to regen health
   private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
   private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
+  private readonly regenHealthInterval: number = 4; // player regenerates health at this interval when the threshold is met
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -250,6 +253,7 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
+    this.regenHealthTimer = 0;
 
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
@@ -1515,6 +1519,17 @@ export class MinecraftAnimation extends CanvasAnimation {
       this.starvationTimer = 0;
     }
 
+    // Update health
+    if (this.player.food >= this.player.maxFood * this.regenHealthFoodThreshold) {
+      this.regenHealthTimer += dt;
+      if (this.regenHealthTimer >= this.regenHealthInterval) {
+        this.regenHealthTimer = 0;
+        this.player.heal(1);
+      }
+    } else {
+      this.regenHealthTimer = 0;
+    }
+
     this.updateAchievements(dt);
 
     // Update falling blocks
@@ -2335,6 +2350,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       }
       case ItemAction.Use: {
         itemType.useAction(this, item!, this.player);
+        this.inventory.removeItem(item.itemType, 1);
         return;
       }
       case ItemAction.Place: {
