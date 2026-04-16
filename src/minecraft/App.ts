@@ -2260,8 +2260,11 @@ export class MinecraftAnimation extends CanvasAnimation {
 
           const chunkX = this.worldToChunkCoord(Math.round(x));
           const chunkZ = this.worldToChunkCoord(Math.round(z));
-          let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`)!;
-          let cubeType = currentChunk.cubeType(x, z, y);
+          let currentChunk = this.renderedChunks.get(`${chunkX},${chunkZ}`);
+          if (!currentChunk) {
+            continue;
+          }
+          let cubeType = currentChunk!.cubeType(x, z, y);
 
           if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
@@ -2975,6 +2978,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.tempPortal.position.y,
         this.tempPortal.normal.x === 0,
       );
+      this.portals.push(destPortal);
       this.portalRenderer.addPortalPair(this.tempPortal, destPortal);
       this.tempPortal = null;
       return true;
