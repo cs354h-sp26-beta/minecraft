@@ -234,7 +234,7 @@ export class GUI implements IGUI {
     ]);
     rayDir.normalize();
 
-    this.cubeSelected = this.animation.intersectCubes(cameraPos, rayDir);
+    this.cubeSelected = this.animation.pickTarget(cameraPos, rayDir);
   }
 
   public walkDir(): Vec3 {

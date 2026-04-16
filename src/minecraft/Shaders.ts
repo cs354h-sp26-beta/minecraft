@@ -462,8 +462,9 @@ export const decorBillboardVSText = `
             widthScale = 0.82;
             heightScale = 1.35;
         } else if (aType < 4.5) {
-            widthScale = 0.45;
-            heightScale = 0.78;
+            float flowerVariant = floor(fract(aVariant * 11.0) * 5.0);
+            widthScale = mix(0.42, 0.62, step(2.5, flowerVariant));
+            heightScale = mix(0.72, 0.92, step(2.5, flowerVariant));
         } else if (aType < 5.5) {
             widthScale = 0.58;
             heightScale = 0.55;
@@ -557,13 +558,38 @@ export const decorBillboardFSText = `
         vec2 p = floor(uv * vec2(16.0, 16.0));
         float x = p.x;
         float y = p.y;
+        float variant = floor(fract(vVariant * 11.0) * 5.0);
         float stem = step(7.0, x) * step(x, 8.0) * step(y, 9.0);
-        float center = step(7.0, x) * step(x, 8.0) * step(10.0, y) * step(y, 11.0);
-        float petalTop = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 13.0);
-        float petalBottom = step(7.0, x) * step(x, 8.0) * step(8.0, y) * step(y, 9.0);
-        float petalLeft = step(5.0, x) * step(x, 6.0) * step(10.0, y) * step(y, 11.0);
-        float petalRight = step(9.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
-        return clamp(stem + center + petalTop + petalBottom + petalLeft + petalRight, 0.0, 1.0);
+        float mask = 0.0;
+
+        if (variant < 1.0) {
+            float center = step(7.0, x) * step(x, 8.0) * step(10.0, y) * step(y, 11.0);
+            float petalTop = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 13.0);
+            float petalBottom = step(7.0, x) * step(x, 8.0) * step(8.0, y) * step(y, 9.0);
+            float petalLeft = step(5.0, x) * step(x, 6.0) * step(10.0, y) * step(y, 11.0);
+            float petalRight = step(9.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
+            mask = stem + center + petalTop + petalBottom + petalLeft + petalRight;
+        } else if (variant < 2.0) {
+            float cup = step(5.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 13.0);
+            float notch = step(7.0, x) * step(x, 8.0) * step(13.0, y) * step(y, 13.0);
+            mask = stem + cup - notch;
+        } else if (variant < 3.0) {
+            float tallStem = step(7.0, x) * step(x, 8.0) * step(y, 11.0);
+            float bloomA = step(5.0, x) * step(x, 7.0) * step(10.0, y) * step(y, 12.0);
+            float bloomB = step(8.0, x) * step(x, 10.0) * step(12.0, y) * step(y, 14.0);
+            mask = tallStem + bloomA + bloomB;
+        } else if (variant < 4.0) {
+            float tallStem = step(7.0, x) * step(x, 8.0) * step(y, 12.0);
+            float orbA = step(5.0, x) * step(x, 10.0) * step(11.0, y) * step(y, 13.0);
+            float orbB = step(6.0, x) * step(x, 9.0) * step(14.0, y) * step(y, 15.0);
+            mask = tallStem + orbA + orbB;
+        } else {
+            float lowStem = step(7.0, x) * step(x, 8.0) * step(y, 8.0);
+            float clusterA = step(4.0, x) * step(x, 11.0) * step(8.0, y) * step(y, 10.0);
+            float clusterB = step(5.0, x) * step(x, 10.0) * step(11.0, y) * step(y, 12.0);
+            mask = lowStem + clusterA + clusterB;
+        }
+        return clamp(mask, 0.0, 1.0);
     }
 
     float mushroomMask(vec2 uv) {
@@ -637,16 +663,23 @@ export const decorBillboardFSText = `
 
     vec3 shadeFlower(vec2 uv) {
         vec2 p = floor(uv * vec2(16.0, 16.0));
-        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 9.0);
+        float variant = floor(fract(vVariant * 11.0) * 5.0);
+        float stemTop = variant < 3.0 ? 10.0 : variant < 4.0 ? 12.0 : 8.0;
+        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, stemTop);
         if (stem > 0.5) {
             return vec3(0.10, 0.58, 0.12);
         }
-        float choice = fract(vVariant * 5.0);
-        vec3 yellow = vec3(0.95, 0.82, 0.18);
-        vec3 red = vec3(0.86, 0.14, 0.12);
-        vec3 white = vec3(0.92, 0.90, 0.82);
-        vec3 petal = choice < 0.33 ? yellow : choice < 0.66 ? red : white;
-        return mix(vec3(0.48, 0.28, 0.06), petal, step(0.35, uv.y));
+        if (variant < 1.0) {
+            float center = step(7.0, p.x) * step(p.x, 8.0) * step(10.0, p.y) * step(p.y, 11.0);
+            return center > 0.5 ? vec3(0.96, 0.74, 0.14) : vec3(0.92, 0.90, 0.82);
+        } else if (variant < 2.0) {
+            return vec3(0.86, 0.12, 0.10);
+        } else if (variant < 3.0) {
+            return mix(vec3(0.12, 0.38, 0.92), vec3(0.30, 0.80, 1.0), uv.y);
+        } else if (variant < 4.0) {
+            return mix(vec3(0.50, 0.18, 0.82), vec3(0.76, 0.44, 1.0), uv.y);
+        }
+        return mix(vec3(0.92, 0.36, 0.68), vec3(1.0, 0.72, 0.86), uv.y);
     }
 
     vec3 shadeMushroom(vec2 uv) {
