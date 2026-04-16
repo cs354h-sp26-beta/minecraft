@@ -32,20 +32,7 @@ export class Billboard {
     this.uv = new Float32Array(tex.length * 2);
     tex.forEach((v, i) => this.uv.set(v.xy, i * 2));
 
-    this.indices = new Uint32Array([
-      0,
-      1,
-      2,
-      0,
-      2,
-      3,
-      4,
-      5,
-      6,
-      4,
-      6,
-      7,
-    ]);
+    this.indices = new Uint32Array([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
   }
 
   public positionsFlat(): Float32Array {

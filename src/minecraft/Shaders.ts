@@ -17,6 +17,7 @@ export const blankCubeVSText = `
     varying vec4 wsPos;
     varying vec2 uv;
     varying float selected;
+    varying vec3 vLocalPos; // 3d block-local position
 
     void main () {
 
@@ -26,6 +27,8 @@ export const blankCubeVSText = `
         uv = aUV;
         selected = uSelectedCubePos == aOffset ? 1.0 : 0.0;
         vBlockType = aBlockType;
+
+        vLocalPos = aVertPos.xyz + vec3(0.5); // convert from [-0.5, 0.5] to [0, 1] for easier texturing
     }
 `;
 
@@ -114,6 +117,7 @@ const noiseUtils = `
 const dirtTexture = `
     vec3 makeDirt(vec2 uv) {
         // dirt block: add some noise to brown
+        // TODO: make it tile better with world coordinates
 
         vec2 pixelUV = floor(uv * 16.0) / 16.0; // snap UVs to a grid for pixelated texture
 
@@ -124,11 +128,24 @@ const dirtTexture = `
         if (noise > 0.85) textureColor += vec3(0.2, 0.3, 0.4); // add some lighter spots
         return textureColor;
     }
+`;
 
-    vec3 makeGrassBlock(vec2 uv) {
+const terrainDetailTextures = `
+    vec3 makeSandstone(vec2 uv) {
         vec2 pixelUV = floor(uv * 16.0) / 16.0;
-        float noise = fbm(pixelUV * 6.0 + vec2(1.7), 2) + hash(pixelUV + vec2(3.0)) * 0.2;
-        return mix(vec3(0.12, 0.46, 0.12), vec3(0.28, 0.68, 0.20), noise);
+        float band = step(0.5, fract(pixelUV.y * 8.0 + fbm(pixelUV * 4.0, 2) * 0.5));
+        return mix(vec3(0.64, 0.56, 0.39), vec3(0.80, 0.71, 0.52), band);
+    }
+
+    vec3 makeSnow(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+        float sparkle = hash(pixelUV * 17.0);
+        return mix(vec3(0.82, 0.88, 0.94), vec3(0.98, 0.99, 1.0), sparkle * 0.35);
+    }
+
+    vec3 makePortal(vec3 world) {
+        float swirl = sin(world.y * 0.55 + uTime * 1.6) * 0.5 + 0.5;
+        return mix(vec3(0.25, 0.02, 0.36), vec3(0.64, 0.18, 0.82), swirl);
     }
 `;
 
@@ -170,6 +187,18 @@ const treeTextures = `
     }
 `;
 
+const sandTexture = `
+    vec3 makeSand(vec2 uv, vec3 local, vec3 world) {
+        uv = floor(uv * 16.0) / 16.0;
+        vec2 worldSeed = hash2(floor(world.xz));
+        vec2 p = uv * 2.0;
+        float wave = perlin(p * 4.0);
+        float noise = fbm(p * 32.0 + worldSeed, 2);
+        vec3 baseColor = vec3(0.84, 0.76, 0.59);
+        return baseColor * 0.8 + wave * 0.18 + noise * 0.24;
+    }
+`;
+
 const waterTexture = `
     vec3 makeWater(vec2 uv, vec3 world, float scale) {
 
@@ -200,6 +229,28 @@ const waterTexture = `
     }
 `;
 
+const grassTexture = `
+    vec3 makeGrass(vec2 uv, vec3 local, vec3 world, float scale) {
+
+    vec3 pixelCubeLocal = floor(local * 16.0) / 16.0; // snap block-local coords to a grid for pixelated texture
+    vec3 pixelWorld = floor(world * 16.0) / 16.0; // same with world
+
+    float nearTop = pixelCubeLocal.y;
+
+    float noise = fbm(pixelCubeLocal.xz * 12.0 + pixelWorld.xz * 11.0, 2);
+
+    nearTop = clamp(nearTop + noise * 0.4, 0.0, 1.0);
+
+    nearTop = pow(nearTop, 10.0);   
+
+    vec3 dirtColor = makeDirt(uv);
+
+    vec3 grassColor = makeDirt(uv) * vec3(0.3, 0.8, 0.3) + vec3(0.02, 0.1, 0.02); // base dirt color tinted green
+
+    return mix(dirtColor, grassColor, nearTop);
+}
+`;
+
 const cobbleTexture = `
     vec3 makeCobble(vec2 uv, vec3 world, float scale) {
       vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
@@ -208,8 +259,8 @@ const cobbleTexture = `
       float groove = smoothstep(0.35, -0.55, v * 0.5);  // dark at edges
       float noise = fbm(pixelatedWorld.xz * 8.0, 2);     // surface variation
       vec3 baseColor = vec3(0.65, 0.63, 0.6);
-      return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
-    }
+    return baseColor * (0.04 + 1.6 * groove + 0.42 * noise);
+}
 `;
 
 const oreTexture = `
@@ -224,14 +275,14 @@ const oreTexture = `
         
         float noise = fbm(uv * 8.0, 2);
 
-        coloredGroove = pow(coloredGroove, 3.0);
+    coloredGroove = pow(coloredGroove, 3.0);
 
         vec3 noColor = baseColor * (0.14 + 0.12 * noise) + groove * 0.8;
 
         vec3 colored = color * (0.7 - groove + 0.2 * noise);
 
-        return mix(noColor, colored, coloredGroove);
-    }
+    return mix(noColor, colored, coloredGroove);
+}
 `;
 
 // const cellsTexture = `
@@ -277,6 +328,7 @@ export const blankCubeFSText = `
     
     varying vec4 normal;
     varying vec4 wsPos;
+    varying vec3 vLocalPos;
     varying vec2 uv;
     varying float selected;
     varying float vBlockType;
@@ -285,7 +337,13 @@ export const blankCubeFSText = `
 
     ${dirtTexture}
 
+    ${terrainDetailTextures}
+
     ${treeTextures}
+
+    ${sandTexture}
+
+    ${grassTexture}
 
     ${cobbleTexture}
 
@@ -306,15 +364,33 @@ export const blankCubeFSText = `
         vec3 textureColor = vec3(1.0, 0.5, 1.0);
 
         if (vBlockType == 0.0) {
-            if (normal.y > 0.5) {
-                textureColor = makeGrassBlock(uv);
-            } else {
-                textureColor = makeDirt(uv);
-            }
+            textureColor = makeDirt(uv);
         } else if (vBlockType == 1.0) {
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 2.0) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
+        } else if (vBlockType == 3.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.12, 0.12, 0.12));
+        } else if (vBlockType == 4.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.70, 0.70, 0.70));
+        } else if (vBlockType == 5.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.93, 0.77, 0.18));
+        } else if (vBlockType == 6.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.18, 0.86, 0.92));
+        } else if (vBlockType == 7.0) {
+            textureColor = makeGrass(uv, vLocalPos, wsPos.xyz, 3.0);
+        } else if (vBlockType == 8.0) {
+            textureColor = makeSand(uv, vLocalPos, wsPos.xyz);
+        } else if (vBlockType == 9.0) {
+            textureColor = makeSandstone(uv);
+        } else if (vBlockType == 10.0) {
+            textureColor = makeSnow(uv);
+        } else if (vBlockType == 11.0) {
+            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.24, 0.20, 0.20));
+        } else if (vBlockType == 12.0) {
+            textureColor = makeCobble(uv, wsPos.xyz, 6.0) * vec3(0.55, 0.55, 0.55);
+        } else if (vBlockType == 13.0) {
+            textureColor = makePortal(wsPos.xyz);
         } else if (vBlockType == 20.0) {
             textureColor = makeWood(uv, wsPos.xyz);
         } else if (vBlockType == 21.0) {
@@ -325,9 +401,6 @@ export const blankCubeFSText = `
             textureColor = makeSpruceLeaves(uv, wsPos.xyz);
         } else if (vBlockType == 24.0) {
             textureColor = makeDecorRock(uv, wsPos.xyz);
-        } else {
-            vec3 oreColor = vec3(0.9, 0.1, 0.2);
-            textureColor = makeOre(uv, wsPos.xyz, 2.0, oreColor);
         }
 
         gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
@@ -362,6 +435,7 @@ export const decorBillboardVSText = `
         vec3 right = normalize(uCameraRight);
         vec3 up = normalize(uCameraUp);
         vec3 forward = normalize(cross(up, right));
+        float globalScale = 1.12;
 
         float c = cos(aAngle);
         float s = sin(aAngle);
@@ -391,10 +465,19 @@ export const decorBillboardVSText = `
             float flowerVariant = floor(fract(aVariant * 11.0) * 5.0);
             widthScale = mix(0.42, 0.62, step(2.5, flowerVariant));
             heightScale = mix(0.72, 0.92, step(2.5, flowerVariant));
-        } else {
+        } else if (aType < 5.5) {
             widthScale = 0.58;
             heightScale = 0.55;
+        } else if (aType < 6.5) {
+            widthScale = 0.34;
+            heightScale = 1.28;
+        } else {
+            widthScale = 0.78;
+            heightScale = 0.86;
         }
+
+        widthScale *= globalScale;
+        heightScale *= globalScale;
 
         vec3 billboardOffset = rotatedRight * (aQuadPos.x * aScale * widthScale) + leanedUp * (aQuadPos.y * aScale * heightScale);
         vec3 world = aInstancePos.xyz + billboardOffset + swayOffset;
@@ -520,6 +603,32 @@ export const decorBillboardFSText = `
         return clamp(stem + capBase + capTop + capPeak, 0.0, 1.0);
     }
 
+    float reedMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stemA = step(4.0, x) * step(x, 5.0) * step(2.0, y) * step(y, 15.0);
+        float stemB = step(7.0, x) * step(x, 8.0) * step(1.0, y) * step(y, 15.0);
+        float stemC = step(10.0, x) * step(x, 11.0) * step(3.0, y) * step(y, 15.0);
+        float tuftA = step(3.0, x) * step(x, 6.0) * step(12.0, y) * step(y, 14.0);
+        float tuftB = step(6.0, x) * step(x, 9.0) * step(13.0, y) * step(y, 15.0);
+        float tuftC = step(9.0, x) * step(x, 12.0) * step(11.0, y) * step(y, 13.0);
+        return clamp(stemA + stemB + stemC + tuftA + tuftB + tuftC, 0.0, 1.0);
+    }
+
+    float deadBushMask(vec2 uv) {
+        vec2 p = floor(uv * vec2(16.0, 16.0));
+        float x = p.x;
+        float y = p.y;
+        float stem = step(7.0, x) * step(x, 8.0) * step(2.0, y) * step(y, 11.0);
+        float branchL1 = step(4.0, x) * step(x, 6.0) * step(7.0, y) * step(y, 8.0);
+        float branchR1 = step(9.0, x) * step(x, 11.0) * step(8.0, y) * step(y, 9.0);
+        float branchL2 = step(3.0, x) * step(x, 5.0) * step(10.0, y) * step(y, 11.0);
+        float branchR2 = step(10.0, x) * step(x, 12.0) * step(10.0, y) * step(y, 11.0);
+        float topTwig = step(6.0, x) * step(x, 9.0) * step(12.0, y) * step(y, 13.0);
+        return clamp(stem + branchL1 + branchR1 + branchL2 + branchR2 + topTwig, 0.0, 1.0);
+    }
+
     vec3 shadeGrass(vec2 uv) {
         float blade = pixelNoise(uv + vec2(vVariant * 5.7), 8.0);
         vec3 base = vec3(0.08, 0.42, 0.10);
@@ -584,6 +693,23 @@ export const decorBillboardFSText = `
         return mix(cap, vec3(0.92, 0.82, 0.64), spot);
     }
 
+    vec3 shadeReed(vec2 uv) {
+        float detail = pixelNoise(uv + vec2(vVariant * 3.1, 5.2), 9.0);
+        vec3 dark = vec3(0.18, 0.42, 0.16);
+        vec3 light = vec3(0.44, 0.68, 0.24);
+        vec3 stemColor = mix(dark, light, detail * 0.6 + uv.y * 0.35);
+        float tuft = step(0.72, uv.y);
+        vec3 tuftColor = mix(vec3(0.52, 0.46, 0.22), vec3(0.68, 0.58, 0.26), detail);
+        return mix(stemColor, tuftColor, tuft);
+    }
+
+    vec3 shadeDeadBush(vec2 uv) {
+        float detail = pixelNoise(uv + vec2(vVariant * 2.7, 1.9), 10.0);
+        vec3 dark = vec3(0.36, 0.24, 0.10);
+        vec3 light = vec3(0.58, 0.42, 0.18);
+        return mix(dark, light, detail * 0.7 + uv.y * 0.2);
+    }
+
     void main() {
         vec3 color = vec3(0.5);
         float mask = 0.0;
@@ -602,9 +728,15 @@ export const decorBillboardFSText = `
         } else if (vType < 4.5) {
             mask = flowerMask(vUV);
             color = shadeFlower(vUV);
-        } else {
+        } else if (vType < 5.5) {
             mask = mushroomMask(vUV);
             color = shadeMushroom(vUV);
+        } else if (vType < 6.5) {
+            mask = reedMask(vUV);
+            color = shadeReed(vUV);
+        } else {
+            mask = deadBushMask(vUV);
+            color = shadeDeadBush(vUV);
         }
 
         if (mask < 0.5) {
@@ -614,7 +746,6 @@ export const decorBillboardFSText = `
         gl_FragColor = vec4(color, 1.0);
     }
 `;
-
 export const skyboxVSText = `
     precision highp float;
 
@@ -1055,5 +1186,50 @@ export const enemyFSText = `
         gl_FragColor = vec4(clamp(ka + dot_nl * kd, 0.0, 1.0) * textureColor, 1.0);
         
         //gl_FragColor = vec4((normal.x + 1.0)/2.0, (normal.y + 1.0)/2.0, (normal.z + 1.0)/2.0,1.0);
+    }
+`;
+
+export const portalVSText = `
+    precision mediump float;
+
+    uniform mat4 uView;
+    uniform mat4 uProj;
+
+    attribute vec4 aVertPos;
+    attribute vec4 aOffset;
+    attribute vec2 aUV;
+
+    varying vec2 vUV;
+
+    void main () {
+        gl_Position = uProj * uView * (aVertPos + aOffset);
+        vUV = aUV;
+    }
+`;
+
+export const portalFSText = `
+    precision mediump float;
+
+    uniform sampler2D uPortalTex; // FBO for destination scene
+    uniform vec2 uResolution;
+    // uniform float uTime; Could use in animated portal effect
+
+    varying vec2 vUV;
+
+    void main() {
+        // Sample the portal FBO using screen-space UVs
+        vec2 screenUV = gl_FragCoord.xy / uResolution; // [0, 1]
+        vec4 color = texture2D(uPortalTex, screenUV);
+
+        // Nether portal tint, light purple rn
+        color.rgb *= vec3(0.85, 0.65, 0.8);
+
+        // Vignette using block-local UVs (edges darken)
+        vec2 centered = vUV - 0.5;
+        float vignette = 1.0 - dot(centered, centered) * 2.0; // distance^2 from center
+        vignette = clamp(vignette, 0.3, 1.0);
+        color.rgb *= vignette;
+
+        gl_FragColor = color;
     }
 `;
