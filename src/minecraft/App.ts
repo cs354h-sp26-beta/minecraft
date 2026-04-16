@@ -99,7 +99,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private foodBitmap: ImageBitmap | null = null;
   private crosshairBitmap: ImageBitmap | null = null;
 
-  private player: Player;
+  public player: Player;
   private spawnPosition: Vec3;
   private decorationGenerator: DecorationGenerator;
   private decorationCache: Map<string, DecorBuffer>;
@@ -2356,8 +2356,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(this, item!, this.player);
-        this.inventory.removeItem(item.itemType, 1);
+        itemType.useAction(this);
         return;
       }
       case ItemAction.Place: {
