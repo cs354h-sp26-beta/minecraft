@@ -143,7 +143,7 @@ export class Portal {
 
     // If too close, push the eye back along the view normal so the frustum
     // stays consistent (extents and distance agree).
-    const minDist = 1.0;
+    const minDist = 3.0;
     if (d < minDist) {
       const pushBack = minDist - d;
       eyePos.x += viewNormal.x * pushBack;
