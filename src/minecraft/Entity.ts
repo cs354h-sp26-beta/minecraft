@@ -508,7 +508,9 @@ export class Block {
   public collidesWithChunk(c: Chunk): Collision[] {
     if (
       c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
-      Chunk.blockTypeAir
+        Chunk.blockTypeAir &&
+      c.cubeType(this.position.x, this.position.z, this.position.y - 0.5) !=
+        Chunk.blockTypeWater
     ) {
       return [
         {

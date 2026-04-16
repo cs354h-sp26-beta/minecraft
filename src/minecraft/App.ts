@@ -66,6 +66,11 @@ export class MinecraftAnimation extends CanvasAnimation {
   private renderedChunks: Map<string, Chunk>;
   private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
 
+  // Nether dimension state — separate caches so overworld and nether chunks don't collide
+  public playerInNether: boolean = false;
+  private netherChunkCache: LruCache<string, Chunk>;
+  private netherDeltaMaps: Map<string, Map<string, number>>;
+
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
 
@@ -188,6 +193,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+    this.netherChunkCache = new LruCache();
+    this.netherDeltaMaps = new Map();
     this.decorationGenerator = new DecorationGenerator();
     this.decorationCache = new Map();
 
@@ -482,6 +489,156 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.loadChunksAroundPlayer();
   }
 
+  /** Toggle between the overworld and the Nether. Clears rendered chunks so
+   *  the new dimension's terrain loads immediately on the next frame. */
+  public toggleNether(): void {
+    this.playerInNether = !this.playerInNether;
+    this.renderedChunks.clear();
+    this.decorationCache.clear();
+  }
+
+  /** Write a single block into a dimension's delta maps without requiring a loaded chunk. */
+  private writeDeltaBlock(
+    dimension: "overworld" | "nether",
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+    blockType: number,
+  ): void {
+    const step = MinecraftAnimation.chunkSize;
+    const chunkX = Chunk.worldToChunkAxis(worldX, step);
+    const chunkZ = Chunk.worldToChunkAxis(worldZ, step);
+    const chunkKey = `${chunkX},${chunkZ}`;
+
+    const targetDeltaMaps =
+      dimension === "nether" ? this.netherDeltaMaps : this.deltaMaps;
+    if (!targetDeltaMaps.has(chunkKey)) {
+      targetDeltaMaps.set(chunkKey, new Map());
+    }
+    const deltaMap = targetDeltaMaps.get(chunkKey)!;
+
+    const originX = chunkX - step / 2;
+    const originZ = chunkZ - step / 2;
+    const localJ = Math.round(worldX - originX);
+    const localI = Math.round(worldZ - originZ);
+    const localY = Math.round(worldY);
+
+    deltaMap.set(`${localJ},${localI},${localY}`, blockType);
+  }
+
+  /** Write a portal frame, interior blocks, and surrounding air pocket
+   *  into the target dimension's delta maps. Returns the destination Portal. */
+  private writeDestinationPortal(
+    srcPortal: Portal,
+    srcMinX: number,
+    srcMinZ: number,
+    srcMinY: number,
+    isXAligned: boolean,
+  ): Portal {
+    const destDimension: "overworld" | "nether" = this.playerInNether
+      ? "overworld"
+      : "nether";
+    const destY = this.playerInNether ? srcMinY : 20;
+
+    // Carve air pocket: extends 1 block beyond frame on each side, 2 blocks deep
+    // on both sides of the portal plane so the player can approach from either direction
+    for (let dy = 0; dy < 7; dy++) {
+      for (let along = -1; along < 5; along++) {
+        for (let perp = -2; perp <= 2; perp++) {
+          const wx = isXAligned ? srcMinX + along : srcMinX + perp;
+          const wz = isXAligned ? srcMinZ + perp : srcMinZ + along;
+          this.writeDeltaBlock(
+            destDimension,
+            wx,
+            destY + dy,
+            wz,
+            Chunk.blockTypeAir,
+          );
+        }
+      }
+    }
+
+    // Write portal frame (4 wide x 5 tall) and interior (2 wide x 3 tall)
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 5; j++) {
+        const isFrame = i === 0 || i === 3 || j === 0 || j === 4;
+        const isInterior = i >= 1 && i <= 2 && j >= 1 && j <= 3;
+        if (!isFrame && !isInterior) continue;
+
+        const blockType = isFrame
+          ? Chunk.blockTypePortalFrame
+          : Chunk.blockTypePortal;
+
+        if (isXAligned) {
+          this.writeDeltaBlock(
+            destDimension,
+            srcMinX + i,
+            destY + j,
+            srcMinZ,
+            blockType,
+          );
+        } else {
+          this.writeDeltaBlock(
+            destDimension,
+            srcMinX,
+            destY + j,
+            srcMinZ + i,
+            blockType,
+          );
+        }
+      }
+    }
+
+    // Add a floor under the portal
+    const floorType =
+      destDimension === "nether"
+        ? Chunk.blockTypeNetherRack
+        : Chunk.blockTypeCobble;
+    for (let i = 0; i < 4; i++) {
+      if (isXAligned) {
+        this.writeDeltaBlock(
+          destDimension,
+          srcMinX + i,
+          destY - 1,
+          srcMinZ,
+          floorType,
+        );
+      } else {
+        this.writeDeltaBlock(
+          destDimension,
+          srcMinX,
+          destY - 1,
+          srcMinZ + i,
+          floorType,
+        );
+      }
+    }
+
+    // Create destination Portal object
+    let destPortal: Portal;
+    if (isXAligned) {
+      destPortal = new Portal(
+        new Vec3([srcMinX + 1, destY + 1, srcMinZ]),
+        new Vec3([0, 0, 1]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        destDimension,
+      );
+    } else {
+      destPortal = new Portal(
+        new Vec3([srcMinX, destY + 1, srcMinZ + 2]),
+        new Vec3([1, 0, 0]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        destDimension,
+      );
+    }
+
+    return destPortal;
+  }
+
   private isPlayerGrounded(chunkProvider: Chunk.ColumnProvider): boolean {
     const floorHead = Chunk.supportedHeadYWorld(
       chunkProvider,
@@ -631,6 +788,12 @@ export class MinecraftAnimation extends CanvasAnimation {
       "uTime",
       (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
         gl.uniform1f(loc, this.getTimeValue());
+      },
+    );
+    this.skyboxRenderPass.addUniform(
+      "uIsNether",
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniform1f(loc, this.playerInNether ? 1.0 : 0.0);
       },
     );
 
@@ -1285,16 +1448,14 @@ export class MinecraftAnimation extends CanvasAnimation {
         t === Chunk.blockTypeWater ||
         t === Chunk.blockTypeWaterFalling ||
         (t >= Chunk.blockTypeWaterFlowLevel3 &&
-         t <= Chunk.blockTypeWaterFlowLevel1)
+          t <= Chunk.blockTypeWaterFlowLevel1)
       ) {
         continue;
       }
       // Enemy position is head-based; hitboxHeight is 1. Spawn with feet just
       // above the surface block's top face (stepPhysics will snap cleanly).
       const headY = top.height + 1.5;
-      this.enemies.push(
-        new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])),
-      );
+      this.enemies.push(new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])));
       spawned++;
     }
   }
@@ -1317,14 +1478,23 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         nextLoadedKeys.add(key);
-        if (!this.chunkCache.has(key)) {
-          let deltaMap = this.deltaMaps.has(key)
-            ? this.deltaMaps.get(key)
+        const activeCache = this.playerInNether
+          ? this.netherChunkCache
+          : this.chunkCache;
+        const activeDeltaMaps = this.playerInNether
+          ? this.netherDeltaMaps
+          : this.deltaMaps;
+        if (!activeCache.has(key)) {
+          let deltaMap = activeDeltaMaps.has(key)
+            ? activeDeltaMaps.get(key)
             : new Map();
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
+          activeCache.set(
+            key,
+            new Chunk(chunkX, chunkZ, step, deltaMap, this.playerInNether),
+          );
           this.decorationCache.delete(key);
         }
-        const cachedChunk = this.chunkCache.get(key)!;
+        const cachedChunk = activeCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
         if (!this.decorationCache.has(key)) {
           this.decorationCache.set(
@@ -1526,7 +1696,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
 
     // Update health
-    if (this.player.food >= this.player.maxFood * this.regenHealthFoodThreshold) {
+    if (
+      this.player.food >=
+      this.player.maxFood * this.regenHealthFoodThreshold
+    ) {
       this.regenHealthTimer += dt;
       if (this.regenHealthTimer >= this.regenHealthInterval) {
         this.regenHealthTimer = 0;
@@ -1576,7 +1749,9 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // Drawing
     const gl = this.ctx as WebGL2RenderingContext;
-    const bg: Vec4 = this.backgroundColor;
+    const bg: Vec4 = this.playerInNether
+      ? new Vec4([0.33, 0.0, 0.0, 1.0])
+      : this.backgroundColor;
 
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
@@ -1584,9 +1759,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     gl.cullFace(gl.BACK);
 
     // --- Portal FBO pass: render destination scene from portal camera ---
+    const currentDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
     this.portalRenderer.renderPortalFBOs(
       this.gui.getCamera().pos(),
       (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
+      currentDimension,
     );
 
     // --- Main pass: render overworld to screen ---
@@ -1599,6 +1778,7 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.portalRenderer.drawPortalBlocks(
       this.gui.viewMatrix(),
       this.gui.projMatrix(),
+      currentDimension,
     );
 
     this.drawOverlay();
@@ -2247,7 +2427,10 @@ export class MinecraftAnimation extends CanvasAnimation {
         continue;
       }
       const deltaMap = chunk.changeCubeTypeNoUpdate(x, z, y, blockType);
-      this.deltaMaps.set(chunkKey, deltaMap);
+      (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+        chunkKey,
+        deltaMap,
+      );
       writtenThisTick.set(posKey, blockType);
       this.waterDirty.add(posKey);
       updatedChunks.add(chunk);
@@ -2314,7 +2497,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
     this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
 
-    this.deltaMaps.set(key, chunkDeltaMap);
+    (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+      key,
+      chunkDeltaMap,
+    );
     if (
       brokenCubeType !== undefined &&
       brokenCubeType !== Chunk.blockTypeAir &&
@@ -2383,7 +2569,10 @@ export class MinecraftAnimation extends CanvasAnimation {
           blockType,
         );
 
-        this.deltaMaps.set(key, chunkDeltaMap);
+        (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(
+          key,
+          chunkDeltaMap,
+        );
         this.blocksPlaced++;
 
         if (blockType === Chunk.blockTypePortalFrame) {
@@ -2411,11 +2600,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
-  /** If the player is inside a portal's interior, teleport them to the linked portal
-   * by adding the offset between the portal positions to the player's position. */
+  /** If the player is inside a portal's interior, teleport them to the linked portal.
+   *  If the portals are in different dimensions, switch dimensions first. */
   private checkPortalTeleport(): void {
+    const currentDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
     let currentPortal: Portal | null = null;
     for (const portal of this.portals) {
+      if (portal.dimension !== currentDimension) continue;
       if (this.isPlayerInPortal(portal)) {
         currentPortal = portal;
         break;
@@ -2438,16 +2631,18 @@ export class MinecraftAnimation extends CanvasAnimation {
       return;
     }
 
+    // Switch dimension if crossing between overworld and nether
+    if (linked.dimension !== currentPortal.dimension) {
+      this.toggleNether();
+    }
+
     // Add the offset between the two portals to the player's position
     this.player.position.x += linked.position.x - currentPortal.position.x;
     this.player.position.y += linked.position.y - currentPortal.position.y;
     this.player.position.z += linked.position.z - currentPortal.position.z;
 
     // Rotate the camera based on the two portal normals.
-    const srcAngle = Math.atan2(
-      currentPortal.normal.x,
-      currentPortal.normal.z,
-    );
+    const srcAngle = Math.atan2(currentPortal.normal.x, currentPortal.normal.z);
     const dstAngle = Math.atan2(linked.normal.x, linked.normal.z);
     const deltaYaw = dstAngle - srcAngle;
     if (deltaYaw !== 0) {
@@ -2502,7 +2697,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       y += minY;
       const chunk = this.chunkAt(x, z);
       return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
-    }
+    };
 
     const blockIsPortalZ = (z: number, y: number): boolean => {
       const x = minX;
@@ -2510,37 +2705,70 @@ export class MinecraftAnimation extends CanvasAnimation {
       y += minY;
       const chunk = this.chunkAt(x, z);
       return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
-    }
+    };
 
-    const check = (blockIsPortal: (x: number, y: number) => boolean) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
-        && blockIsPortal(0, 4) && blockIsPortal(1, 4) && blockIsPortal(2, 4) && blockIsPortal(3, 4)
-        && blockIsPortal(0, 1) && blockIsPortal(0, 2) && blockIsPortal(0, 3)
-        && blockIsPortal(3, 1) && blockIsPortal(3, 2) && blockIsPortal(3, 3);
+    const check = (blockIsPortal: (x: number, y: number) => boolean) =>
+      blockIsPortal(0, 0) &&
+      blockIsPortal(1, 0) &&
+      blockIsPortal(2, 0) &&
+      blockIsPortal(3, 0) &&
+      blockIsPortal(0, 4) &&
+      blockIsPortal(1, 4) &&
+      blockIsPortal(2, 4) &&
+      blockIsPortal(3, 4) &&
+      blockIsPortal(0, 1) &&
+      blockIsPortal(0, 2) &&
+      blockIsPortal(0, 3) &&
+      blockIsPortal(3, 1) &&
+      blockIsPortal(3, 2) &&
+      blockIsPortal(3, 3);
+
+    const srcDimension: "overworld" | "nether" = this.playerInNether
+      ? "nether"
+      : "overworld";
 
     if (check(blockIsPortalX)) {
-      this.portals.push(new Portal(
-          new Vec3([minX + 1, minY + 1, minZ]),
-          new Vec3([0, 0, 1]),
-          new Vec3([0, 1, 0]),
-          2,
-          3,
-      ));
-      if (this.portals.length % 2 === 0) {
-        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
-      }
+      const srcPortal = new Portal(
+        new Vec3([minX + 1, minY + 1, minZ]),
+        new Vec3([0, 0, 1]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        srcDimension,
+      );
+      const destPortal = this.writeDestinationPortal(
+        srcPortal,
+        minX,
+        minZ,
+        minY,
+        true,
+      );
+      srcPortal.link(destPortal);
+      this.portals.push(srcPortal);
+      this.portals.push(destPortal);
+      this.portalRenderer.addPortalPair(srcPortal, destPortal);
       return true;
     }
     if (check(blockIsPortalZ)) {
-      this.portals.push(new Portal(
-          new Vec3([minX, minY + 1, minZ + 2]),
-          new Vec3([1, 0, 0]),
-          new Vec3([0, 1, 0]),
-          2,
-          3,
-      ));
-      if (this.portals.length % 2 === 0) {
-        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
-      }
+      const srcPortal = new Portal(
+        new Vec3([minX, minY + 1, minZ + 2]),
+        new Vec3([1, 0, 0]),
+        new Vec3([0, 1, 0]),
+        2,
+        3,
+        srcDimension,
+      );
+      const destPortal = this.writeDestinationPortal(
+        srcPortal,
+        minX,
+        minZ,
+        minY,
+        false,
+      );
+      srcPortal.link(destPortal);
+      this.portals.push(srcPortal);
+      this.portals.push(destPortal);
+      this.portalRenderer.addPortalPair(srcPortal, destPortal);
       return true;
     }
 
