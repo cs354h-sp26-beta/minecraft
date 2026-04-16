@@ -2347,8 +2347,19 @@ export class MinecraftAnimation extends CanvasAnimation {
       const currBlockPos = queue[queueHead++];
       blocksToUpdate.push(currBlockPos);
 
-      // Check if current block is touching "ground" by checking y = 0
-      if (currBlockPos![1] === 0) {
+      let isPortal = false;
+      if (this.portals.length > 0) {
+        let chunk = this.getChunkAtWorld(currBlockPos[0], currBlockPos[2])!;
+        const blockType = chunk.cubeType(
+            currBlockPos[0],
+            currBlockPos[2],
+            currBlockPos[1],
+        )!;
+        isPortal = blockType === Chunk.blockTypePortal || blockType == Chunk.blockTypePortalFrame;
+      }
+
+      // Check if current block is touching "ground" by checking y = 0 or if it's a portal
+      if (currBlockPos![1] === 0 || isPortal) {
         foundGround = true;
         break;
       }
@@ -2601,7 +2612,8 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.selectedCubePosition.y,
       ) ||
       brokenCubeType === Chunk.blockTypePortal ||
-      brokenCubeType === Chunk.blockTypePortalFrame
+      brokenCubeType === Chunk.blockTypePortalFrame ||
+      brokenCubeType === Chunk.blockTypeLava
     ) {
       return;
     }
