@@ -20,9 +20,18 @@ export const blankCubeVSText = `
     varying vec3 vLocalPos; // 3d block-local position
 
     void main () {
+        // Horizontal flow blocks are shorter than a full cube, bottom-aligned.
+        // scaledY = y * scale - (1 - scale) * 0.5 keeps the bottom at -0.5 while shrinking the top.
+        float yScale = 1.0;
+        if      (aBlockType == 100.0) yScale = 0.75; // FlowLevel3
+        else if (aBlockType == 101.0) yScale = 0.50; // FlowLevel2
+        else if (aBlockType == 102.0) yScale = 0.25; // FlowLevel1
 
-        gl_Position = uProj * uView * (aVertPos + aOffset);
-        wsPos = aVertPos + aOffset;
+        vec4 pos = aVertPos;
+        pos.y = pos.y * yScale - (1.0 - yScale) * 0.5;
+
+        gl_Position = uProj * uView * (pos + aOffset);
+        wsPos = pos + aOffset;
         normal = normalize(aNorm);
         uv = aUV;
         selected = uSelectedCubePos == aOffset ? 1.0 : 0.0;
@@ -266,6 +275,23 @@ const cobbleTexture = `
 }
 `;
 
+const portalFrameTexture = `
+    vec3 makePortalFrame(vec2 uv) {
+        vec2 pixelUV = floor(uv * 16.0) / 16.0;
+
+        vec3 purple   = vec3(0.42, 0.10, 0.58);
+        vec3 magenta  = vec3(0.78, 0.18, 0.62);
+        vec3 darkBlue = vec3(0.06, 0.04, 0.32);
+
+        float noise = fbm(pixelUV * 6.0 + vec2(0.5), 1) + hash(pixelUV) * 0.3;
+        vec3 textureColor = mix(purple, magenta, clamp(noise, 0.0, 1.0));
+        textureColor = mix(darkBlue, textureColor, smoothstep(0.0, 0.55, noise));
+        if (noise < 0.2) textureColor -= vec3(0.05, 0.03, 0.08); // darker spots
+        if (noise > 0.85) textureColor += vec3(0.15, 0.10, 0.20); // bright magenta highlights
+        return textureColor;
+    }
+`
+
 const oreTexture = `
     vec3 makeOre(vec2 uv, vec3 world, float scale, vec3 color) {
         vec3 pixelatedWorld = floor(world * 16.0) / 16.0; // snap world coords to a grid for pixelated texture
@@ -286,6 +312,58 @@ const oreTexture = `
 
     return mix(noColor, colored, coloredGroove);
 }
+`;
+
+const netheriteTexture = `
+    vec3 makeNetherite(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float v = voronoi(pixelWorld * 3.5);
+        float groove = smoothstep(0.3, 0.0, v * 0.4);
+        float shine = fbm(uv * 6.0, 2) * 0.3;
+        float vein = perlin(uv * 3.0 + pixelWorld.xz * 0.5);
+        vein = pow(clamp(vein, 0.0, 1.0), 4.0);
+        vec3 baseColor = vec3(0.2, 0.18, 0.22);
+        vec3 veinColor = vec3(0.6, 0.25, 0.0);
+        vec3 color = mix(baseColor * (0.4 + groove + shine), veinColor, vein * 0.7);
+        return color;
+    }
+`;
+
+// Animated glowing lava with slow churning motion
+const lavaTexture = `
+    vec3 makeLava(vec2 uv, vec3 world) {
+        vec3 pixelWorld = floor(world * 8.0) / 8.0;
+        vec2 p = pixelWorld.xz * 2.0;
+        float flow1 = perlin(p * 1.2 + vec2(uTime * 0.04, uTime * 0.02));
+        float flow2 = perlin(p * 2.5 + vec2(-uTime * 0.025, uTime * 0.035));
+        float flow = (flow1 + flow2) * 0.5;
+        float hot = pow(clamp(perlin(p * 1.8 + vec2(uTime * 0.015, 0.0)), 0.0, 1.0), 3.5);
+        vec3 coolColor  = vec3(0.55, 0.04, 0.0);
+        vec3 warmColor  = vec3(0.95, 0.35, 0.0);
+        vec3 hotColor   = vec3(1.0,  0.85, 0.2);
+        vec3 color = mix(coolColor, warmColor, pow(flow, 1.5));
+        color = mix(color, hotColor, hot * 0.6);
+        return color;
+    }
+`;
+
+// Dark porous volcanic rock with faint lava-glow cracks
+const netherRackTexture = `
+    vec3 makeNetherRack(vec2 uv, vec3 world, float scale) {
+        vec3 pixelWorld = floor(world * 16.0) / 16.0;
+        float v = voronoi(pixelWorld * scale);
+        float groove = smoothstep(0.35, 0.0, v * 0.5);
+        float noise = fbm3(pixelWorld, 2);
+        float veinNoise = perlin(uv * 6.0 + pixelWorld.xz);
+        float lavaVein = smoothstep(0.72, 0.85, veinNoise) * groove;
+        vec3 baseColor = vec3(0.38, 0.05, 0.04);
+        vec3 darkColor = vec3(0.16, 0.02, 0.02);
+        vec3 lavaColor = vec3(0.8, 0.2, 0.0);
+        vec3 color = mix(darkColor, baseColor, noise * 0.6 + 0.4);
+        color *= (0.3 + 0.8 * groove + 0.4 * noise);
+        color = mix(color, lavaColor, lavaVein * 0.7);
+        return color;
+    }
 `;
 
 // const cellsTexture = `
@@ -353,6 +431,14 @@ export const blankCubeFSText = `
     ${waterTexture}
 
     ${oreTexture}
+
+    ${netheriteTexture}
+
+    ${lavaTexture}
+
+    ${netherRackTexture}
+
+    ${portalFrameTexture}
     
     void main() {
         vec3 kd = vec3(1.0, 1.0, 1.0);
@@ -370,7 +456,7 @@ export const blankCubeFSText = `
             textureColor = makeDirt(uv);
         } else if (vBlockType == 1.0) {
             textureColor = makeCobble(uv, wsPos.xyz, 3.5);
-        } else if (vBlockType == 2.0) {
+        } else if (vBlockType == 2.0 || (vBlockType >= 99.0 && vBlockType <= 102.0)) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
         } else if (vBlockType == 3.0) {
             textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.12, 0.12, 0.12));
@@ -389,11 +475,17 @@ export const blankCubeFSText = `
         } else if (vBlockType == 10.0) {
             textureColor = makeSnow(uv);
         } else if (vBlockType == 11.0) {
-            textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.24, 0.20, 0.20));
+            textureColor = makeNetherite(uv, wsPos.xyz);
         } else if (vBlockType == 12.0) {
             textureColor = makeCobble(uv, wsPos.xyz, 6.0) * vec3(0.55, 0.55, 0.55);
         } else if (vBlockType == 13.0) {
             textureColor = makePortal(wsPos.xyz);
+        } else if (vBlockType == 14.0) {
+            // Lava: slow animated orange-red glow
+            textureColor = makeLava(uv, wsPos.xyz);
+        } else if (vBlockType == 15.0) {
+            // Nether rack: dark volcanic rock with faint lava cracks
+            textureColor = makeNetherRack(uv, wsPos.xyz, 3.0);
         } else if (vBlockType == 20.0) {
             textureColor = makeWood(uv, wsPos.xyz);
         } else if (vBlockType == 21.0) {
@@ -404,6 +496,8 @@ export const blankCubeFSText = `
             textureColor = makeSpruceLeaves(uv, wsPos.xyz);
         } else if (vBlockType == 24.0) {
             textureColor = makeDecorRock(uv, wsPos.xyz);
+        } else if (vBlockType == 30.0) {
+            textureColor = makePortalFrame(uv);
         }
 
         gl_FragColor = vec4(clamp((ka + dot_nl * kd) * highlight, 0.0, 1.0) * textureColor, 1.0);
@@ -465,8 +559,9 @@ export const decorBillboardVSText = `
             widthScale = 0.82;
             heightScale = 1.35;
         } else if (aType < 4.5) {
-            widthScale = 0.45;
-            heightScale = 0.78;
+            float flowerVariant = floor(fract(aVariant * 11.0) * 5.0);
+            widthScale = mix(0.42, 0.62, step(2.5, flowerVariant));
+            heightScale = mix(0.72, 0.92, step(2.5, flowerVariant));
         } else if (aType < 5.5) {
             widthScale = 0.58;
             heightScale = 0.55;
@@ -560,13 +655,38 @@ export const decorBillboardFSText = `
         vec2 p = floor(uv * vec2(16.0, 16.0));
         float x = p.x;
         float y = p.y;
+        float variant = floor(fract(vVariant * 11.0) * 5.0);
         float stem = step(7.0, x) * step(x, 8.0) * step(y, 9.0);
-        float center = step(7.0, x) * step(x, 8.0) * step(10.0, y) * step(y, 11.0);
-        float petalTop = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 13.0);
-        float petalBottom = step(7.0, x) * step(x, 8.0) * step(8.0, y) * step(y, 9.0);
-        float petalLeft = step(5.0, x) * step(x, 6.0) * step(10.0, y) * step(y, 11.0);
-        float petalRight = step(9.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
-        return clamp(stem + center + petalTop + petalBottom + petalLeft + petalRight, 0.0, 1.0);
+        float mask = 0.0;
+
+        if (variant < 1.0) {
+            float center = step(7.0, x) * step(x, 8.0) * step(10.0, y) * step(y, 11.0);
+            float petalTop = step(7.0, x) * step(x, 8.0) * step(12.0, y) * step(y, 13.0);
+            float petalBottom = step(7.0, x) * step(x, 8.0) * step(8.0, y) * step(y, 9.0);
+            float petalLeft = step(5.0, x) * step(x, 6.0) * step(10.0, y) * step(y, 11.0);
+            float petalRight = step(9.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 11.0);
+            mask = stem + center + petalTop + petalBottom + petalLeft + petalRight;
+        } else if (variant < 2.0) {
+            float cup = step(5.0, x) * step(x, 10.0) * step(10.0, y) * step(y, 13.0);
+            float notch = step(7.0, x) * step(x, 8.0) * step(13.0, y) * step(y, 13.0);
+            mask = stem + cup - notch;
+        } else if (variant < 3.0) {
+            float tallStem = step(7.0, x) * step(x, 8.0) * step(y, 11.0);
+            float bloomA = step(5.0, x) * step(x, 7.0) * step(10.0, y) * step(y, 12.0);
+            float bloomB = step(8.0, x) * step(x, 10.0) * step(12.0, y) * step(y, 14.0);
+            mask = tallStem + bloomA + bloomB;
+        } else if (variant < 4.0) {
+            float tallStem = step(7.0, x) * step(x, 8.0) * step(y, 12.0);
+            float orbA = step(5.0, x) * step(x, 10.0) * step(11.0, y) * step(y, 13.0);
+            float orbB = step(6.0, x) * step(x, 9.0) * step(14.0, y) * step(y, 15.0);
+            mask = tallStem + orbA + orbB;
+        } else {
+            float lowStem = step(7.0, x) * step(x, 8.0) * step(y, 8.0);
+            float clusterA = step(4.0, x) * step(x, 11.0) * step(8.0, y) * step(y, 10.0);
+            float clusterB = step(5.0, x) * step(x, 10.0) * step(11.0, y) * step(y, 12.0);
+            mask = lowStem + clusterA + clusterB;
+        }
+        return clamp(mask, 0.0, 1.0);
     }
 
     float mushroomMask(vec2 uv) {
@@ -640,16 +760,23 @@ export const decorBillboardFSText = `
 
     vec3 shadeFlower(vec2 uv) {
         vec2 p = floor(uv * vec2(16.0, 16.0));
-        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, 9.0);
+        float variant = floor(fract(vVariant * 11.0) * 5.0);
+        float stemTop = variant < 3.0 ? 10.0 : variant < 4.0 ? 12.0 : 8.0;
+        float stem = step(7.0, p.x) * step(p.x, 8.0) * step(p.y, stemTop);
         if (stem > 0.5) {
             return vec3(0.10, 0.58, 0.12);
         }
-        float choice = fract(vVariant * 5.0);
-        vec3 yellow = vec3(0.95, 0.82, 0.18);
-        vec3 red = vec3(0.86, 0.14, 0.12);
-        vec3 white = vec3(0.92, 0.90, 0.82);
-        vec3 petal = choice < 0.33 ? yellow : choice < 0.66 ? red : white;
-        return mix(vec3(0.48, 0.28, 0.06), petal, step(0.35, uv.y));
+        if (variant < 1.0) {
+            float center = step(7.0, p.x) * step(p.x, 8.0) * step(10.0, p.y) * step(p.y, 11.0);
+            return center > 0.5 ? vec3(0.96, 0.74, 0.14) : vec3(0.92, 0.90, 0.82);
+        } else if (variant < 2.0) {
+            return vec3(0.86, 0.12, 0.10);
+        } else if (variant < 3.0) {
+            return mix(vec3(0.12, 0.38, 0.92), vec3(0.30, 0.80, 1.0), uv.y);
+        } else if (variant < 4.0) {
+            return mix(vec3(0.50, 0.18, 0.82), vec3(0.76, 0.44, 1.0), uv.y);
+        }
+        return mix(vec3(0.92, 0.36, 0.68), vec3(1.0, 0.72, 0.86), uv.y);
     }
 
     vec3 shadeMushroom(vec2 uv) {
@@ -1164,41 +1291,46 @@ export const portalVSText = `
 
     uniform mat4 uView;
     uniform mat4 uProj;
+    uniform vec3 uSrcOrigin;
+    uniform vec3 uSrcRight;
+    uniform vec3 uSrcUp;
+    uniform vec2 uPortalSize;
 
     attribute vec4 aVertPos;
     attribute vec4 aOffset;
-    attribute vec2 aUV;
 
-    varying vec2 vUV;
+    varying vec2 vPortalUV;
 
     void main () {
-        gl_Position = uProj * uView * (aVertPos + aOffset);
-        vUV = aUV;
+        vec4 worldPos = aVertPos + aOffset;
+        gl_Position = uProj * uView * worldPos;
+
+        // Project vertex onto the source portal plane, then compute
+        // portal-local UV in [0,1]. The off-axis frustum ensures the
+        // destination portal fills the entire FBO, so this UV maps directly.
+        vec3 srcNormal = cross(uSrcRight, uSrcUp);
+        vec3 relPos = worldPos.xyz - uSrcOrigin;
+        float distFromPlane = dot(relPos, srcNormal);
+        vec3 onPlane = relPos - distFromPlane * srcNormal;
+
+        float u = dot(onPlane, uSrcRight);
+        float v = dot(onPlane, uSrcUp);
+
+        vPortalUV = vec2((u + 0.5) / uPortalSize.x, (v + 0.5) / uPortalSize.y);
     }
 `;
 
 export const portalFSText = `
     precision mediump float;
 
-    uniform sampler2D uPortalTex; // FBO for destination scene
-    uniform vec2 uResolution;
-    // uniform float uTime; Could use in animated portal effect
+    uniform sampler2D uPortalTex;
 
-    varying vec2 vUV;
+    varying vec2 vPortalUV;
 
     void main() {
-        // Sample the portal FBO using screen-space UVs
-        vec2 screenUV = gl_FragCoord.xy / uResolution; // [0, 1]
-        vec4 color = texture2D(uPortalTex, screenUV);
+        vec4 color = texture2D(uPortalTex, vPortalUV);
 
-        // Nether portal tint, light purple rn
         color.rgb *= vec3(0.85, 0.65, 0.8);
-
-        // Vignette using block-local UVs (edges darken)
-        vec2 centered = vUV - 0.5;
-        float vignette = 1.0 - dot(centered, centered) * 2.0; // distance^2 from center
-        vignette = clamp(vignette, 0.3, 1.0);
-        color.rgb *= vignette;
 
         gl_FragColor = color;
     }

@@ -207,6 +207,7 @@ class Entity {
   }
 
   public heal(amount: number = 1) {
+    if (this.isDead()) return;
     this.health += amount;
     if (this.health > this.maxHealth) {
       this.health = this.maxHealth;
@@ -279,6 +280,8 @@ export class Enemy extends Entity {
   private pathIndex: number; // which waypoint we're walking towards
   private pathTimer: number; // time since last path refresh
   private attackTime: number;
+  private readonly MIN_STANDOFF = 1.5; // minimum distance the enemy keeps from the player (still in attack range)
+  private readonly SEEK_RADIUS = 64; // beyond this radius, skip A* pathfinding. note its the chunk size
 
   constructor(mesh: Mesh, position: Vec3) {
     // HACK: Enemy centered at CoM rather than head.
@@ -290,7 +293,7 @@ export class Enemy extends Entity {
     this.path = [];
     this.pathIndex = 0;
     this.pathTimer = 0;
-    this.speed = 0.1;
+    this.speed = 0.05;
     this.animationTime = 0;
     this.idleTime = 0;
     this.attackTime = 0;
@@ -336,11 +339,14 @@ export class Enemy extends Entity {
     this.animationTime += dt;
     this.pathTimer += dt;
 
+    const distToPlayer = Vec3.distance(this.position, player.position);
+    const insideStandoff = distToPlayer < this.MIN_STANDOFF;
+    const farFromPlayer = distToPlayer > this.SEEK_RADIUS;
+
     if (this.attackTime > 0) {
       this.faceTowards(player.position, dt);
       this.attackTime -= dt;
       if (this.attackTime <= 0) {
-        console.log(`Dist: ${Vec3.distance(this.position, player.position)}`);
         if (Vec3.distance(this.position, player.position) < 5) {
           player.takeDamage(3);
         }
@@ -348,10 +354,7 @@ export class Enemy extends Entity {
       }
     }
 
-    if (
-      this.attackTime <= 0 &&
-      Vec3.distance(this.position, player.position) < 2
-    ) {
+    if (this.attackTime <= 0 && distToPlayer < 2) {
       this.setState(EnemyState.Attacking);
       this.attackTime = 1;
       this.path = null;
@@ -359,6 +362,8 @@ export class Enemy extends Entity {
 
     if (
       this.state != EnemyState.Attacking &&
+      !insideStandoff &&
+      !farFromPlayer &&
       (this.pathTimer > 1.0 || this.path === null || this.path.length === 0)
     ) {
       this.pathTimer = 0;
@@ -397,7 +402,26 @@ export class Enemy extends Entity {
       this.pathIndex = this.path.length > 1 ? 1 : 0; // try to skip 0 since that's the enemy's current position
     }
 
-    if (this.path && this.pathIndex < this.path.length) {
+    if (insideStandoff) {
+      // Already close enough to the player — hold position (but keep facing them).
+      this.faceTowards(player.position, dt);
+      super.stepPhysics(
+        new Vec3([0.0, 0.0, 0.0]),
+        this.speed,
+        chunkProvider,
+        dt,
+      );
+    } else if (farFromPlayer) {
+      // Out of A* range — chill in place so enemies stay distributed across
+      // the chunks they spawned in instead of all converging on the player.
+      this.path = null;
+      super.stepPhysics(
+        new Vec3([0.0, 0.0, 0.0]),
+        this.speed,
+        chunkProvider,
+        dt,
+      );
+    } else if (this.path && this.pathIndex < this.path.length) {
       const target = this.path[this.pathIndex];
       const distance = Math.sqrt(
         (target.x - this.position.x) ** 2 + (target.z - this.position.z) ** 2,
@@ -426,7 +450,7 @@ export class Enemy extends Entity {
       );
     }
 
-    if (this.path && this.pathIndex < this.path.length) {
+    if (!insideStandoff && this.path && this.pathIndex < this.path.length) {
       this.setState(EnemyState.Walking);
       this.idleTime = 0;
     } else if (this.attackTime <= 0) {

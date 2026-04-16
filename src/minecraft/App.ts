@@ -9,6 +9,8 @@ import { GUI } from "./Gui.js";
 import { Enemy, Player, Block } from "./Entity.js";
 import { LruCache } from "./Cache.js";
 import { Camera } from "../lib/webglutils/Camera.js";
+import { PortalRenderer } from "./PortalRenderer.js";
+import { Portal } from "./Portal.js";
 import { DecorationGenerator, type DecorBuffer } from "./Decorations.js";
 import {
   blankCubeFSText,
@@ -28,7 +30,6 @@ import {
   ItemStack,
   itemTypes,
   registerItemTypes,
-  registerRecipes,
 } from "./Inventory.js";
 
 type Achievement = {
@@ -65,6 +66,11 @@ export class MinecraftAnimation extends CanvasAnimation {
   private renderedChunks: Map<string, Chunk>;
   private deltaMaps: Map<string, Map<string, number>>; // save map of changes for modified chunks
 
+  // Nether dimension state — separate caches so overworld and nether chunks don't collide
+  public playerInNether: boolean = false;
+  private netherChunkCache: LruCache<string, Chunk>;
+  private netherDeltaMaps: Map<string, Map<string, number>>;
+
   private static readonly renderDistance: number = 1;
   private static readonly chunkSize: number = 64;
 
@@ -82,6 +88,11 @@ export class MinecraftAnimation extends CanvasAnimation {
   private enemyBoneTransTex: WebGLTexture;
   private enemyBoneRotTex: WebGLTexture;
 
+  /* Portal Rendering */
+  private portalRenderer: PortalRenderer;
+  private portals: Portal[];
+  private playerInPortal: Portal | null = null;
+
   /* Global Rendering Info */
   private lightPosition: Vec4;
   private backgroundColor: Vec4;
@@ -93,7 +104,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   private foodBitmap: ImageBitmap | null = null;
   private crosshairBitmap: ImageBitmap | null = null;
 
-  private player: Player;
+  public player: Player;
   private spawnPosition: Vec3;
   private decorationGenerator: DecorationGenerator;
   private decorationCache: Map<string, DecorBuffer>;
@@ -104,17 +115,26 @@ export class MinecraftAnimation extends CanvasAnimation {
   private fallDamageArmed: boolean;
 
   private enemies: Enemy[];
+  private selectedEnemy: Enemy | null;
+  private selectedEnemyDistance: number;
   private achievements: Achievement[];
   private achievementToast: AchievementToast | null;
   private showAchievements: boolean;
   private blocksBroken: number;
   private blocksPlaced: number;
   private successfulJumps: number;
+  private blasterHits: number;
+  private starvationDamageTaken: number;
+  private jetpackUsed: boolean;
+  private enemiesKilled: number;
 
   /* Inventory */
-  private inventory: Inventory;
-  private selectedHotbarIdx: number;
+  public inventory: Inventory;
   private isInInventory: boolean;
+
+  private doubleJumpAvailable: boolean;
+  private jetpackFuel: number;
+  private blasterCooldown: number;
 
   /**
    * Entities whose chunk is not in `renderedChunks` are parked here by chunk key.
@@ -125,15 +145,27 @@ export class MinecraftAnimation extends CanvasAnimation {
     { enemies: Enemy[]; blocks: Block[] }
   >;
 
+  /** Chunk keys for which initial enemies have already been spawned. */
+  private spawnedChunkKeys: Set<string> = new Set();
+  private static readonly enemiesPerChunk: number = 2;
+
+  /* Water simulation */
+  private static readonly waterTickInterval: number = 30;
+  private frameCount: number = 0;
+  private waterDirty: Set<string> = new Set();
+
   /* Overlay information */
   private minimapPixelSize = 135;
   private minimapColors: Map<number, [number, number, number]>;
 
-  /* Hunger */
+  /* Hunger and health*/
   private hungerTimer: number;
   private starvationTimer: number;
+  private regenHealthTimer: number;
+  private readonly regenHealthFoodThreshold: number = 0.9; // player must have at least 90% food to regen health
   private readonly hungerInterval: number = 4; // player experiences hunger every 4 seconds
   private readonly starvationInterval: number = 4; // player takes damage if starving every 4 seconds
+  private readonly regenHealthInterval: number = 4; // player regenerates health at this interval when the threshold is met
 
   constructor(canvas: HTMLCanvasElement) {
     super(canvas);
@@ -149,7 +181,6 @@ export class MinecraftAnimation extends CanvasAnimation {
     const gl = this.ctx;
 
     registerItemTypes();
-    registerRecipes();
 
     Chunk.setSeedHash(
       globalThis.crypto?.getRandomValues(new Uint32Array(1))[0] ??
@@ -162,6 +193,8 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.chunkCache = new LruCache();
     this.renderedChunks = new Map();
     this.deltaMaps = new Map();
+    this.netherChunkCache = new LruCache();
+    this.netherDeltaMaps = new Map();
     this.decorationGenerator = new DecorationGenerator();
     this.decorationCache = new Map();
 
@@ -174,6 +207,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.wasPlayerGrounded = false;
     this.airborneStartY = this.player.position.y;
     this.fallDamageArmed = false;
+
+    // Must be initialized before loadChunksAroundPlayer, since that now
+    // spawns enemies as chunks come online.
+    this.enemies = [];
+    this.selectedEnemy = null;
+    this.enemyMesh = null;
 
     this.loadChunksAroundPlayer();
 
@@ -195,17 +234,22 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.initBlankCube();
     this.initDecorBillboards();
 
-    this.enemies = [];
+    // Portal rendering setup
+    this.portalRenderer = new PortalRenderer(gl, this.cubeGeometry, 1280, 960);
+    this.portals = [];
     this.achievements = this.createAchievements();
     this.achievementToast = null;
     this.showAchievements = false;
     this.blocksBroken = 0;
     this.blocksPlaced = 0;
     this.successfulJumps = 0;
+    this.blasterHits = 0;
+    this.starvationDamageTaken = 0;
+    this.jetpackUsed = false;
+    this.enemiesKilled = 0;
 
     this.isInInventory = false;
 
-    this.enemyMesh = null;
     this.enemyMeshLoader = new CLoader("./static/assets/robot.dae");
     this.enemyMeshLoader.load(() => this.initEnemies());
 
@@ -214,10 +258,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 1]);
 
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
 
     this.hungerTimer = 0;
     this.starvationTimer = 0;
+    this.regenHealthTimer = 0;
 
     // Load pngs as bitmaps for drawing
     const heartImg = new Image();
@@ -282,6 +329,41 @@ export class MinecraftAnimation extends CanvasAnimation {
         completed: false,
         completedAt: null,
       },
+      {
+        id: "blaster_hit",
+        title: "In My Sights",
+        description: "Shoot an enemy with a blaster.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "starvation",
+        title: "Rumbling Stomach",
+        description: "Take damage from starvation.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "jetpack",
+        title: "Jetpack Joyride",
+        description: "Use a jetpack.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "craft",
+        title: "Crafty",
+        description: "Craft anything.",
+        completed: false,
+        completedAt: null,
+      },
+      {
+        id: "kill",
+        title: "Murderous",
+        description: "Ruthlessly kill an enemy.",
+        completed: false,
+        completedAt: null,
+      },
     ];
   }
 
@@ -327,6 +409,21 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.isNightTime()) {
       this.completeAchievement("night");
     }
+    if (this.blasterHits > 0) {
+      this.completeAchievement("blaster_hit");
+    }
+    if (this.starvationDamageTaken > 0) {
+      this.completeAchievement("starvation");
+    }
+    if (this.jetpackUsed) {
+      this.completeAchievement("jetpack");
+    }
+    if (this.inventory.itemsCrafted > 0) {
+      this.completeAchievement("craft");
+    }
+    if (this.enemiesKilled > 0) {
+      this.completeAchievement("kill");
+    }
 
     if (this.achievementToast !== null) {
       this.achievementToast.timeLeft -= dt;
@@ -350,6 +447,10 @@ export class MinecraftAnimation extends CanvasAnimation {
     putColor(Chunk.blockTypeDirt, "8b4513");
     putColor(Chunk.blockTypeCobble, "a6a199");
     putColor(Chunk.blockTypeWater, "2b4d8c");
+    putColor(Chunk.blockTypeWaterFalling, "2b4d8c");
+    putColor(Chunk.blockTypeWaterFlowLevel3, "2b4d8c");
+    putColor(Chunk.blockTypeWaterFlowLevel2, "2b4d8c");
+    putColor(Chunk.blockTypeWaterFlowLevel1, "2b4d8c");
     putColor(Chunk.blockTypeCoalOre, "3f3f3f");
     putColor(Chunk.blockTypeIronOre, "afafaf");
     putColor(Chunk.blockTypeGoldOre, "ffd700");
@@ -361,6 +462,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     putColor(Chunk.blockTypeNetherite, "443a3a");
     putColor(Chunk.blockTypeBedrock, "555555");
     putColor(Chunk.blockTypePortal, "8b00d4");
+    putColor(Chunk.blockTypePortalFrame, "3a1a4d");
+
+    putColor(DecorationGenerator.blockTypeWood, "6b4226");
+    putColor(DecorationGenerator.blockTypeLeaves, "2d5a1e");
+    putColor(DecorationGenerator.blockTypeBirchWood, "d6cdb2");
+    putColor(DecorationGenerator.blockTypeSpruceLeaves, "1a3a1a");
+    putColor(DecorationGenerator.blockTypeDecorRock, "7a7a7a");
   }
 
   /**
@@ -379,6 +487,14 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.fallDamageArmed = false;
     this.gui.getCamera().setPos(this.player.position);
     this.loadChunksAroundPlayer();
+  }
+
+  /** Toggle between the overworld and the Nether. Clears rendered chunks so
+   *  the new dimension's terrain loads immediately on the next frame. */
+  public toggleNether(): void {
+    this.playerInNether = !this.playerInNether;
+    this.renderedChunks.clear();
+    this.decorationCache.clear();
   }
 
   private isPlayerGrounded(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -410,7 +526,10 @@ export class MinecraftAnimation extends CanvasAnimation {
 
   private resetInventoryState(): void {
     this.inventory = new Inventory();
-    this.selectedHotbarIdx = 0;
+    this.doubleJumpAvailable = true;
+    this.jetpackFuel = 100;
+    this.blasterCooldown = 0;
+    this.isInInventory = false;
   }
 
   private isPlayerTouchingWater(chunkProvider: Chunk.ColumnProvider): boolean {
@@ -433,9 +552,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         continue;
       }
       for (const sampleY of sampleHeights) {
-        if (
-          chunk.cubeType(sampleX, sampleZ, sampleY) === Chunk.blockTypeWater
-        ) {
+        if (chunk.isWater(sampleX, sampleZ, sampleY)) {
           return true;
         }
       }
@@ -465,7 +582,7 @@ export class MinecraftAnimation extends CanvasAnimation {
           0,
           fallDistance - MinecraftAnimation.safeFallDistance,
         );
-        if (damage > 0) {
+        if (damage > 0 && !this.inventory.hasEquipmentById("jetpack")) {
           this.player.takeDamage(damage);
         }
       }
@@ -1002,46 +1119,12 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
     this.enemyRenderPass.setup();
 
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z + 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x + 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
-    this.enemies.push(
-      new Enemy(
-        this.enemyMesh!,
-        new Vec3([
-          this.player.position.x - 2,
-          this.player.position.y,
-          this.player.position.z - 2,
-        ]),
-      ),
-    );
+    // The mesh may have finished loading after the initial chunk batch was
+    // rendered (the load is async), so retroactively spawn in every chunk
+    // that's already live.
+    for (const [key, chunk] of this.renderedChunks) {
+      this.spawnEnemiesInChunk(key, chunk);
+    }
   }
 
   private loadEnemyBoneTranslations(gl: WebGLRenderingContext): void {
@@ -1199,6 +1282,49 @@ export class MinecraftAnimation extends CanvasAnimation {
     }
   }
 
+  /**
+   * Drop a couple of enemies onto random walkable surface blocks in this
+   * chunk. No-op if the enemy mesh isn't loaded yet, or if this chunk has
+   * already been populated. When the mesh finishes loading `initEnemies`
+   * retroactively spawns for any chunks that were skipped.
+   */
+  private spawnEnemiesInChunk(chunkKey: string, chunk: Chunk): void {
+    if (!this.enemyMesh) return;
+    if (this.spawnedChunkKeys.has(chunkKey)) return;
+    this.spawnedChunkKeys.add(chunkKey);
+
+    const size = chunk.chunkSize();
+    const topLeftX = chunk.topLeftX();
+    const topLeftZ = chunk.topLeftZ();
+    const target = MinecraftAnimation.enemiesPerChunk;
+    let spawned = 0;
+    let attempts = 0;
+    while (spawned < target && attempts < 20) {
+      attempts++;
+      const wx = topLeftX + Math.floor(Math.random() * size);
+      const wz = topLeftZ + Math.floor(Math.random() * size);
+      const top = chunk.topBlockAt(wx, wz);
+      if (!top || top.height < 0) continue;
+      const t = top.type;
+      if (
+        t === Chunk.blockTypeAir ||
+        t === Chunk.blockTypeWater ||
+        t === Chunk.blockTypeWaterFalling ||
+        (t >= Chunk.blockTypeWaterFlowLevel3 &&
+         t <= Chunk.blockTypeWaterFlowLevel1)
+      ) {
+        continue;
+      }
+      // Enemy position is head-based; hitboxHeight is 1. Spawn with feet just
+      // above the surface block's top face (stepPhysics will snap cleanly).
+      const headY = top.height + 1.5;
+      this.enemies.push(
+        new Enemy(this.enemyMesh!, new Vec3([wx, headY, wz])),
+      );
+      spawned++;
+    }
+  }
+
   private loadChunksAroundPlayer(): void {
     const prevLoadedKeys = new Set(this.renderedChunks.keys());
     const nextLoadedKeys = new Set<string>();
@@ -1217,14 +1343,16 @@ export class MinecraftAnimation extends CanvasAnimation {
         const chunkZ = cz + dj * step;
         const key = `${chunkX},${chunkZ}`;
         nextLoadedKeys.add(key);
-        if (!this.chunkCache.has(key)) {
-          let deltaMap = this.deltaMaps.has(key)
-            ? this.deltaMaps.get(key)
+        const activeCache = this.playerInNether ? this.netherChunkCache : this.chunkCache;
+        const activeDeltaMaps = this.playerInNether ? this.netherDeltaMaps : this.deltaMaps;
+        if (!activeCache.has(key)) {
+          let deltaMap = activeDeltaMaps.has(key)
+            ? activeDeltaMaps.get(key)
             : new Map();
-          this.chunkCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap));
+          activeCache.set(key, new Chunk(chunkX, chunkZ, step, deltaMap, this.playerInNether));
           this.decorationCache.delete(key);
         }
-        const cachedChunk = this.chunkCache.get(key)!;
+        const cachedChunk = activeCache.get(key)!;
         this.renderedChunks.set(key, cachedChunk);
         if (!this.decorationCache.has(key)) {
           this.decorationCache.set(
@@ -1244,6 +1372,7 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (!prevLoadedKeys.has(key)) {
         this.loadEntitiesForChunk(key);
       }
+      this.spawnEnemiesInChunk(key, this.renderedChunks.get(key)!);
     }
   }
 
@@ -1372,11 +1501,31 @@ export class MinecraftAnimation extends CanvasAnimation {
 
     // To slow movement to something more natural, scale the amount we can move per frame.
     const dt = 1 / 60;
+    this.blasterCooldown = Math.max(0, this.blasterCooldown - dt);
 
     const prov: Chunk.ColumnProvider = (ix, iz) => this.getChunkAtWorld(ix, iz);
+
     if (!this.player.isDead()) {
+      const heldId = this.inventory.getHeldItem()?.itemType.id ?? null;
+      if (
+        this.inventory.hasEquipmentById("jetpack") &&
+        this.gui.isSpaceDown &&
+        this.jetpackFuel > 0 &&
+        !this.isPlayerGrounded(prov)
+      ) {
+        this.player.velocity.y += 18.0 * dt;
+        this.jetpackFuel = Math.max(0, this.jetpackFuel - 20.0 * dt);
+        this.jetpackUsed = true;
+      } else {
+        this.jetpackFuel = Math.min(100, this.jetpackFuel + 12.0 * dt);
+      }
+
       this.player.update(this.gui.walkDir(), prov, dt);
+      this.checkPortalTeleport();
       this.updatePlayerFallDamage(prov);
+      if (this.isPlayerGrounded(prov)) {
+        this.doubleJumpAvailable = true;
+      }
     } else {
       this.player.velocity = new Vec3([0.0, 0.0, 0.0]);
     }
@@ -1398,15 +1547,28 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (this.starvationTimer >= this.starvationInterval) {
         this.starvationTimer = 0;
         this.player.takeDamage(1);
+        this.starvationDamageTaken++;
       }
     } else {
       this.starvationTimer = 0;
+    }
+
+    // Update health
+    if (this.player.food >= this.player.maxFood * this.regenHealthFoodThreshold) {
+      this.regenHealthTimer += dt;
+      if (this.regenHealthTimer >= this.regenHealthInterval) {
+        this.regenHealthTimer = 0;
+        this.player.heal(1);
+      }
+    } else {
+      this.regenHealthTimer = 0;
     }
 
     this.updateAchievements(dt);
 
     // Update falling blocks
     let newFallingBlocks: Block[] = [];
+    let chunksToUpdate = new Set<Chunk>();
     this.fallingBlocks.forEach((fallingBlock) => {
       const blockChunk = this.getChunkAtWorld(
         fallingBlock.position.x,
@@ -1420,29 +1582,125 @@ export class MinecraftAnimation extends CanvasAnimation {
       if (fallingBlock.update(dt, blockChunk)) {
         newFallingBlocks.push(fallingBlock);
       } else {
-        blockChunk.changeCubeType(
+        blockChunk.changeCubeTypeNoUpdate(
           fallingBlock.position.x,
           fallingBlock.position.z,
           fallingBlock.position.y,
           fallingBlock.type,
         );
+        chunksToUpdate.add(blockChunk);
       }
     });
     this.fallingBlocks = newFallingBlocks;
+    for (const chunk of chunksToUpdate) {
+      chunk.updateCubePositionsAndTypes();
+    }
+
+    // Water simulation tick
+    this.frameCount++;
+    if (this.frameCount % MinecraftAnimation.waterTickInterval === 0) {
+      this.tickWater();
+    }
 
     // Drawing
-    const gl: WebGLRenderingContext = this.ctx;
+    const gl = this.ctx as WebGL2RenderingContext;
     const bg: Vec4 = this.backgroundColor;
-    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
     gl.frontFace(gl.CCW);
     gl.cullFace(gl.BACK);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null); // null is the default frame buffer
+    // --- Portal FBO pass: render destination scene from portal camera ---
+    this.portalRenderer.renderPortalFBOs(
+      this.gui.getCamera().pos(),
+      (view, proj) => this.drawSceneWithCamera(0, 0, 1280, 960, view, proj),
+    );
+
+    // --- Main pass: render overworld to screen ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.clearColor(bg.r, bg.g, bg.b, bg.a);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     this.drawScene(0, 0, 1280, 960);
+
+    // --- Portal blocks pass: draw portal surface sampling the FBO ---
+    this.portalRenderer.drawPortalBlocks(
+      this.gui.viewMatrix(),
+      this.gui.projMatrix(),
+    );
+
     this.drawOverlay();
+  }
+
+  private setMatrixUniform(pass: RenderPass, name: string, matrix: Mat4): void {
+    pass.addUniform(
+      name,
+      (gl: WebGLRenderingContext, loc: WebGLUniformLocation) => {
+        gl.uniformMatrix4fv(loc, false, new Float32Array(matrix.all()));
+      },
+    );
+  }
+
+  private drawSceneWithCamera(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    viewMatrix: Mat4,
+    projMatrix: Mat4,
+  ): void {
+    const gl = this.ctx as WebGL2RenderingContext;
+    gl.viewport(x, y, width, height);
+
+    // Skybox with portal camera (zero out translation)
+    const skyVals = viewMatrix.copy().all();
+    skyVals[12] = 0;
+    skyVals[13] = 0;
+    skyVals[14] = 0;
+    this.setMatrixUniform(this.skyboxRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.skyboxRenderPass, "uView", new Mat4(skyVals));
+
+    gl.depthMask(false);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.CULL_FACE);
+    this.skyboxRenderPass.draw();
+
+    gl.depthMask(true);
+    gl.depthFunc(gl.LESS);
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+
+    // Terrain with portal camera
+    this.setMatrixUniform(this.blankCubeRenderPass, "uProj", projMatrix);
+    this.setMatrixUniform(this.blankCubeRenderPass, "uView", viewMatrix);
+
+    const allPositions = this.getAllCubePositions();
+    const allTypes = this.getAllCubeTypes();
+    this.blankCubeRenderPass.updateAttributeBuffer("aOffset", allPositions);
+    this.blankCubeRenderPass.updateAttributeBuffer("aBlockType", allTypes);
+    this.blankCubeRenderPass.drawInstanced(allTypes.length);
+
+    // Restore player camera uniforms
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.blankCubeRenderPass,
+      "uView",
+      this.gui.viewMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uProj",
+      this.gui.projMatrix(),
+    );
+    this.setMatrixUniform(
+      this.skyboxRenderPass,
+      "uView",
+      this.getSkyboxViewMatrix(),
+    );
   }
 
   private drawScene(x: number, y: number, width: number, height: number): void {
@@ -1628,9 +1886,25 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.player.isDead()) {
       return;
     }
-    const previousVelocityY = this.player.velocity.y;
-    this.player.jump(prov);
-    if (this.player.velocity.y > previousVelocityY) {
+
+    const grounded = this.isPlayerGrounded(prov);
+    if (grounded) {
+      const previousVelocityY = this.player.velocity.y;
+      this.player.jump(prov);
+      if (this.player.velocity.y > previousVelocityY) {
+        this.successfulJumps++;
+      }
+      this.doubleJumpAvailable = true;
+      return;
+    }
+
+    if (
+      this.doubleJumpAvailable &&
+      (this.inventory.hasEquipmentById("boots") ||
+        this.inventory.hasEquipmentById("jetpack"))
+    ) {
+      this.player.velocity.y = Math.max(this.player.velocity.y, 8.5);
+      this.doubleJumpAvailable = false;
       this.successfulJumps++;
     }
   }
@@ -1657,11 +1931,18 @@ export class MinecraftAnimation extends CanvasAnimation {
     return this.player.isDead();
   }
 
-  public intersectCubes(rayPos: Vec3, rayDir: Vec3): boolean {
-    let bestT = Infinity;
+  /**
+   * Raycasts the crosshair ray against cubes and enemies, picking whichever is closer.
+   * For cubes, it'll update `selectedCubePosition` and `isectNormal`. For enemies,
+   * it'll update `selectedEnemy`.
+   * Returns true if either is hit
+   */
+  public pickTarget(rayPos: Vec3, rayDir: Vec3): boolean {
+    // --- Cubes ---
+    let bestCubeT = Infinity;
     let bestPos = [-1000, -1000, -1000];
     let bestN = new Vec3();
-    let hit = false;
+    let cubeHit = false;
 
     const rPick = 5;
     for (let dx = -rPick; dx <= rPick; dx++) {
@@ -1679,16 +1960,40 @@ export class MinecraftAnimation extends CanvasAnimation {
           if (cubeType !== Chunk.blockTypeAir) {
             let isect = this.intersectCube(rayPos, rayDir, x, z, y);
             let t = isect?.t;
-            if (t !== undefined && t < bestT) {
-              bestT = t;
+            if (t !== undefined && t < bestCubeT) {
+              bestCubeT = t;
               bestPos = [x, y, z];
               bestN = isect?.normal !== undefined ? isect.normal : new Vec3();
-              hit = true;
+              cubeHit = true;
             }
           }
         }
       }
     }
+
+    // --- Enemies ---
+    let bestEnemyT = Infinity;
+    let bestEnemy: Enemy | null = null;
+    for (const enemy of this.enemies) {
+      if (enemy.isDead()) continue;
+      const t = this.intersectEnemyAABB(rayPos, rayDir, enemy);
+      if (t < bestEnemyT) {
+        bestEnemyT = t;
+        bestEnemy = enemy;
+      }
+    }
+
+    // Prefer enemies
+    if (bestEnemy !== null && bestEnemyT < bestCubeT) {
+      this.selectedEnemy = bestEnemy;
+      this.selectedEnemyDistance = bestEnemyT;
+      this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 0]);
+      this.isectNormal = new Vec3();
+      return true;
+    }
+
+    // fallback on cubes
+    this.selectedEnemy = null;
     this.selectedCubePosition = new Vec4([
       Math.round(bestPos[0]),
       Math.round(bestPos[1]),
@@ -1696,7 +2001,46 @@ export class MinecraftAnimation extends CanvasAnimation {
       0,
     ]);
     this.isectNormal = bestN;
-    return hit;
+    return cubeHit;
+  }
+
+  /**
+   * Returns t value of intersection, or infinity if no intersection
+   */
+  private intersectEnemyAABB(rayPos: Vec3, rayDir: Vec3, enemy: Enemy): number {
+    const r = enemy.hitboxRadius;
+    const hh = enemy.hitboxHeight / 2;
+    const minX = enemy.position.x - r;
+    const maxX = enemy.position.x + r;
+    const minY = enemy.position.y - hh;
+    const maxY = enemy.position.y + hh;
+    const minZ = enemy.position.z - r;
+    const maxZ = enemy.position.z + r;
+
+    const invX = 1.0 / rayDir.x;
+    const invY = 1.0 / rayDir.y;
+    const invZ = 1.0 / rayDir.z;
+
+    const t0x = (minX - rayPos.x) * invX;
+    const t1x = (maxX - rayPos.x) * invX;
+    const t0y = (minY - rayPos.y) * invY;
+    const t1y = (maxY - rayPos.y) * invY;
+    const t0z = (minZ - rayPos.z) * invZ;
+    const t1z = (maxZ - rayPos.z) * invZ;
+
+    const tNear = Math.max(
+      Math.min(t0x, t1x),
+      Math.min(t0y, t1y),
+      Math.min(t0z, t1z),
+    );
+    const tFar = Math.min(
+      Math.max(t0x, t1x),
+      Math.max(t0y, t1y),
+      Math.max(t0z, t1z),
+    );
+
+    if (tNear > tFar || tFar < 0) return Infinity;
+    return tNear < 0 ? tFar : tNear;
   }
 
   /**
@@ -1764,9 +2108,12 @@ export class MinecraftAnimation extends CanvasAnimation {
         }
       }
     }
+
     // Do nothing if ground is found, but mark all blocks searched as falling if ground is not found
     if (foundGround === false) {
+      let chunksToUpdate = new Set<Chunk>();
       for (const blockPos of blocksToUpdate) {
+        let chunk = this.getChunkAtWorld(blockPos![0], blockPos![2])!;
         const fallingBlockType = chunk.cubeType(
           blockPos![0],
           blockPos![2],
@@ -1778,17 +2125,174 @@ export class MinecraftAnimation extends CanvasAnimation {
             fallingBlockType,
           ),
         );
-        chunk.changeCubeType(
+        chunk.changeCubeTypeNoUpdate(
           blockPos![0],
           blockPos![2],
           blockPos![1],
           Chunk.blockTypeAir,
         );
+        chunksToUpdate.add(chunk);
+      }
+      for (const chunk of chunksToUpdate) {
+        chunk.updateCubePositionsAndTypes();
       }
     }
   }
 
+  private tickWater(): void {
+    if (this.waterDirty.size === 0) return;
+
+    const toPlace: {
+      sourceKey: string;
+      x: number;
+      y: number;
+      z: number;
+      blockType: number;
+    }[] = [];
+    const nextDirty = new Set<string>();
+
+    for (const posKey of this.waterDirty) {
+      const [x, y, z] = posKey.split(",").map(Number);
+
+      const chunkKey = `${this.worldToChunkCoord(x)},${this.worldToChunkCoord(z)}`;
+      const chunk = this.renderedChunks.get(chunkKey);
+      if (!chunk) {
+        nextDirty.add(posKey);
+        continue;
+      } // chunk unloaded — retry later
+
+      const blockType = chunk.cubeType(x, z, y);
+      if (!chunk.isWater(x, z, y)) continue;
+
+      // The block below is in the same xz column, so it belongs to the same chunk.
+      const below = chunk.cubeType(x, z, y - 1);
+      const belowIsOpen = below === undefined || below === Chunk.blockTypeAir;
+      // Horizontal flow blocks below don't block falling — water punches through them.
+      const belowIsHorizontalFlow =
+        below !== undefined &&
+        below >= Chunk.blockTypeWaterFlowLevel3 &&
+        below <= Chunk.blockTypeWaterFlowLevel1;
+
+      if (belowIsOpen || belowIsHorizontalFlow) {
+        // Falling takes priority over spreading — handle it and move on.
+        toPlace.push({
+          sourceKey: posKey,
+          x,
+          y: y - 1,
+          z,
+          blockType: Chunk.blockTypeWaterFalling,
+        });
+        continue;
+      }
+
+      // Determine what level this block would spread its neighbors as.
+      // Source and falling water both spread as Level3 (most water).
+      // Level1 does not spread — it is the weakest flow and stops here.
+      let spreadAs: number | null = null;
+      if (blockType === Chunk.blockTypeWater) {
+        // Source water doesn't need to spread horizontally if it already has a
+        // waterfall below — the base of the fall handles the spread.
+        const belowIsSourceOrFalling =
+          below === Chunk.blockTypeWater ||
+          below === Chunk.blockTypeWaterFalling;
+        if (!belowIsSourceOrFalling) {
+          spreadAs = Chunk.blockTypeWaterFlowLevel3;
+        }
+      } else if (blockType === Chunk.blockTypeWaterFalling) {
+        // Falling water only spreads horizontally at the base of the waterfall —
+        // when the block below is solid terrain, not another water block.
+        if (!chunk.isWater(x, z, y - 1)) {
+          spreadAs = Chunk.blockTypeWaterFlowLevel3;
+        }
+      } else if (blockType === Chunk.blockTypeWaterFlowLevel3) {
+        spreadAs = Chunk.blockTypeWaterFlowLevel2;
+      } else if (blockType === Chunk.blockTypeWaterFlowLevel2) {
+        spreadAs = Chunk.blockTypeWaterFlowLevel1;
+      }
+
+      if (spreadAs === null) continue;
+
+      for (const [dx, dz] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as [number, number][]) {
+        const nx = x + dx,
+          nz = z + dz;
+        const nChunkKey = `${this.worldToChunkCoord(nx)},${this.worldToChunkCoord(nz)}`;
+        const nChunk = this.renderedChunks.get(nChunkKey);
+        if (!nChunk) {
+          nextDirty.add(posKey);
+          continue;
+        } // retry when neighbor chunk loads
+
+        const neighbor = nChunk.cubeType(nx, nz, y);
+        const neighborIsOpen =
+          neighbor === undefined || neighbor === Chunk.blockTypeAir;
+
+        // Also overwrite a weaker flow block if we can improve it.
+        // Lower ID = more water (Level3=100 > Level2=101 > Level1=102), so spreadAs < neighbor means stronger.
+        const neighborIsWeakerFlow =
+          neighbor !== undefined &&
+          neighbor >= Chunk.blockTypeWaterFlowLevel3 &&
+          neighbor <= Chunk.blockTypeWaterFlowLevel1 &&
+          spreadAs < neighbor;
+
+        if (neighborIsOpen || neighborIsWeakerFlow) {
+          toPlace.push({
+            sourceKey: posKey,
+            x: nx,
+            y,
+            z: nz,
+            blockType: spreadAs,
+          });
+        }
+      }
+    }
+
+    this.waterDirty = nextDirty;
+
+    // Apply placements. Multiple entries can target the same position within one tick
+    // (e.g. falling from above + horizontal spread from the side). We track what was
+    // written this tick so falling water always wins over horizontal flow.
+    const writtenThisTick = new Map<string, number>(); // "x,y,z" → blockType
+
+    let updatedChunks = new Set<Chunk>();
+    for (const { sourceKey, x, y, z, blockType } of toPlace) {
+      const posKey = `${x},${y},${z}`;
+      const existing = writtenThisTick.get(posKey);
+      if (existing !== undefined) {
+        // Falling water (99) beats any horizontal flow (100+).
+        // Among flow levels, lower ID = stronger. Skip if existing is already stronger or equal.
+        if (existing <= blockType) continue;
+      }
+
+      const chunkKey = `${this.worldToChunkCoord(x)},${this.worldToChunkCoord(z)}`;
+      const chunk = this.renderedChunks.get(chunkKey);
+      if (!chunk) {
+        this.waterDirty.add(sourceKey);
+        continue;
+      }
+      const deltaMap = chunk.changeCubeTypeNoUpdate(x, z, y, blockType);
+      (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(chunkKey, deltaMap);
+      writtenThisTick.set(posKey, blockType);
+      this.waterDirty.add(posKey);
+      updatedChunks.add(chunk);
+    }
+    for (const chunk of updatedChunks) {
+      chunk.updateCubePositionsAndTypes();
+    }
+  }
+
   public leftClick(cubeSelected: boolean): void {
+    if (this.selectedEnemy !== null && this.selectedEnemyDistance <= 5) {
+      const enemy = this.selectedEnemy;
+      this.attackEnemy(enemy, 5);
+      this.selectedEnemy = null;
+      return;
+    }
+
     if (!cubeSelected) {
       return;
     }
@@ -1809,8 +2313,13 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
 
     if (
-      brokenCubeType === Chunk.blockTypeWater ||
-      brokenCubeType === Chunk.blockTypePortal
+      chunk.isWater(
+        this.selectedCubePosition.x,
+        this.selectedCubePosition.z,
+        this.selectedCubePosition.y,
+      ) ||
+      brokenCubeType === Chunk.blockTypePortal ||
+      brokenCubeType === Chunk.blockTypePortalFrame
     ) {
       return;
     }
@@ -1833,19 +2342,38 @@ export class MinecraftAnimation extends CanvasAnimation {
     this.setFallingBlocksBFS(cubeX + 1, cubeZ, cubeY);
     this.setFallingBlocksBFS(cubeX - 1, cubeZ, cubeY);
 
-    this.deltaMaps.set(key, chunkDeltaMap);
+    (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(key, chunkDeltaMap);
     if (
       brokenCubeType !== undefined &&
       brokenCubeType !== Chunk.blockTypeAir &&
-      brokenCubeType !== Chunk.blockTypeWater
+      !chunk.isWater(
+        this.selectedCubePosition.x,
+        this.selectedCubePosition.z,
+        this.selectedCubePosition.y,
+      )
     ) {
       this.blocksBroken++;
     }
     this.inventory.insertStack(ItemStack.dropsFrom(brokenCubeType ?? -1));
+
+    // Any neighbor of the broken block may now have room to flow into
+    const bx = this.selectedCubePosition.x;
+    const by = this.selectedCubePosition.y;
+    const bz = this.selectedCubePosition.z;
+    for (const [dx, dy, dz] of [
+      [0, 1, 0],
+      [0, -1, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ] as [number, number, number][]) {
+      this.waterDirty.add(`${bx + dx},${by + dy},${bz + dz}`);
+    }
   }
 
   public rightClick(cubeSelected: boolean) {
-    const item = this.heldItem();
+    const item = this.inventory.getHeldItem();
     if (item === null) {
       return;
     }
@@ -1856,7 +2384,7 @@ export class MinecraftAnimation extends CanvasAnimation {
         return;
       }
       case ItemAction.Use: {
-        itemType.useAction(item!, this.player);
+        itemType.useAction(this);
         return;
       }
       case ItemAction.Place: {
@@ -1883,15 +2411,168 @@ export class MinecraftAnimation extends CanvasAnimation {
           blockType,
         );
 
-        this.deltaMaps.set(key, chunkDeltaMap);
+        (this.playerInNether ? this.netherDeltaMaps : this.deltaMaps).set(key, chunkDeltaMap);
         this.blocksPlaced++;
 
+        if (blockType === Chunk.blockTypePortalFrame) {
+          this.checkPortal(cubeX, cubeZ, cubeY);
+        }
+
+        // The placed block and all its neighbors may now trigger water flow updates
+        for (const [dx, dy, dz] of [
+          [0, 0, 0],
+          [0, 1, 0],
+          [0, -1, 0],
+          [1, 0, 0],
+          [-1, 0, 0],
+          [0, 0, 1],
+          [0, 0, -1],
+        ] as [number, number, number][]) {
+          this.waterDirty.add(`${cubeX + dx},${cubeY + dy},${cubeZ + dz}`);
+        }
+
         this.inventory.editSlotCount(
-          Inventory.slotIndex(this.selectedHotbarIdx, 0),
+          Inventory.slotIndex(this.inventory.selectedHotbarIdx, 0),
           item!.count - 1,
         );
       }
     }
+  }
+
+  /** If the player is inside a portal's interior, teleport them to the linked portal
+   * by adding the offset between the portal positions to the player's position. */
+  private checkPortalTeleport(): void {
+    let currentPortal: Portal | null = null;
+    for (const portal of this.portals) {
+      if (this.isPlayerInPortal(portal)) {
+        currentPortal = portal;
+        break;
+      }
+    }
+
+    if (currentPortal === null) {
+      this.playerInPortal = null;
+      return;
+    }
+
+    // Don't re-teleport if the player was already inside a portal last frame
+    if (this.playerInPortal === currentPortal) {
+      return;
+    }
+
+    const linked = currentPortal.linked;
+    if (linked === null) {
+      this.playerInPortal = currentPortal;
+      return;
+    }
+
+    // Add the offset between the two portals to the player's position
+    this.player.position.x += linked.position.x - currentPortal.position.x;
+    this.player.position.y += linked.position.y - currentPortal.position.y;
+    this.player.position.z += linked.position.z - currentPortal.position.z;
+
+    // Rotate the camera based on the two portal normals.
+    const srcAngle = Math.atan2(
+      currentPortal.normal.x,
+      currentPortal.normal.z,
+    );
+    const dstAngle = Math.atan2(linked.normal.x, linked.normal.z);
+    const deltaYaw = dstAngle - srcAngle;
+    if (deltaYaw !== 0) {
+      this.gui.getCamera().rotate(new Vec3([0, 1, 0]), deltaYaw);
+    }
+
+    // Mark the player as being in the linked portal so we don't teleport again
+    this.playerInPortal = linked;
+  }
+
+  private isPlayerInPortal(portal: Portal): boolean {
+    const right = portal.right();
+    const up = portal.up;
+    const normal = portal.normal;
+    const pos = portal.position;
+
+    const relX = this.player.position.x - pos.x;
+    const relY = this.player.position.y - pos.y;
+    const relZ = this.player.position.z - pos.z;
+
+    const alongRight = relX * right.x + relY * right.y + relZ * right.z;
+    const alongUp = relX * up.x + relY * up.y + relZ * up.z;
+    const alongNormal = relX * normal.x + relY * normal.y + relZ * normal.z;
+
+    // Player is inside the portal's 2D rectangle (with vertical slack for height)
+    // and close enough to the portal plane
+    return (
+      alongRight >= 0 &&
+      alongRight <= portal.width &&
+      alongUp >= -portal.height &&
+      alongUp <= portal.height &&
+      Math.abs(alongNormal) < 0.5
+    );
+  }
+
+  private checkPortal(blockX: number, blockZ: number, blockY: number) {
+    for (let x = blockX - 3; x <= blockX; x++) {
+      for (let z = blockZ - 3; z <= blockZ; z++) {
+        for (let y = blockY - 4; y <= blockY; y++) {
+          if (this.checkPortalSpot(x, z, y)) {
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  private checkPortalSpot(minX: number, minZ: number, minY: number): boolean {
+    const blockIsPortalX = (x: number, y: number): boolean => {
+      x += minX;
+      const z = minZ;
+      y += minY;
+      const chunk = this.chunkAt(x, z);
+      return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
+    }
+
+    const blockIsPortalZ = (z: number, y: number): boolean => {
+      const x = minX;
+      z += minZ;
+      y += minY;
+      const chunk = this.chunkAt(x, z);
+      return chunk.cubeType(x, z, y) === Chunk.blockTypePortalFrame;
+    }
+
+    const check = (blockIsPortal: (x: number, y: number) => boolean) => blockIsPortal(0, 0) && blockIsPortal(1, 0) && blockIsPortal(2, 0) && blockIsPortal(3, 0)
+        && blockIsPortal(0, 4) && blockIsPortal(1, 4) && blockIsPortal(2, 4) && blockIsPortal(3, 4)
+        && blockIsPortal(0, 1) && blockIsPortal(0, 2) && blockIsPortal(0, 3)
+        && blockIsPortal(3, 1) && blockIsPortal(3, 2) && blockIsPortal(3, 3);
+
+    if (check(blockIsPortalX)) {
+      this.portals.push(new Portal(
+          new Vec3([minX + 1, minY + 1, minZ]),
+          new Vec3([0, 0, 1]),
+          new Vec3([0, 1, 0]),
+          2,
+          3,
+      ));
+      if (this.portals.length % 2 === 0) {
+        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
+      }
+      return true;
+    }
+    if (check(blockIsPortalZ)) {
+      this.portals.push(new Portal(
+          new Vec3([minX, minY + 1, minZ + 2]),
+          new Vec3([1, 0, 0]),
+          new Vec3([0, 1, 0]),
+          2,
+          3,
+      ));
+      if (this.portals.length % 2 === 0) {
+        this.portalRenderer.addPortalPair(this.portals[this.portals.length - 2], this.portals[this.portals.length - 1])
+      }
+      return true;
+    }
+
+    return false;
   }
 
   private drawOverlay(): void {
@@ -1915,19 +2596,15 @@ export class MinecraftAnimation extends CanvasAnimation {
     if (this.showAchievements) {
       this.drawAchievementsPanel(x, achievementPanelY);
     }
+    this.drawEnemyHealthbars();
     this.drawMinimap();
     this.drawAchievementToast();
-    this.drawCrosshair();
-    if (this.player.isDead()) {
-      this.drawDeathOverlay();
-    }
 
     if (this.isInInventory) {
       this.inventory.drawInventoryScreen(
         this.overlayCtx,
         this.canvas2d.width,
         this.canvas2d.height,
-        this.selectedHotbarIdx,
         this.gui.mouseX,
         this.gui.mouseY,
       );
@@ -1936,10 +2613,14 @@ export class MinecraftAnimation extends CanvasAnimation {
         this.overlayCtx,
         this.canvas2d.width,
         this.canvas2d.height,
-        this.selectedHotbarIdx,
       );
       this.drawHealthBar();
       this.drawHungerBar();
+      this.drawCrosshair();
+    }
+
+    if (this.player.isDead()) {
+      this.drawDeathOverlay();
     }
 
     ctx.restore();
@@ -2029,7 +2710,7 @@ export class MinecraftAnimation extends CanvasAnimation {
   }
 
   private getTimeValue(): number {
-    return performance.now() / 1000;
+    return performance.now() / 1000 + MinecraftAnimation.dayDuration * 0.3;
   }
 
   private wrapDayTime(value: number): number {
@@ -2164,23 +2845,35 @@ export class MinecraftAnimation extends CanvasAnimation {
     );
   }
 
-  public setHotbarSlot(number: number) {
-    this.selectedHotbarIdx = number;
-  }
-
-  public heldItem(): ItemStack | null {
-    return this.inventory.getItemStack(
-      Inventory.slotIndex(this.selectedHotbarIdx, 0),
-    );
-  }
-
-  public dropHeldItem(): void {
-    const index = Inventory.slotIndex(this.selectedHotbarIdx, 0);
-    const item = this.inventory.getItemStack(index);
-    if (item) {
-      this.inventory.editSlotCount(index, item.count - 1);
+  public attackEnemy(enemy: Enemy, amount: number): void {
+    enemy.takeDamage(5);
+    if (enemy.isDead()) {
+      const idx = this.enemies.indexOf(enemy);
+      if (idx >= 0) {
+        this.enemies.splice(idx, 1);
+      }
+      this.inventory.insertItemById("food", 3);
+      this.enemiesKilled++;
     }
   }
+
+  public fireBlaster(): void {
+    if (this.blasterCooldown > 0) {
+      return;
+    }
+
+    if (!this.inventory.removeItemById("ammo", 1)) {
+      return;
+    }
+
+    if (this.selectedEnemy !== null) {
+      this.attackEnemy(this.selectedEnemy, 8);
+      this.blasterHits++;
+    }
+
+    this.blasterCooldown = 0.35;
+  }
+
   private drawHealthBar(): void {
     if (!this.heartBitmap) return;
 
@@ -2254,17 +2947,22 @@ export class MinecraftAnimation extends CanvasAnimation {
     const centerX = this.canvas2d.width / 2;
     const centerY = this.canvas2d.height / 2;
     const size = 30;
+    const x = centerX - size / 2;
+    const y = centerY - size / 2;
+
+    const targetingEnemy =
+      this.selectedEnemy !== null && this.selectedEnemyDistance <= 5;
 
     ctx.save();
     ctx.globalAlpha = 0.75;
-    ctx.fillStyle = "#ffffff";
-    ctx.drawImage(
-      this.crosshairBitmap,
-      centerX - size / 2,
-      centerY - size / 2,
-      size,
-      size,
-    );
+    ctx.drawImage(this.crosshairBitmap, x, y, size, size);
+
+    if (targetingEnemy) {
+      ctx.globalCompositeOperation = "source-atop";
+      ctx.fillStyle = "rgba(230, 40, 40, 0.85)";
+      ctx.fillRect(x, y, size, size);
+    }
+
     ctx.globalAlpha = 1.0;
     ctx.restore();
   }
@@ -2331,6 +3029,103 @@ export class MinecraftAnimation extends CanvasAnimation {
         ctx.globalAlpha = 0.25;
         ctx.drawImage(this.foodBitmap, x, startY, foodSize, foodSize);
       }
+    }
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+  }
+
+  private drawEnemyHealthbars(): void {
+    const ctx = this.overlayCtx;
+
+    // visibility factors
+    const MAX_DIST = 15;
+    const FADE_START = 7; // fully opaque within this radius; fades from here to MAX_DIST
+
+    // Bar dimensions in canvas pixels.
+    const BAR_W = 50;
+    const BAR_H = 10;
+    const BAR_YOFFSET = 1.5; // world units above enemy CoM
+
+    const canvasW = this.canvas2d.width;
+    const canvasH = this.canvas2d.height;
+
+    // Combined projection * view matrix. Compute once per frame.
+    const viewProj = this.gui
+      .projMatrix()
+      .copy()
+      .multiply(this.gui.viewMatrix());
+
+    const playerPos = this.player.position;
+
+    ctx.save();
+    for (const enemy of this.enemies) {
+      if (enemy.isDead()) continue;
+
+      // --- distance filtering + fade ---
+      const dx = enemy.position.x - playerPos.x;
+      const dy = enemy.position.y - playerPos.y;
+      const dz = enemy.position.z - playerPos.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq > MAX_DIST * MAX_DIST) continue;
+
+      const dist = Math.sqrt(distSq);
+      let alpha = 1.0;
+      if (dist > FADE_START) {
+        // Linear fade from 1.0 at FADE_START to 0.0 at MAX_DIST.
+        alpha = 1.0 - (dist - FADE_START) / (MAX_DIST - FADE_START);
+      }
+      if (alpha <= 0) continue;
+
+      // --- world -> clip space ---
+      const worldPos = new Vec4([
+        enemy.position.x,
+        enemy.position.y + BAR_YOFFSET,
+        enemy.position.z,
+        1.0,
+      ]);
+      const clip = viewProj.multiplyVec4(worldPos);
+
+      // Cull anything behind the camera / near plane.
+      if (clip.w <= 0) continue;
+
+      const ndcX = clip.x / clip.w;
+      const ndcY = clip.y / clip.w;
+
+      // Off-screen cull (small margin so bars near the edge still render).
+      if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2) continue;
+
+      const screenX = (ndcX + 1) * 0.5 * canvasW;
+      const screenY = (1 - ndcY) * 0.5 * canvasH;
+
+      const healthRatio = Math.max(
+        0,
+        Math.min(1, enemy.health / enemy.maxHealth),
+      );
+
+      ctx.globalAlpha = alpha;
+
+      // Background (dark).
+      ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+      ctx.fillRect(screenX - BAR_W / 2, screenY - BAR_H / 2, BAR_W, BAR_H);
+
+      // Filled portion (red).
+      ctx.fillStyle = "rgba(220, 40, 40, 0.95)";
+      ctx.fillRect(
+        screenX - BAR_W / 2,
+        screenY - BAR_H / 2,
+        BAR_W * healthRatio,
+        BAR_H,
+      );
+
+      // Thin border for readability.
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(
+        screenX - BAR_W / 2 + 0.5,
+        screenY - BAR_H / 2 + 0.5,
+        BAR_W - 1,
+        BAR_H - 1,
+      );
     }
     ctx.globalAlpha = 1.0;
     ctx.restore();
