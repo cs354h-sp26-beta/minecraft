@@ -1504,7 +1504,7 @@ export class MinecraftAnimation extends CanvasAnimation {
             this.selectedEnemyDistance = bestEnemyT;
             this.selectedCubePosition = new Vec4([-1000, -1000, -1000, 0]);
             this.isectNormal = new Vec3();
-            return true;
+            return false;
         }
         // fallback on cubes
         this.selectedEnemy = null;
@@ -1521,8 +1521,8 @@ export class MinecraftAnimation extends CanvasAnimation {
      * Returns t value of intersection, or infinity if no intersection
      */
     intersectEnemyAABB(rayPos, rayDir, enemy) {
-        const r = enemy.hitboxRadius;
-        const hh = enemy.hitboxHeight / 2;
+        const r = enemy.hitboxRadius + 0.15;
+        const hh = enemy.hitboxHeight / 2 + 0.25;
         const minX = enemy.position.x - r;
         const maxX = enemy.position.x + r;
         const minY = enemy.position.y - hh;

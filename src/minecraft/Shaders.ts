@@ -25,9 +25,9 @@ export const blankCubeVSText = `
         // Horizontal flow blocks are shorter than a full cube, bottom-aligned.
         // scaledY = y * scale - (1 - scale) * 0.5 keeps the bottom at -0.5 while shrinking the top.
         float yScale = 1.0;
-        if      (aBlockType == 100.0) yScale = 0.75; // FlowLevel3
-        else if (aBlockType == 101.0) yScale = 0.50; // FlowLevel2
-        else if (aBlockType == 102.0) yScale = 0.25; // FlowLevel1
+        if      (abs(aBlockType - 100.0) < 0.2) yScale = 0.75; // FlowLevel3
+        else if (abs(aBlockType - 101.0) < 0.2) yScale = 0.50; // FlowLevel2
+        else if (abs(aBlockType - 102.0) < 0.2) yScale = 0.25; // FlowLevel1
 
         vec4 pos = aVertPos;
         pos.y = pos.y * yScale - (1.0 - yScale) * 0.5;
@@ -499,54 +499,54 @@ export const blankCubeFSText = `
         float dot_nl = dot(normalize(lightDirection), normalize(normal));
 	    dot_nl = clamp(dot_nl, 0.0, 1.0);
 
-        float highlight = selected == 1.0 ? 1.2 : 1.0;
+        float highlight = selected > 0.5 ? 1.2 : 1.0;
         vec3 textureColor = vec3(1.0, 0.5, 1.0);
 
-        if (vBlockType == 0.0) {
+        if (abs(vBlockType - 0.0) < 0.2) {
             textureColor = makeDirt(uv, vLocalPos, wsPos.xyz);
-        } else if (vBlockType == 1.0) {
+        } else if (abs(vBlockType - 1.0) < 0.2) {
             textureColor = makeCobble(uv, wsPos.xyz, 3.0);
-        } else if (vBlockType == 2.0 || (vBlockType >= 99.0 && vBlockType <= 102.0)) {
+        } else if (abs(vBlockType - 2.0) < 0.2 || (vBlockType >= 98.8 && vBlockType <= 102.2)) {
             textureColor = makeWater(uv, wsPos.xyz, 3.5);
-        } else if (vBlockType == 3.0) {
+        } else if (abs(vBlockType - 3.0) < 0.2) {
             textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.12, 0.12, 0.12));
-        } else if (vBlockType == 4.0) {
+        } else if (abs(vBlockType - 4.0) < 0.2) {
             textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.70, 0.70, 0.70));
-        } else if (vBlockType == 5.0) {
+        } else if (abs(vBlockType - 5.0) < 0.2) {
             textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.93, 0.77, 0.18));
-        } else if (vBlockType == 6.0) {
+        } else if (abs(vBlockType - 6.0) < 0.2) {
             textureColor = makeOre(uv, wsPos.xyz, 2.0, vec3(0.18, 0.86, 0.92));
-        } else if (vBlockType == 7.0) {
+        } else if (abs(vBlockType - 7.0) < 0.2) {
             textureColor = makeGrass(uv, vLocalPos, wsPos.xyz, 3.0);
-        } else if (vBlockType == 8.0) {
+        } else if (abs(vBlockType - 8.0) < 0.2) {
             textureColor = makeSand(uv, vLocalPos, wsPos.xyz);
-        } else if (vBlockType == 9.0) {
+        } else if (abs(vBlockType - 9.0) < 0.2) {
             textureColor = makeSandstone(uv, vLocalPos, wsPos.xyz);
-        } else if (vBlockType == 10.0) {
+        } else if (abs(vBlockType - 10.0) < 0.2) {
             textureColor = makeSnow(uv);
-        } else if (vBlockType == 11.0) {
+        } else if (abs(vBlockType - 11.0) < 0.2) {
             textureColor = makeNetherite(uv, wsPos.xyz);
-        } else if (vBlockType == 12.0) {
+        } else if (abs(vBlockType - 12.0) < 0.2) {
             textureColor = makeCobble(uv, wsPos.xyz, 3.0) * vec3(0.55, 0.55, 0.55);
-        } else if (vBlockType == 13.0) {
+        } else if (abs(vBlockType - 13.0) < 0.2) {
             textureColor = makePortal(wsPos.xyz);
-        } else if (vBlockType == 14.0) {
+        } else if (abs(vBlockType - 14.0) < 0.2) {
             // Lava: slow animated orange-red glow
             textureColor = makeLava(uv, wsPos.xyz);
-        } else if (vBlockType == 15.0) {
+        } else if (abs(vBlockType - 15.0) < 0.2) {
             // Nether rack: dark volcanic rock with faint lava cracks
             textureColor = makeNetherRack(uv, wsPos.xyz, 3.0);
-        } else if (vBlockType == 20.0) {
+        } else if (abs(vBlockType - 20.0) < 0.2) {
             textureColor = makeWood(uv, wsPos.xyz);
-        } else if (vBlockType == 21.0) {
+        } else if (abs(vBlockType - 21.0) < 0.2) {
             textureColor = makeLeaves(uv, wsPos.xyz);
-        } else if (vBlockType == 22.0) {
+        } else if (abs(vBlockType - 22.0) < 0.2) {
             textureColor = makeBirchWood(uv, wsPos.xyz);
-        } else if (vBlockType == 23.0) {
+        } else if (abs(vBlockType - 23.0) < 0.2) {
             textureColor = makeSpruceLeaves(uv, wsPos.xyz);
-        } else if (vBlockType == 24.0) {
+        } else if (abs(vBlockType - 24.0) < 0.2) {
             textureColor = makeDecorRock(uv, wsPos.xyz);
-        } else if (vBlockType == 30.0) {
+        } else if (abs(vBlockType - 30.0) < 0.2) {
             textureColor = makePortalFrame(uv);
         }
 
